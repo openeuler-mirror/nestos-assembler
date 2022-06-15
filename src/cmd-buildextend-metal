@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+dn=$(dirname "$0")
+# shellcheck source=src/cmdlib.sh
+. "${dn}"/cmdlib.sh
+
+# This script is used for creating both the bare metal and the canonical VM
+# image (qemu). `buildextend-qemu` is a symlink to `buildextend-metal`.
+case "$(basename "$0")" in
+    "cmd-buildextend-metal") image_type=metal;;
+    "cmd-buildextend-metal4k") image_type=metal4k;;
+    "cmd-buildextend-dasd") image_type=dasd;;
+    "cmd-buildextend-qemu") image_type=qemu;;
+    *) fatal "called as unexpected name $0";;
+esac
+
+print_help() {
+    cat 1>&2 <<EOF
+Usage: coreos-assembler buildextend-${image_type} --help
+       coreos-assembler buildextend-${image_type} [--build ID]
+
+  Build a bare metal image.
+EOF
+}
+
+# Parse options
+rc=0
+build=
+options=$(getopt --options h --longoptions help,build: -- "$@") || rc=$?
+[ $rc -eq 0 ] || {
+    print_help
+    exit 1
+}
+eval set -- "$options"
+while true; do
+    case "$1" in
+        -h | --help)
+            print_help
+            exit 0
+            ;;
+        --build)
+            build=$2
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            fatal "$0: unrecognized option: $1"
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+    shift
+done
+
+if [ $# -ne 0 ]; then
+    print_help
+    fatal "Too many arguments passed"
+fi
+
+case "$basearch" in
+    "x86_64"|"aarch64"|"s390x"|"ppc64le") ;;
+    *) fatal "$basearch is not supported for this command" ;;
+esac
+
+if [[ "$basearch" != "s390x" && $image_type == dasd ]]; then
+    fatal "$basearch is not supported for building dasd images"
+fi
+
+# shellcheck disable=SC2031
+export LIBGUESTFS_BACKEND=direct
+export IMAGE_TYPE="${image_type}"
+prepare_build
+
+if [ -z "${build}" ]; then
+    build=$(get_latest_build)
+    if [ -z "${build}" ]; then
+        fatal "No build found."
+    fi
+fi
+
+builddir=$(get_build_dir "$build")
+if [ ! -d "${builddir}" ]; then
+    fatal "Build dir ${builddir} does not exist."
+fi
+
+# add building sempahore
+build_semaphore="${builddir}/.${image_type}.building"
+if [ -e "${build_semaphore}" ]; then
+    fatal "${build_semaphore} found: another process is building ${image_type}"
+fi
+touch "${build_semaphore}"
+trap 'rm -rf ${build_semaphore}' EXIT
+
+# check if the image already exists in the meta.json
+meta_img=$(meta_key "images.${image_type}.path")
+if [ "${meta_img}" != "None" ]; then
+    echo "${image_type} image already exists:"
+    echo "$meta_img"
+    exit 0
+fi
+
+# reread these values from the build itself rather than rely on the ones loaded
+# by prepare_build since the config might've changed since then
+name=$(meta_key name)
+ref=$(meta_key ref)
+if [ "${ref}" = "None" ]; then
+    ref=""
+fi
+commit=$(meta_key ostree-commit)
+
+ostree_repo=${tmprepo}
+# Ensure that we have the cached unpacked commit
+import_ostree_commit_for_build "${build}"
+
+image_format=raw
+if [[ $image_type == qemu ]]; then
+    image_format=qcow2
+fi
+
+img=${name}-${build}-${image_type}.${basearch}.${image_format}
+path=${PWD}/${img}
+
+ignition_platform_id="${image_type}"
+# dasd and metal4k are different disk formats, but they're still metal
+if [ "${image_type}" = dasd ] || [ "${image_type}" = metal4k ]; then
+    ignition_platform_id=metal
+fi
+
+yaml2json "/usr/lib/coreos-assembler/image-default.yaml" image-default.json
+# Combine with the defaults
+cat image-default.json "${image_json}" | jq -s add > image-configured.json
+
+# We do some extra handling of the rootfs here; it feeds into size estimation.
+rootfs_type=$(jq -re .rootfs < image-configured.json)
+
+deploy_container=
+container_imgref=$(jq -r '.["container-imgref"]//""' < image-configured.json)
+if test -n "${container_imgref}" || jq -re '.["deploy-via-container"]' < image-configured.json >/dev/null; then
+    deploy_container=ostree-unverified-image:oci-archive:$builddir/$(meta_key images.ostree.path)
+fi
+
+# fs-verity requires block size = page size. We need to take that into account
+# in the disk size estimation due to higher fragmentation on larger blocks.
+BLKSIZE=""
+if [ "${rootfs_type}" = "ext4verity" ]; then
+    BLKSIZE="$(getconf PAGE_SIZE)"
+fi
+
+echo "Estimating disk size..."
+# The additional 35% here is obviously a hack, but we can't easily completely fill the filesystem,
+# and doing so has apparently negative performance implications.
+/usr/lib/coreos-assembler/estimate-commit-disk-size ${BLKSIZE:+--blksize ${BLKSIZE}} --repo "$ostree_repo" "$commit" --add-percent 35 > "$PWD/tmp/ostree-size.json"
+rootfs_size="$(jq '."estimate-mb".final' "$PWD/tmp/ostree-size.json")"
+# extra size is the non-ostree partitions, see create_disk.sh
+image_size="$(( rootfs_size + 513 ))M"
+echo "Disk size estimated to ${image_size}"
+
+disk_args=()
+
+# For bare metal and dasd images, we use the estimated image size. For IaaS/virt, we get it from
+# image.yaml because we want a "default" disk size that has some free space.
+case "${image_type}" in
+    metal*|dasd)
+        # Unset the root size, which will inherit from the image size
+        rootfs_size=0
+        ;;
+    qemu)
+        image_size="$(python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["size"])' < "${image_yaml}")G"
+        rootfs_size="${rootfs_size}M"
+        ;;
+    *) fatal "unreachable image_type ${image_type}";;
+esac
+
+if [ "${image_type}" == metal4k ]; then
+    disk_args+=("--no-x86-bios-bootloader")
+fi
+
+set -x
+kargs="$(python3 -c 'import sys, yaml; args = yaml.safe_load(sys.stdin).get("extra-kargs", []); print(" ".join(args))' < "${image_yaml}")"
+tty="console=tty0 console=${DEFAULT_TERMINAL},115200n8"
+# On each s390x hypervisor, a tty would be automatically detected by the kernel
+# and systemd, there is no need to specify one. However, we keep DEFAULT_TERMINAL
+# as ttysclp0, which is helpful for building/testing with KVM+virtio (cmd-run).
+# For aarch64, ttyAMA0 is used as the default console
+case "$basearch" in
+    "aarch64"|"s390x") tty= ;;
+esac
+kargs="$kargs $tty ignition.platform.id=$ignition_platform_id"
+
+qemu-img create -f ${image_format} "${path}.tmp" "${image_size}"
+
+extra_target_device_opts=""
+# we need 4096 block size for ECKD DASD and (obviously) metal4k
+if [[ $image_type == dasd || $image_type == metal4k ]]; then
+  extra_target_device_opts=",physical_block_size=4096,logical_block_size=4096"
+fi
+target_drive=("-drive" "if=none,id=target,format=${image_format},file=${path}.tmp,cache=unsafe" \
+              "-device" "virtio-blk,serial=target,drive=target${extra_target_device_opts}")
+
+# Generate the JSON describing the disk we want to build
+cat >image-dynamic.json << EOF
+{
+    "rootfs-size": "${rootfs_size}",
+    "osname": "${name}",
+    "buildid": "${build}",
+    "imgid": "${img}",
+    "deploy-container": "${deploy_container}",
+    "container-imgref": "${container_imgref}",
+    "ostree-commit": "${commit}",
+    "ostree-ref": "${ref}",
+    "ostree-repo": "${ostree_repo}"
+}
+EOF
+cat image-configured.json image-dynamic.json | jq -s add > image.json
+runvm "${target_drive[@]}" -- \
+        /usr/lib/coreos-assembler/create_disk.sh \
+            --config "$(pwd)"/image.json \
+            --kargs "\"${kargs}\"" \
+            "${disk_args[@]}"
+/usr/lib/coreos-assembler/finalize-artifact "${path}.tmp" "${path}"
+
+sha256=$(sha256sum_str < "${img}")
+cosa meta --workdir "${workdir}" --build "${build}" --dump | python3 -c "
+import sys, json
+j = json.load(sys.stdin)
+j['images']['${image_type}'] = {
+    'path': '${img}',
+    'sha256': '${sha256}',
+    'size': $(stat -c '%s' "${img}")
+}
+json.dump(j, sys.stdout, indent=4)
+" | jq -s add > "meta.json.new"
+
+# and now the crucial bits
+cosa meta --workdir "${workdir}" --build "${build}" --artifact "${image_type}" --artifact-json "$(readlink -f meta.json.new)"
+/usr/lib/coreos-assembler/finalize-artifact "${img}" "${builddir}/${img}"
+
+# Quiet for the rest of this so the last thing we see is a success message
+set +x
+# clean up the tmpild
+rm -rf "${tmp_builddir}"
+echo "Successfully generated: ${img}"
