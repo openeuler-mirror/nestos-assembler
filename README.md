@@ -1,7 +1,7 @@
 # nestos-assembler
 
 #### 介绍
-nestos-installer is a build environment used to build NestOS systems.
+nestos-assembler is a build environment used to build NestOS systems.
 
 #### 软件架构
 软件架构说明
