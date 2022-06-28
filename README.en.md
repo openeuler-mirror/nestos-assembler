@@ -3,34 +3,27 @@
 #### Description
 nestos-installer is a build environment used to build NestOS systems.
 
-#### Software Architecture
-Software architecture description
+#### Summary
 
-#### Installation
+nestos-assembler is a build environment that contains a series of tools that can be used to build NestOS. nestos-assembler implements that the process of building and testing the operating system is encapsulated in a container.
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+nestos-assembler can be simply understood as a container environment that can build nestos. This environment integrates some scripts, RPM packages and tools required to build NestOS.
 
-#### Instructions
+#### Common commands
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+|  name   |   Description  |
+| --- | --- |
+|   nosa clean  |  Delete all build artifacts   |
+|   nosa fetch  |  Fetch and import the latest packages   |
+|   nosa build  |   Generate qemu artifacts for the given platforms  |
+| nosa buildextend-metal | Generate metal artifacts for the given platforms |
+| nosa buildextend-metal4k | Generate metal4k artifacts for the given platforms |
+| nosa buildextend-live | Generate the Live ISO |
 
-#### Contribution
+#### LICENSE
 
-1.  Fork the repository
-2.  Create Feat_xxx branch
-3.  Commit your code
-4.  Create Pull Request
+nestos-assembler complies with the Apache 2.0 copyright agreement.
 
+#### Notice
 
-#### Gitee Feature
-
-1.  You can use Readme\_XXX.md to support different languages, such as Readme\_en.md, Readme\_zh.md
-2.  Gitee blog [blog.gitee.com](https://blog.gitee.com)
-3.  Explore open source project [https://gitee.com/explore](https://gitee.com/explore)
-4.  The most valuable open source project [GVP](https://gitee.com/gvp)
-5.  The manual of Gitee [https://gitee.com/help](https://gitee.com/help)
-6.  The most popular members  [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+nestos-assembler is a fork of coreos-assembler(https://github.com/coreos/coreos-assembler), It will be adapted and maintained in the openEuler ecosystem, and independent evolution will be considered in the later stage.Thanks for the coreos-assembler project from Fedora coreos team.
