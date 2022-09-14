@@ -22,7 +22,7 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.symlink",
+		Name:        "nestos.ignition.symlink",
 		Run:         writeAbsoluteSymlink,
 		ClusterSize: 1,
 		Platforms:   []string{"qemu"},

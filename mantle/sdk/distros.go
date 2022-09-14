@@ -36,6 +36,8 @@ func TargetDistroFromName(artifact string) string {
 // TargetDistro returns the distribution of a cosa build
 func TargetDistro(build *cosa.Build) (string, error) {
 	switch build.Name {
+	case "nestos":
+		return "nestos", nil
 	case "rhcos":
 		return "rhcos", nil
 	case "fedora-coreos":

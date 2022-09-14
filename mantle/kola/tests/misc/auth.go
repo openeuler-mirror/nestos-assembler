@@ -23,7 +23,7 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         AuthVerify,
 		ClusterSize: 1,
-		Name:        "coreos.auth.verify",
+		Name:        "nestos.auth.verify",
 	})
 }
 

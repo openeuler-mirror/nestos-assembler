@@ -57,7 +57,7 @@ func init() {
 		Run:            NFSv4,
 		ClusterSize:    0,
 		Name:           "linux.nfs.v4",
-		ExcludeDistros: []string{"fcos"},
+		ExcludeDistros: []string{"fcos", "nestos"},
 
 		// Disabled on Azure because setting hostname
 		// is required at the instance creation level

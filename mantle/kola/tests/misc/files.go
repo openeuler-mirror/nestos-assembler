@@ -26,8 +26,8 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         Filesystem,
 		ClusterSize: 1,
-		Name:        "fcos.filesystem",
-		Distros:     []string{"fcos"},
+		Name:        "nestos.filesystem",
+		Distros:     []string{"fcos", "nestos"},
 	})
 }
 
@@ -101,6 +101,7 @@ func SUIDFiles(c cluster.TestCluster) {
 		"/usr/sbin/grub2-set-bootflag",
 		"/usr/sbin/mount.nfs",
 		"/usr/sbin/pam_timestamp_check",
+		"/usr/libexec/dbus-1/dbus-daemon-launch-helper",
 	}
 
 	sugidFiles(c, validfiles, "4000")
@@ -111,6 +112,9 @@ func SGIDFiles(c cluster.TestCluster) {
 		"/usr/bin/write",
 		"/usr/libexec/openssh/ssh-keysign",
 		"/usr/libexec/utempter/utempter",
+		"/usr/bin/cgclassify",
+		"/usr/bin/cgexec",
+		"/usr/bin/wall",
 	}
 
 	sugidFiles(c, validfiles, "2000")
@@ -155,6 +159,7 @@ func StickyDirs(c cluster.TestCluster) {
 		"/tmp",
 		"/var/tmp",
 		"/run/user/1000/libpod",
+		"/run/ephemeral/var/tmp",
 	}
 
 	output := c.MustSSH(m, fmt.Sprintf("sudo find / -ignore_readdir_race -path %s -prune -o -type d -perm /1000 -print", strings.Join(ignore, " -prune -o -path ")))

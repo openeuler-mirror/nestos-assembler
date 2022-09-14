@@ -30,7 +30,7 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.failure",
+		Name:        "nestos.ignition.failure",
 		Run:         runIgnitionFailure,
 		ClusterSize: 0,
 		Platforms:   []string{"qemu-unpriv"},

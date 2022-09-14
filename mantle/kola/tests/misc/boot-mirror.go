@@ -58,7 +58,7 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         runBootMirrorTest,
 		ClusterSize: 0,
-		Name:        `coreos.boot-mirror`,
+		Name:        `nestos.boot-mirror`,
 		Platforms:   []string{"qemu-unpriv"},
 		// Can't mirror boot disk on s390x
 		ExcludeArchitectures: []string{"s390x"},
@@ -72,7 +72,7 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         runBootMirrorLUKSTest,
 		ClusterSize: 0,
-		Name:        `coreos.boot-mirror.luks`,
+		Name:        `nestos.boot-mirror.luks`,
 		Platforms:   []string{"qemu-unpriv"},
 		// Can't mirror boot disk on s390x, and qemu s390x doesn't
 		// support TPM
@@ -83,6 +83,7 @@ func init() {
 		Tags:             []string{"boot-mirror", "luks", "raid1", "tpm2", kola.NeedsInternetTag},
 		FailFast:         true,
 		Timeout:          15 * time.Minute,
+		Distros:     []string{"fcos"},
 	})
 }
 

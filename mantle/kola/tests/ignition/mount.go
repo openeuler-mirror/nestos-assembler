@@ -30,7 +30,7 @@ import (
 func init() {
 	// mount disks to `/var/log` and `/var/lib/containers`
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.mount.disks",
+		Name:        "nestos.ignition.mount.disks",
 		Run:         testMountDisks,
 		ClusterSize: 0,
 		Platforms:   []string{"qemu"},
@@ -38,7 +38,7 @@ func init() {
 	})
 	// create new partiitons with disk `vda`
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.mount.partitions",
+		Name:        "nestos.ignition.mount.partitions",
 		Run:         testMountPartitions,
 		ClusterSize: 0,
 		Platforms:   []string{"qemu"},

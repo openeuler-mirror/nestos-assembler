@@ -43,7 +43,7 @@ func init() {
 		ClusterSize: 1,
 		Name:        `podman.workflow`,
 		Flags:       []register.Flag{register.RequiresInternetAccess}, // For pulling nginx
-		Distros:     []string{"fcos"},
+		Distros:     []string{"fcos", "nestos"},
 		FailFast:    true,
 	})
 	register.RegisterTest(&register.Test{
@@ -52,7 +52,7 @@ func init() {
 		Name:        `podman.network-single`,
 		// Not really but podman blows up if there's no /etc/resolv.conf
 		Tags:    []string{kola.NeedsInternetTag},
-		Distros: []string{"fcos"},
+		Distros: []string{"fcos", "nestos"},
 		Timeout: 20 * time.Minute,
 	})
 	// https://github.com/coreos/mantle/pull/1080

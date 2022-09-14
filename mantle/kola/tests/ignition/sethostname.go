@@ -44,7 +44,7 @@ func init() {
 	// is required by the API and is overwritten via waagent.service
 	// after the machine has booted.
 	register.RegisterTest(&register.Test{
-		Name:             "coreos.ignition.sethostname",
+		Name:             "nestos.ignition.sethostname",
 		Run:              setHostname,
 		ClusterSize:      1,
 		UserData:         config,

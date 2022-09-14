@@ -50,7 +50,7 @@ func init() {
 			"httpd": register.CreateNativeFuncWrap(httpd),
 		},
 		Tags:    []string{"upgrade"},
-		Distros: []string{"fcos"},
+		Distros: []string{"fcos", "nestos"},
 		// This Ignition does a few things:
 		// 1. bumps Zincati verbosity
 		// 2. auto-runs httpd once kolet is scp'ed

@@ -26,7 +26,7 @@ const ignitionJournalMsgId = "57124006b5c94805b77ce473e92a8aeb"
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.journald-log",
+		Name:        "nestos.ignition.journald-log",
 		Run:         sendJournaldLog,
 		ClusterSize: 1,
 		// Since RHCOS uses the 2x spec and not 3x.

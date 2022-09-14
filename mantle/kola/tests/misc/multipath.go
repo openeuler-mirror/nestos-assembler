@@ -103,7 +103,6 @@ func init() {
 		Run:           runMultipathDay2,
 		ClusterSize:   1,
 		Platforms:     []string{"qemu-unpriv"},
-		MultiPathDisk: true,
 	})
 	register.RegisterTest(&register.Test{
 		Name:            "multipath.partition",

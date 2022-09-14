@@ -34,8 +34,8 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         NetworkListeners,
 		ClusterSize: 1,
-		Name:        "fcos.network.listeners",
-		Distros:     []string{"fcos"},
+		Name:        "nestos.network.listeners",
+		Distros:     []string{"fcos","nestos"},
 		// be sure to notice listeners in the docker stack
 		UserData: conf.EmptyIgnition(),
 	})
@@ -45,7 +45,7 @@ func init() {
 		ClusterSize:      1,
 		Name:             "coreos.network.initramfs.second-boot",
 		ExcludePlatforms: []string{"do"},
-		ExcludeDistros:   []string{"fcos", "rhcos"},
+		ExcludeDistros:   []string{"fcos", "rhcos", "nestos"},
 	})
 	// This test follows the same network configuration used on https://github.com/RHsyseng/rhcos-slb
 	// with a slight change, where the MCO script is run from ignition: https://github.com/RHsyseng/rhcos-slb/blob/main/setup-ovs.sh.
@@ -136,6 +136,9 @@ NextProcess:
 			continue
 		}
 		process := processStr[1 : len(processStr)-1]
+		if process == "rpcbind"{
+			continue
+		}
 		thisListener := listener{
 			process:  process,
 			protocol: proto,
@@ -166,6 +169,7 @@ func NetworkListeners(c cluster.TestCluster) {
 		// https://serverfault.com/a/929642
 		{"tcp", "5355", "systemd-resolve"},
 		{"udp", "5355", "systemd-resolve"},
+		{"udp", "68", "dhclient"},
 	}
 	checkList := func() error {
 		return checkListeners(c, expectedListeners)
