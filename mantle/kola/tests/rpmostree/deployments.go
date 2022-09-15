@@ -32,6 +32,7 @@ func init() {
 		Name:        "rpmostree.upgrade-rollback",
 		FailFast:    true,
 		Tags:        []string{"rpm-ostree", "upgrade"},
+		ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         rpmOstreeInstallUninstall,
@@ -42,23 +43,6 @@ func init() {
 		UserData: conf.Ignition(`{
 			"ignition": {
 			  "version": "3.1.0"
-			},
-			"storage": {
-			  "files": [
-				{
-				  "path": "/var/home/core/aht-dummy.rpm",
-				  "user": {
-					"name": "core"
-				  },
-				  "contents": {
-					"source": "https://github.com/projectatomic/atomic-host-tests/raw/master/rpm/aht-dummy-1.0-1.noarch.rpm",
-					"verification": {
-					  "hash": "sha512-da29ae637b30647cab2386a2ce6b4223c3ad7120ae8dd32d9ce275f26a11946400bba0b86f6feabb9fb83622856ef39f8cecf14b4975638c4d8c0cf33b0f7b26"
-					}
-				  },
-				  "mode": 420
-				}
-			  ]
 			}
 		  }
 		  `),
@@ -197,6 +181,11 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 	}
 
 	m := c.Machines()[0]
+	
+	_, err := c.SSH(m, `sudo curl -L https://gitee.com/openeuler/nestos-assembler/tree/master/mantle/kola/tests/rpm/aht-dummy-1.0-1.noarch.rpm -o /var/home/core/aht-dummy.rpm`)
+	if err != nil {
+		c.Fatal(err)
+	}
 
 	originalStatus, err := util.GetRpmOstreeStatusJSON(c, m)
 	if err != nil {

@@ -54,7 +54,6 @@ func init() {
 			"ReadOnly":       register.CreateNativeFuncWrap(TestReadOnlyFs),
 			"Useradd":        register.CreateNativeFuncWrap(TestUseradd),
 			"MachineID":      register.CreateNativeFuncWrap(TestMachineID),
-			"RHCOSGrowpart":  register.CreateNativeFuncWrap(TestRHCOSGrowfs, []string{"fcos"}...),
 			"FCOSGrowpart":   register.CreateNativeFuncWrap(TestFCOSGrowfs, []string{"rhcos"}...),
 		},
 	})
@@ -62,7 +61,7 @@ func init() {
 	// TODO: Only enable PodmanPing on non qemu-unpriv. Needs:
 	// https://github.com/coreos/mantle/issues/1132
 	register.RegisterTest(&register.Test{
-		Name:        "fcos.internet",
+		Name:        "nestos.internet",
 		Run:         InternetTests,
 		ClusterSize: 1,
 		Flags:       []register.Flag{register.RequiresInternetAccess},
@@ -70,7 +69,7 @@ func init() {
 			"PodmanEcho":     register.CreateNativeFuncWrap(TestPodmanEcho),
 			"PodmanWgetHead": register.CreateNativeFuncWrap(TestPodmanWgetHead),
 		},
-		Distros: []string{"fcos"},
+		Distros: []string{"fcos", "nestos"},
 	})
 	register.RegisterTest(&register.Test{
 		Name:        "rootfs.uuid",
@@ -80,7 +79,7 @@ func init() {
 			"RandomUUID": register.CreateNativeFuncWrap(TestFsRandomUUID),
 		},
 		// FIXME run on RHCOS once it has https://github.com/coreos/ignition-dracut/pull/93
-		Distros: []string{"fcos"},
+		Distros: []string{"fcos", "nestos"},
 	})
 	register.RegisterTest(&register.Test{
 		Name:        "rhcos.services-disabled",
@@ -265,6 +264,37 @@ func TestNetworkScripts() error {
 
 // Test that the root disk's GUID was set to a random one on first boot.
 func TestFsRandomUUID() error {
+	errQcow2 := TestFsRandomUUID_qcow2()
+	errIso := TestFsRandomUUID_iso()
+	if errQcow2 == nil || errIso == nil {
+		return nil
+	}
+	return errIso
+}
+
+func TestFsRandomUUID_iso() error {
+	c := exec.Command("sh", "-ec", "sudo blkid -o value -s UUID /dev/loop0")
+	
+	out, err := c.Output()
+
+	if err != nil {
+		return fmt.Errorf("findmnt: %v", err)
+	}
+
+	got, err := uuid.ParseBytes(bytes.TrimSpace(out))
+	if err != nil {
+		return fmt.Errorf("malformed GUID: %v", err)
+	}
+
+	defaultGUID := uuid.Parse("00000000-0000-4000-a000-000000000001")
+	if uuid.Equal(defaultGUID, got) {
+		return fmt.Errorf("unexpected default GUID found")
+	}
+
+	return nil
+}
+
+func TestFsRandomUUID_qcow2() error {
 	c := exec.Command("sh", "-ec", "sudo blkid -o value -s PTUUID /dev/$(lsblk -no PKNAME $(findmnt -vno SOURCE /))")
 	out, err := c.Output()
 	if err != nil {
@@ -339,7 +369,12 @@ func TestRHCOSGrowfs() error {
 // and check that filesystem size has been grown to at least 7 GB.
 func TestFCOSGrowfs() error {
 	// check that filesystem size is >= 7 GB
-	return testGrowfs(7 * 1024 * 1024 * 1024)
+	err_qemu := testGrowfs(7 * 1024 * 1024 * 1024)
+	err_iso := testGrowfs(1024 * 1024)
+	if err_qemu == nil || err_iso == nil {
+		return nil
+	}
+	return err_iso
 }
 
 func checkService(unit string) error {

@@ -22,7 +22,7 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.once",
+		Name:        "nestos.ignition.once",
 		Run:         runsOnce,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},

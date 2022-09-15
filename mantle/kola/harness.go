@@ -1070,15 +1070,15 @@ func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
 				return err
 			}
 		} else if isreg && (c.Mode().Perm()&0001) == 0 {
-			file, err := os.Open(filepath.Join(dir, c.Name()))
+			_, err := os.Open(filepath.Join(dir, c.Name()))
 			if err != nil {
 				return errors.Wrapf(err, "opening %s", c.Name())
 			}
-			scanner := bufio.NewScanner(file)
+			/*scanner := bufio.NewScanner(file)
 			scanner.Scan()
 			if strings.HasPrefix(scanner.Text(), "#!") {
 				plog.Warningf("Found non-executable file with shebang: %s\n", c.Name())
-			}
+			}*/
 		}
 	}
 

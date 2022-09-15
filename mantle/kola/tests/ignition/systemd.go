@@ -22,7 +22,7 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.systemd.enable-service",
+		Name:        "nestos.ignition.systemd.enable-service",
 		Run:         enableSystemdService,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},
@@ -49,7 +49,7 @@ func init() {
 		// https://github.com/coreos/fedora-coreos-tracker/issues/121).
 		// Should probably just pick a different unit to test with, though
 		// testing the NFS workflow is useful for RHCOS.
-		ExcludeDistros: []string{"fcos"},
+		ExcludeDistros: []string{"fcos", "nestos"},
 	})
 }
 

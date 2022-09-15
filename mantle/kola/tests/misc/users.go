@@ -26,8 +26,8 @@ func init() {
 		Run:              CheckUserShells,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"gce"},
-		Name:             "fcos.users.shells",
-		Distros:          []string{"fcos"},
+		Name:             "nestos.users.shells",
+		Distros:          []string{"fcos","nestos"},
 	})
 }
 

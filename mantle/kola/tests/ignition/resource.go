@@ -65,7 +65,7 @@ var (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.resource.local",
+		Name:        "nestos.ignition.resource.local",
 		Run:         resourceLocal,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
@@ -73,11 +73,11 @@ func init() {
 		},
 		Tags: []string{"ignition"},
 		// https://github.com/coreos/bugs/issues/2205
-		ExcludePlatforms: []string{"do", "qemu-unpriv"},
+		ExcludePlatforms: []string{"do", "qemu-unpriv", "qemu-iso"},
 		Timeout:          20 * time.Minute,
 	})
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.resource.remote",
+		Name:        "nestos.ignition.resource.remote",
 		Run:         resourceRemote,
 		ClusterSize: 1,
 		Flags:       []register.Flag{register.RequiresInternetAccess},
@@ -91,93 +91,15 @@ func init() {
 		  "storage": {
 		      "files": [
 			  {
-			      "path": "/var/resource/http",
-			      "contents": {
-				  "source": "http://rh-kola-fixtures.s3.amazonaws.com/resources/anonymous"
-			      },
-			      "mode": 420
-			  },
-			  {
 			      "path": "/var/resource/https",
 			      "contents": {
-				  "source": "https://rh-kola-fixtures.s3.amazonaws.com/resources/anonymous"
-			      },
-			      "mode": 420
-			  },
-			  {
-			      "path": "/var/resource/s3-anon",
-			      "contents": {
-				  "source": "s3://rh-kola-fixtures/resources/anonymous"
+				  "source": "https://gitee.com/openeuler/nestos-assembler/tree/master/mantle/kola/tests/nestos-ignition-resource-local.txt"
 			      },
 			      "mode": 420
 			  }
 		      ]
 		  }
 	      }`),
-	})
-	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.resource.s3",
-		Run:         resourceS3,
-		ClusterSize: 1,
-		Platforms:   []string{"aws"},
-		Tags:        []string{"ignition"},
-		UserData: conf.Ignition(`{
-		  "ignition": {
-		      "version": "3.0.0",
-		      "config": {
-		          "merge": [{
-		              "source": "s3://rh-kola-fixtures/resources/authenticated-var-v3.ign"
-		          }]
-		      }
-		  },
-		  "storage": {
-		      "files": [
-			  {
-			      "path": "/var/resource/s3-auth",
-			      "contents": {
-				  "source": "s3://rh-kola-fixtures/resources/authenticated"
-			      },
-			      "mode": 420
-			  }
-		      ]
-		  }
-	      }`),
-	})
-	// TODO: once Ignition supports this on all channels/distros
-	//       this test should be rolled into coreos.ignition.resources.remote
-	// Test specifically for versioned s3 objects
-	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.resource.s3.versioned",
-		Run:         resourceS3Versioned,
-		ClusterSize: 1,
-		Flags:       []register.Flag{register.RequiresInternetAccess},
-		Tags:        []string{"ignition"},
-		// https://github.com/coreos/bugs/issues/2205 for DO
-		ExcludePlatforms: []string{"do"},
-		UserData: conf.Ignition(`{
-		  "ignition": {
-		      "version": "3.0.0"
-		  },
-		  "storage": {
-		      "files": [
-			  {
-			      "path": "/var/resource/original",
-			      "contents": {
-				  "source": "https://rh-kola-fixtures.s3.amazonaws.com/resources/versioned?versionId=Ym98GTx0npVaJznSAd0I1eUjFoZMP8Zo"
-			      },
-			      "mode": 420
-			  },
-			  {
-			      "path": "/var/resource/latest",
-			      "contents": {
-				  "source": "https://rh-kola-fixtures.s3.amazonaws.com/resources/versioned"
-			      },
-			      "mode": 420
-			  }
-		      ]
-		  }
-	      }`),
-		Distros: []string{"rhcos"},
 	})
 }
 

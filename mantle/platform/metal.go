@@ -638,11 +638,11 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 			// Ideally we'd use the coreos-installer of the target build here, because it's part
 			// of the test workflow, but that's complex... Sadly, probably easiest is to spin up
 			// a VM just to get the minimal ISO.
-			cmd := exec.Command("coreos-installer", "iso", "extract", "minimal-iso", srcisopath,
+			cmd := exec.Command("nestos-installer", "iso", "extract", "minimal-iso", srcisopath,
 				minisopath, "--output-rootfs", rootfs_path, "--rootfs-url", baseurl+"/rootfs.img")
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				return nil, errors.Wrapf(err, "running coreos-installer iso extract minimal")
+				return nil, errors.Wrapf(err, "running nestos-installer iso extract minimal")
 			}
 			srcisopath = minisopath
 		}
@@ -687,17 +687,17 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 
 		args := []string{"iso", "network", "embed", newIso}
 		args = append(args, keyfileArgs...)
-		cmd = exec.Command("coreos-installer", args...)
+		cmd = exec.Command("nestos-installer", args...)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return nil, errors.Wrapf(err, "running coreos-installer iso network embed")
+			return nil, errors.Wrapf(err, "running nestos-installer iso network embed")
 		}
 
 		// force networking on in the initrd to verify the keyfile was used
-		cmd = exec.Command("coreos-installer", "iso", "kargs", "modify", newIso, "--append", "rd.neednet=1")
+		cmd = exec.Command("nestos-installer", "iso", "kargs", "modify", newIso, "--append", "rd.neednet=1")
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return nil, errors.Wrapf(err, "running coreos-installer iso kargs modify")
+			return nil, errors.Wrapf(err, "running nestos-installer iso kargs modify")
 		}
 		srcisopath = newIso
 		installerConfig.CopyNetwork = true

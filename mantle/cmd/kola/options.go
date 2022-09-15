@@ -37,7 +37,7 @@ var (
 	kolaPlatform      string
 	kolaArchitectures = []string{"amd64"}
 	kolaPlatforms     = []string{"aws", "azure", "do", "esx", "gce", "openstack", "packet", "qemu", "qemu-unpriv", "qemu-iso"}
-	kolaDistros       = []string{"fcos", "rhcos"}
+	kolaDistros       = []string{"fcos", "rhcos", "nestos"}
 )
 
 func init() {

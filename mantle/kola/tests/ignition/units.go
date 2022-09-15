@@ -22,7 +22,7 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "coreos.ignition.instantiated.enable-unit",
+		Name:        "nestos.ignition.instantiated.enable-unit",
 		Run:         enableSystemdInstantiatedService,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},

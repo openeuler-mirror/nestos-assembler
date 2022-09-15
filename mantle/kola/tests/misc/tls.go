@@ -21,9 +21,7 @@ import (
 
 var (
 	urlsToFetch = []string{
-		"https://www.example.com/",
-		"https://www.wikipedia.org/",
-		"https://start.fedoraproject.org/",
+		"https://www.baidu.com/",
 	}
 )
 
@@ -31,7 +29,7 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         TestTLSFetchURLs,
 		ClusterSize: 1,
-		Name:        "coreos.tls.fetch-urls",
+		Name:        "nestos.tls.fetch-urls",
 		Flags:       []register.Flag{register.RequiresInternetAccess}, // Networking outside cluster required
 	})
 }

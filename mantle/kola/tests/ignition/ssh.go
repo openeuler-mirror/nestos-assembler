@@ -24,7 +24,7 @@ func init() {
 	// verify that SSH key injection works correctly through Ignition,
 	// without injecting via platform metadata
 	register.RegisterTest(&register.Test{
-		Name:             "coreos.ignition.ssh.key",
+		Name:             "nestos.ignition.ssh.key",
 		Run:              noAfterburnSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu"}, // redundant on qemu

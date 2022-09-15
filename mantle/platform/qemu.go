@@ -1164,12 +1164,12 @@ func (builder *QemuBuilder) setupUefi(secureBoot bool) error {
 // https://github.com/coreos/coreos-installer/pull/341. Can be dropped once
 // that PR is in all the cosa branches we care about.
 func coreosInstallerSupportsISOKargs() (bool, error) {
-	cmd := exec.Command("coreos-installer", "iso", "--help")
+	cmd := exec.Command("nestos-installer", "iso", "--help")
 	cmd.Stderr = os.Stderr
 	var outb bytes.Buffer
 	cmd.Stdout = &outb
 	if err := cmd.Run(); err != nil {
-		return false, errors.Wrapf(err, "running coreos-installer iso --help")
+		return false, errors.Wrapf(err, "running nestos-installer iso --help")
 	}
 	out := outb.String()
 	return strings.Contains(out, "kargs"), nil
@@ -1196,11 +1196,11 @@ func (builder *QemuBuilder) setupIso() error {
 		if err != nil {
 			return err
 		}
-		instCmd := exec.Command("coreos-installer", "iso", "ignition", "embed", isoEmbeddedPath)
+		instCmd := exec.Command("nestos-installer", "iso", "ignition", "embed", isoEmbeddedPath)
 		instCmd.Stdin = configf
 		instCmd.Stderr = os.Stderr
 		if err := instCmd.Run(); err != nil {
-			return errors.Wrapf(err, "running coreos-installer iso embed")
+			return errors.Wrapf(err, "running nestos-installer iso embed")
 		}
 		builder.configInjected = true
 	}
@@ -1209,21 +1209,21 @@ func (builder *QemuBuilder) setupIso() error {
 		return err
 	} else if kargsSupported {
 		allargs := fmt.Sprintf("console=%s %s", consoleKernelArgument[system.RpmArch()], builder.AppendKernelArgs)
-		instCmdKargs := exec.Command("coreos-installer", "iso", "kargs", "modify", "--append", allargs, isoEmbeddedPath)
+		instCmdKargs := exec.Command("nestos-installer", "iso", "kargs", "modify", "--append", allargs, isoEmbeddedPath)
 		var stderrb bytes.Buffer
 		instCmdKargs.Stderr = &stderrb
 		if err := instCmdKargs.Run(); err != nil {
 			// Don't make this a hard error if it's just for console; we
 			// may be operating on an old live ISO
 			if len(builder.AppendKernelArgs) > 0 {
-				return errors.Wrapf(err, "running `coreos-installer iso kargs modify`; old CoreOS ISO?")
+				return errors.Wrapf(err, "running `nestos-installer iso kargs modify`; old CoreOS ISO?")
 			}
 			stderr := stderrb.String()
-			plog.Warningf("running coreos-installer iso kargs modify: %v: %q", err, stderr)
+			plog.Warningf("running nestos-installer iso kargs modify: %v: %q", err, stderr)
 			plog.Warning("likely targeting an old CoreOS ISO; ignoring...")
 		}
 	} else if len(builder.AppendKernelArgs) > 0 {
-		return fmt.Errorf("coreos-installer does not support appending kernel args")
+		return fmt.Errorf("nestos-installer does not support appending kernel args")
 	}
 
 	if builder.isoAsDisk {
