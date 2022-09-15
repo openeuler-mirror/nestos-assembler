@@ -29,3 +29,12 @@ func GenPodmanScratchContainer(c cluster.TestCluster, m platform.Machine, name s
 			sudo podman build --network host --layers=false -t localhost/%s .`
 	c.RunCmdSyncf(m, cmd, strings.Join(binnames, " "), name)
 }
+
+// GenIsulaScratchContainer creates a podman scratch container out of binaries from the host
+func GenIsulaScratchContainer(c cluster.TestCluster, m platform.Machine, name string, binnames []string) {
+	cmd := `tmpdir=$(mktemp -d); cd $tmpdir; echo -e "FROM scratch\nCOPY . /" > Dockerfile;
+	        b=$(which %s); libs=$(sudo ldd $b | grep -o /lib'[^ ]*' | sort -u);
+			sudo rsync -av --relative --copy-links $b $libs ./;
+			sudo isula-build ctr-img build -f Dockerfile -o isulad:echo1:latest .`
+	c.RunCmdSyncf(m, cmd, strings.Join(binnames, " "))
+}

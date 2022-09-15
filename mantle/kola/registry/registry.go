@@ -11,6 +11,7 @@ import (
 	_ "github.com/coreos/mantle/kola/tests/misc"
 	_ "github.com/coreos/mantle/kola/tests/ostree"
 	_ "github.com/coreos/mantle/kola/tests/podman"
+	_ "github.com/coreos/mantle/kola/tests/isula"
 	_ "github.com/coreos/mantle/kola/tests/rhcos"
 	_ "github.com/coreos/mantle/kola/tests/rpmostree"
 	_ "github.com/coreos/mantle/kola/tests/upgrade"
