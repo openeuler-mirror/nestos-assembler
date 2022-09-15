@@ -40,7 +40,13 @@ install_rpms() {
 
     # freeze kernel due to https://github.com/coreos/coreos-assembler/issues/2707
     frozendeps=$(echo kernel{,-core,-modules}-5.15.18-200.fc35)
-
+    yum install -y systemd systemd-udev dracut linux-firmware
+    arch=$(uname -m)
+    case $arch in
+    "x86_64")  rpm -iUh kernel-core-5.15.18-200.fc35.x86_64.rpm kernel-modules-5.15.18-200.fc35.x86_64.rpm   ;;
+    "aarch64")  rpm -iUh kernel-core-5.15.18-200.fc35.aarch64.rpm kernel-modules-5.15.18-200.fc35.aarch64.rpm   ;;
+    *)         fatal "Architecture ${arch} not supported"
+    esac
     # First, a general update; this is best practice.  We also hit an issue recently
     # where qemu implicitly depended on an updated libusbx but didn't have a versioned
     # requires https://bugzilla.redhat.com/show_bug.cgi?id=1625641
@@ -68,6 +74,15 @@ install_rpms() {
     # can't remove grubby on el7 because libguestfs-tools depends on it
     # Add --exclude for s390utils-base because we need it to not get removed.
     rpm -q grubby && yum remove --exclude=s390utils-base -y grubby
+
+    yum remove -y rpm-ostree
+    yum install -y bubblewrap ostree
+    arch=$(uname -m)
+    case $arch in
+    "x86_64")  rpm -iUh rpm-ostree-2021.14-3.fc35.x86_64.rpm rpm-ostree-libs-2021.14-3.fc35.x86_64.rpm nestos-installer-0.14.0-2.x86_64.rpm  ;;
+    "aarch64") rpm -iUh rpm-ostree-2021.14-3.fc35.aarch64.rpm rpm-ostree-libs-2021.14-3.fc35.aarch64.rpm nestos-installer-0.14.0-2.aarch64.rpm  ;;
+    *)         fatal "Architecture ${arch} not supported"
+    esac
 
     # Allow Kerberos Auth to work from a keytab. The keyring is not
     # available in a Container.
