@@ -61,7 +61,7 @@ systemd:
 }
 
 var (
-	rpmUrl  string = "https://raw.githubusercontent.com/projectatomic/atomic-host-tests/master/rpm/aht-dummy-1.0-1.noarch.rpm"
+	rpmUrl  string = "https://gitee.com/openeuler/nestos-assembler/tree/master/mantle/kola/tests/rpm/aht-dummy-1.0-1.noarch.rpm"
 	rpmName string = "aht-dummy"
 )
 

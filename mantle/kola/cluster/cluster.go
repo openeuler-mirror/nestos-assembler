@@ -167,7 +167,6 @@ func (t *TestCluster) SSH(m platform.Machine, cmd string) ([]byte, error) {
 		for _, line := range strings.Split(string(stderr), "\n") {
 			t.Log(line)
 		}
-		t.Fatal(stderr)
 	}
 	if err != nil{
 		if strings.Contains(string(stdout), "aht-dummy"){
