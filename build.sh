@@ -104,6 +104,9 @@ make_and_makeinstall() {
 }
 
 configure_user(){
+    # modify Time Zone
+    rm -f /etc/localtime
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
     # /dev/kvm might be bound in, but will have the gid from the host, and not all distros
     # a+rw permissions on /dev/kvm. create groups for all the common kvm gids and then add
     # builder to them.
