@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+from ctypes import *
+
+# Parse args and dispatch
+parser = argparse.ArgumentParser()
+parser.add_argument("-b", "--distro", help="Distribution: fcos, rhcos, nestos,DEFAULT nestos")
+parser.add_argument("--qemu", help="path to NestOS qcow2 image", )
+parser.add_argument("--iso", help="path to NestOS iso image")
+parser.add_argument("subargs", help="Remaining arguments for kola", nargs='*',
+                    default=[])
+args, unknown_args = parser.parse_known_args()
+
+distros = ["fcos", "rhcos", "nestos"]
+
+if args.distro is None:
+    args.distro= "nestos"
+if args.distro not in distros:
+    print("Error:unsupported distro ", args.distro)
+    exit()
+if args.qemu is None and args.iso is None:
+    print("image(qemu,iso) path must")
+    exit()
+image_path = args.iso if args.qemu is None else args.qemu 
+
+run_cmd = "kola run -b "+ args.distro
+run_cmd += " --qemu-iso "+ image_path if args.qemu is None else " --qemu-image "+ image_path
+if len(args.subargs) != 0:
+    for subarg in args.subargs:
+        run_cmd += " "+ subarg 
+
+if args.qemu:
+    save_path = "./tmp/kola/qemu-unpriv-latest/reports/report.txt"
+if args.iso:
+    save_path = "./tmp/kola/qemu-iso-latest/reports/report.txt"
+
+result = os.popen(run_cmd).read()
+
+with open(save_path,'w',encoding='utf-8') as f:
+    f.write(result)
+
+str_list = result.split()
+fail_case = []
+success_case = []
+
+for line in range(len(str_list)):
+    if str_list[line] == "FAIL:":
+        fail_case.append(str_list[line+1])
+    if str_list[line] == "PASS:":
+        if '/' in str_list[line+1]:
+            success_case.append(str_list[line+1])
+
+print("失败 {} 例：{}".format(len(fail_case), fail_case))
+print("成功 {} 例：{}".format(len(success_case), success_case))
+print("日志保存至：{}".format(save_path))
+
+
