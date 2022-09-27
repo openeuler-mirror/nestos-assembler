@@ -169,7 +169,7 @@ func rpmOstreeUpgradeRollback(c cluster.TestCluster) {
 // This uses a dummy RPM that was originally created for the atomic-host-tests;
 // see: https://github.com/projectatomic/atomic-host-tests
 func rpmOstreeInstallUninstall(c cluster.TestCluster) {
-	var ahtRpmPath = "/var/home/core/aht-dummy.rpm"
+	var ahtRpmPath = "/var/home/core/aht-dummy-1.0-1.noarch.rpm"
 	var installPkgName = "aht-dummy-1.0-1.noarch"
 	var installBinName = "aht-dummy"
 	var installBinPath string
@@ -182,7 +182,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	m := c.Machines()[0]
 	
-	_, err := c.SSH(m, `sudo curl -L https://gitee.com/openeuler/nestos-assembler/tree/master/mantle/kola/tests/rpm/aht-dummy-1.0-1.noarch.rpm -o /var/home/core/aht-dummy.rpm`)
+	_, err := c.SSH(m, `sudo wget http://124.126.103.127/nestos/kola/rpm/aht-dummy-1.0-1.noarch.rpm`)
 	if err != nil {
 		c.Fatal(err)
 	}
