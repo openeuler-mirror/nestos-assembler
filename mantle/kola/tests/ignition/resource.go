@@ -91,9 +91,9 @@ func init() {
 		  "storage": {
 		      "files": [
 			  {
-			      "path": "/var/resource/https",
+			      "path": "/var/resource/http",
 			      "contents": {
-				  "source": "https://gitee.com/openeuler/nestos-assembler/tree/master/mantle/kola/tests/nestos-ignition-resource-local.txt"
+				  "source": "http://124.126.103.127/nestos/kola/nestos-ignition-resource-remote.txt"
 			      },
 			      "mode": 420
 			  }
@@ -131,9 +131,7 @@ func resourceRemote(c cluster.TestCluster) {
 	m := c.Machines()[0]
 
 	checkResources(c, m, map[string]string{
-		"http":    "kola-anonymous",
-		"https":   "kola-anonymous",
-		"s3-anon": "kola-anonymous",
+		"http":   "NestOS",
 	})
 }
 
