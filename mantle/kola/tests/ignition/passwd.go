@@ -99,12 +99,12 @@ func groups(c cluster.TestCluster) {
 	tests := []groupTest{
 		{
 			group:         "group1",
-			groupRecord:   "group1:*:501:",
+			groupRecord:   "group1:x:501:",
 			gshadowRecord: "group1:*::",
 		},
 		{
 			group:         "group2",
-			groupRecord:   "group2:foobar:502:",
+			groupRecord:   "group2:x:502:",
 			gshadowRecord: "group2:foobar::",
 		},
 	}

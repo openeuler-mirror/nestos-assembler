@@ -79,7 +79,7 @@ func rpmOstreeUpgradeRollback(c cluster.TestCluster) {
 		newCommit := c.MustSSH(m, createCommit)
 
 		// use "rpm-ostree rebase" to get to the "new" commit
-		c.RunCmdSync(m, "sudo rpm-ostree rebase :"+newBranch)
+		c.RunCmdSync(m, "sudo rpm-ostree rebase :"+newBranch+" --bypass-driver")
 
 		// get latest rpm-ostree status output to check validity
 		postUpgradeStatus, err := util.GetRpmOstreeStatusJSON(c, m)
@@ -182,7 +182,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	m := c.Machines()[0]
 	
-	_, err := c.SSH(m, `sudo wget http://124.126.103.127/nestos/kola/rpm/aht-dummy-1.0-1.noarch.rpm`)
+	_, err := c.SSH(m, `sudo wget http://1.203.97.152/kola/aht-dummy-1.0-1.noarch.rpm`)
 	if err != nil {
 		c.Fatal(err)
 	}

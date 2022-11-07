@@ -4,12 +4,6 @@ set -euo pipefail
 # Keep this script idempotent for local development rebuild use cases:
 # any consecutive runs should produce the same result.
 
-# Detect what platform we are on
-if ! grep -q '^Fedora' /etc/redhat-release; then
-    echo 1>&2 "should be on either Fedora"
-    exit 1
-fi
-
 arch=$(uname -m)
 
 if [ $# -gt 1 ]; then
@@ -31,26 +25,43 @@ configure_yum_repos() {
     # Add continuous tag for latest build tools and mark as required so we
     # can depend on those latest tools being available in all container
     # builds.
-    echo -e "[f${version_id}-coreos-continuous]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://kojipkgs.fedoraproject.org/repos-dist/f${version_id}-coreos-continuous/latest/\$basearch/\ngpgcheck=0\nskip_if_unavailable=False\n" > /etc/yum.repos.d/coreos.repo
+    #echo -e "[${version_id}-nestos]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://10.1.110.88/nestos-assembler/\ngpgcheck=0\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos.repo
+    rm -rf /etc/yum.repos.d/*
+    # openeuler 22.03-LTS
+    echo -e "[${version_id}]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS/standard_$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-LTS.repo
+    echo -e "[${version_id}-Next]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS:/Epol/standard_$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-EPOL.repo
+    
+    echo -e "[${version_id}-SP1]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS:/SP1/standard_$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-SP1.repo
+    echo -e "[${version_id}-SP1-epol]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS:/SP1:/Epol/standard_$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-sp1-epol.repo
 }
 
 install_rpms() {
     local builddeps
     local frozendeps
 
-    # freeze kernel due to https://github.com/coreos/coreos-assembler/issues/2707
-    frozendeps=$(echo kernel{,-core,-modules}-5.15.18-200.fc35)
-    yum install -y systemd systemd-udev dracut linux-firmware
+    # freeze kernel due to https://github.com/coreos/nestos-assembler/issues/2707
+    #frozendeps=$(echo kernel-5.10.0-60.41.0.73.oe2203)
+
+    yum install -y qemu-img qemu-block-iscsi qemu-block-curl qemu-hw-usb-host qemu-system-x86_64 qemu liburing-devel glib2-devel
     arch=$(uname -m)
     case $arch in
-    "x86_64")  rpm -iUh kernel-core-5.15.18-200.fc35.x86_64.rpm kernel-modules-5.15.18-200.fc35.x86_64.rpm   ;;
-    "aarch64")  rpm -iUh kernel-core-5.15.18-200.fc35.aarch64.rpm kernel-modules-5.15.18-200.fc35.aarch64.rpm   ;;
+    "x86_64")  rpm -iUh qemu-*.x86_64.rpm libslirp-*.x86_64.rpm;;
+    "aarch64")  rpm -iUh qemu-*.aarch64.rpm libslirp-*.aarch64.rpm;;
     *)         fatal "Architecture ${arch} not supported"
     esac
+
+    yum install -y grubby initscripts iptables nftables python3-setuptools linux-firmware bubblewrap json-c ostree json-glib polkit-libs ostree-devel dnf-plugins-core container-selinux oci-runtime
+    arch=$(uname -m)
+    case $arch in
+    "x86_64")  rpm -iUh kernel-5.10.0-60.41.0.73.oe2203.x86_64.rpm kernel-headers-5.10.0-60.41.0.73.oe2203.x86_64.rpm buildah-1.26.1-1.x86_64.rpm butane-0.14.0-1.oe2203.x86_64.rpm dumb-init-1.2.5-4.oe2203.x86_64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.x86_64.rpm rpm-ostree-2022.8-3.oe2203.x86_64.rpm rpm-ostree-devel-2022.8-3.oe2203.x86_64.rpm supermin-5.3.2-1.x86_64.rpm;;
+    "aarch64")  rpm -iUh kernel-5.10.0-118.0.0.64.oe2203.aarch64.rpm kernel-headers-5.10.0-118.0.0.64.oe2203.aarch64.rpm buildah-1.26.1-1.oe2203.aarch64.rpm butane-0.14.0-2.oe2203.aarch64.rpm dumb-init-1.2.5-1.oe2203.aarch64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.oe2203.aarch64.rpm rpm-ostree-2022.8-3.oe2203.aarch64.rpm rpm-ostree-devel-2022.8-3.oe2203.aarch64.rpm supermin-5.3.2-1.oe2203.aarch64.rpm;;
+    *)         fatal "Architecture ${arch} not supported"
+    esac
+    
     # First, a general update; this is best practice.  We also hit an issue recently
     # where qemu implicitly depended on an updated libusbx but didn't have a versioned
     # requires https://bugzilla.redhat.com/show_bug.cgi?id=1625641
-    yum -y distro-sync
+    #yum -y distro-sync
 
     # xargs is part of findutils, which may not be installed
     yum -y install /usr/bin/xargs
@@ -63,26 +74,12 @@ install_rpms() {
     builddeps=$(grep -v '^#' "${srcdir}"/src/build-deps.txt)
 
     # Process our base dependencies + build dependencies and install
-    (echo "${builddeps}" && echo "${frozendeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs yum -y install
+    #(echo "${builddeps}" && echo "${frozendeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs yum -y install
+    (echo "${builddeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs yum -y install
 
     # Add fast-tracked packages here.  We don't want to wait on bodhi for rpm-ostree
     # as we want to enable fast iteration there.
-    yum --enablerepo=updates-testing upgrade rpm-ostree
-
-    # Commented out for now, see above
-    #dnf remove -y ${builddeps}
-    # can't remove grubby on el7 because libguestfs-tools depends on it
-    # Add --exclude for s390utils-base because we need it to not get removed.
-    rpm -q grubby && yum remove --exclude=s390utils-base -y grubby
-
-    yum remove -y rpm-ostree
-    yum install -y bubblewrap ostree
-    arch=$(uname -m)
-    case $arch in
-    "x86_64")  rpm -iUh rpm-ostree-2021.14-3.fc35.x86_64.rpm rpm-ostree-libs-2021.14-3.fc35.x86_64.rpm nestos-installer-0.14.0-2.x86_64.rpm  ;;
-    "aarch64") rpm -iUh rpm-ostree-2021.14-3.fc35.aarch64.rpm rpm-ostree-libs-2021.14-3.fc35.aarch64.rpm nestos-installer-0.14.0-2.aarch64.rpm  ;;
-    *)         fatal "Architecture ${arch} not supported"
-    esac
+    #yum --enablerepo=updates-testing upgrade rpm-ostree
 
     # Allow Kerberos Auth to work from a keytab. The keyring is not
     # available in a Container.
@@ -101,6 +98,7 @@ install_rpms() {
 
 make_and_makeinstall() {
     make && make install
+    rm -rf /root/.cache/go-build
 }
 
 configure_user(){
@@ -129,6 +127,13 @@ configure_user(){
 }
 
 write_archive_info() {
+    cp -f ./packages /usr/lib64/guestfs/supermin.d/packages
+    #head -n -1 /etc/bashrc > ./bashrc
+    
+    #mv -f ./bashrc /etc/bashrc
+    head -n -1 /etc/bashrc
+    echo "TMOUT=32400" >> /etc/bashrc
+    #source /etc/bashrc
     # shellcheck source=src/cmdlib.sh
     . "${srcdir}/src/cmdlib.sh"
     mkdir -p /cosa /lib/coreos-assembler

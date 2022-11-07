@@ -22,7 +22,7 @@ coreos_gf_launch() {
         return
     fi
 
-    eval "$(guestfish --listen -a "$@")"
+    eval "$(guestfish --listen --format=raw -a "$@")"
     if [ -z "$GUESTFISH_PID" ]; then
         fatal "guestfish didn't start up, see error messages above"
     fi

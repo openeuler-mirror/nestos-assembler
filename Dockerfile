@@ -1,4 +1,5 @@
-FROM registry.fedoraproject.org/fedora:35
+#FROM registry.fedoraproject.org/fedora:35
+FROM openeuler-22.03-lts:latest
 WORKDIR /root/containerbuild
 
 # Keep this Dockerfile idempotent for local development rebuild use cases.
