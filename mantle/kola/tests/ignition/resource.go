@@ -93,7 +93,7 @@ func init() {
 			  {
 			      "path": "/var/resource/http",
 			      "contents": {
-				  "source": "http://124.126.103.127/nestos/kola/nestos-ignition-resource-remote.txt"
+				  "source": "http://1.203.97.152/kola/nestos-ignition-resource-remote.txt"
 			      },
 			      "mode": 420
 			  }

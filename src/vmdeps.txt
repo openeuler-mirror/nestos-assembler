@@ -3,10 +3,10 @@
 # rpm-ostree runs (when run unprivileged) and create-disk.sh.
 
 # bare essentials
-bash vim-minimal coreutils util-linux procps-ng kmod kernel-modules
+bash vim-minimal coreutils util-linux procps-ng kmod
 
 # for composes
-rpm-ostree distribution-gpg-keys jq
+rpm-ostree jq
 
 # for clean reboot
 systemd
