@@ -183,13 +183,13 @@ class QemuVariantImage(_Build):
         """
         Return the path of the Qemu QCOW2 image from the meta-data
         """
-        qemu_meta = self.meta.get_artifact_meta("qemu", unmerged=True)
+        qemu_meta = self.meta.get_artifact_meta("metal", unmerged=True)
         qimage = os.path.join(
             self.build_dir,
-            qemu_meta.get('images', {}).get('qemu', {}).get('path', None)
+            qemu_meta.get('images', {}).get('metal', {}).get('path', None)
         )
         if not qimage:
-            raise ImageError("qemu image has not be built yet")
+            raise ImageError("metal image has not be built yet")
         elif not os.path.exists(qimage):
             raise ImageError(f"{qimage} does not exist")
         return qimage
@@ -241,7 +241,7 @@ class QemuVariantImage(_Build):
                           self.tmp_image, self.virtual_size]
             run_verbose(resize_cmd)
 
-        cmd = ['qemu-img', 'convert', '-f', 'qcow2', '-O',
+        cmd = ['qemu-img', 'convert', '-f', 'raw', '-O',
                self.image_format, self.tmp_image]
         for k, v in self.convert_options.items():
             cmd.extend([k, v])
