@@ -37,6 +37,34 @@ variant: fcos
 version: 1.4.0
 systemd:
   units:
+    - name: multipathd.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Device-Mapper Multipath Device Controller
+        Wants=systemd-udev-trigger.service systemd-udev-settle.service
+        Before=iscsi.service iscsid.service lvm2-activation-early.service
+        Before=local-fs-pre.target blk-availability.service shutdown.target
+        After=multipathd.socket systemd-udev-trigger.service systemd-udev-settle.service
+        ConditionPathExists=/etc/multipath.conf
+        DefaultDependencies=no
+        Conflicts=shutdown.target
+        ConditionKernelCommandLine=!nompath
+        ConditionKernelCommandLine=!multipath=off
+        ConditionVirtualization=!container
+    
+        [Service]
+        Type=notify
+        NotifyAccess=main
+        LimitCORE=infinity
+        ExecStartPre=-/sbin/modprobe -a scsi_dh_alua scsi_dh_emc scsi_dh_rdac dm-multipath
+        ExecStart=/sbin/multipathd -d -s
+        ExecReload=/sbin/multipathd reconfigure
+        TasksMax=infinity
+
+        [Install]
+        WantedBy=sysinit.target
+        Also=multipathd.socket
     - name: mpath-configure.service
       enabled: true
       contents: |
@@ -95,6 +123,7 @@ func init() {
 		Run:           runMultipathDay1,
 		ClusterSize:   1,
 		Platforms:     []string{"qemu-unpriv"},
+		Distros:       []string{"fcos"},
 		UserData:      mpath_on_boot_day1,
 		MultiPathDisk: true,
 	})
@@ -103,6 +132,7 @@ func init() {
 		Run:           runMultipathDay2,
 		ClusterSize:   1,
 		Platforms:     []string{"qemu-unpriv"},
+		Distros:       []string{"fcos"},
 	})
 	register.RegisterTest(&register.Test{
 		Name:            "multipath.partition",
