@@ -3,17 +3,26 @@ package isula
 import (
 	"fmt"
 	"strings"
-	"github.com/coreos/mantle/kola/register"
+
 	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/platform"
+	"github.com/coreos/mantle/kola/register"
 	tutil "github.com/coreos/mantle/kola/tests/util"
+	"github.com/coreos/mantle/platform"
 )
 
-func init(){
+func init() {
 	register.RegisterTest(&register.Test{
 		Run:         isulaBaseTest,
 		ClusterSize: 1,
 		Name:        `isula.base`,
+		Flags:       []register.Flag{register.RequiresInternetAccess},
+	})
+	register.RegisterTest(&register.Test{
+		Run:         isulaWorkflow,
+		ClusterSize: 1,
+		Name:        `isula.workflow`,
+		Flags:       []register.Flag{register.RequiresInternetAccess},
+		FailFast:    true,
 	})
 }
 
@@ -36,7 +45,7 @@ func isulaInfo(c cluster.TestCluster) {
 }
 
 // Returns the result of isula info as a simplifiedIsulaInfo
-func getIsulaInfo(c cluster.TestCluster, m platform.Machine) (error) {
+func getIsulaInfo(c cluster.TestCluster, m platform.Machine) error {
 
 	result, err := c.SSH(m, `sudo isula info`)
 	if err != nil {
@@ -47,14 +56,14 @@ func getIsulaInfo(c cluster.TestCluster, m platform.Machine) (error) {
 		if strings.Contains(line, "Storage Driver") {
 			if strings.Contains(line, "overlay") {
 				continue
-			} else{
+			} else {
 				c.Errorf("Unexpected Storage Driver")
 			}
 		}
 		if strings.Contains(line, "Operating System") {
 			if strings.Contains(line, "NestOS") {
 				continue
-			} else{
+			} else {
 				c.Errorf("Unexpected Operating System")
 			}
 		}
@@ -99,4 +108,93 @@ func isulaResources(c cluster.TestCluster) {
 			c.Fatalf("Failed to run %q: output: %q status: %q", cmd, output, err)
 		}
 	}
+}
+
+func isulaWorkflow(c cluster.TestCluster) {
+	m := c.Machines()[0]
+
+	// Run iSulad
+	c.Run("runIsulad", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo systemctl start isulad.service")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Run container
+	c.Run("run", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula run -itd --name busybox hub.oepkgs.net/library/busybox")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Execute command in container
+	c.Run("exec", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula exec busybox echo hello")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Cp local files to container
+	c.Run("cp", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo touch example.txt && sudo isula cp example.txt busybox:/home")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Export container to tar
+	c.Run("export", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula export -o local_busybox.tar busybox")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Import
+	c.Run("import", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula import local_busybox.tar local_busybox && sudo isula images | grep local_busybox")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// // Test: Load tar
+	// c.Run("load", func(c cluster.TestCluster) {
+	// 	_, err := c.SSH(m, "sudo chmod +rw local_busybox.tar && sudo isula load --input local_busybox.tar && sudo isula images | grep local_busybox")
+	// 	if err != nil {
+	// 		c.Fatal(err)
+	// 	}
+	// })
+
+	// Test: Stop container
+	c.Run("stop", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula stop busybox")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Remove container
+	c.Run("remove", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula rm busybox && sudo isula ps -a | grep busybox")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Delete image
+	c.Run("delete", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo isula rmi hub.oepkgs.net/library/busybox")
+		if err != nil {
+			c.Fatal(err)
+		}
+
+		_, err = c.SSH(m, "sudo isula images | grep hub.oepkgs.net/library/busybox")
+		if err != nil {
+			c.Fatalf("Image should be deleted but found")
+		}
+	})
 }
