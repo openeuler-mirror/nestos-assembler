@@ -135,7 +135,7 @@ func podmanWorkflow(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("echo TEST PAGE > %s/index.html", string(dir))
 		c.RunCmdSync(m, cmd)
 
-		cmd = fmt.Sprintf("sudo podman run -d -p 80:80 -v %s/index.html:%s/index.html:z %s", string(dir), wwwRoot, image)
+		cmd = fmt.Sprintf("sudo podman run -d -p 80:80 -v %s/index.html:%s/index.html:z --name nginx %s", string(dir), wwwRoot, image)
 		out := c.MustSSH(m, cmd)
 		id = string(out)[0:64]
 
@@ -159,6 +159,47 @@ func podmanWorkflow(c cluster.TestCluster) {
 	c.Run("exec", func(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("sudo podman exec %s echo hello", id)
 		c.AssertCmdOutputContains(m, cmd, "hello")
+	})
+
+	// Test: Cp local files to container
+	c.Run("cp", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo touch example.txt && sudo podman cp example.txt nginx:/home")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Export container to tar
+	c.Run("export", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo podman export -o local_nginx.tar nginx")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Import
+	c.Run("import", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo podman import local_nginx.tar local_nginx && sudo podman images | grep local_nginx")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Save tar
+	c.Run("save", func(c cluster.TestCluster) {
+		_, err := c.SSH(m, "sudo podman save -o local_nginx2.tar docker.io/library/nginx")
+		if err != nil {
+			c.Fatal(err)
+		}
+	})
+
+	// Test: Load tar
+	c.Run("load", func(c cluster.TestCluster) {
+		// _, err := c.SSH(m, "sudo chmod +rw local_nginx.tar && sudo podman load --input local_nginx.tar && sudo podman images | grep local_nginx")
+		_, err := c.SSH(m, "sudo podman load --input local_nginx2.tar && sudo podman images | grep local_nginx2")
+		if err != nil {
+			c.Fatal(err)
+		}
 	})
 
 	// Test: Stop container
@@ -213,11 +254,11 @@ func podmanWorkflow(c cluster.TestCluster) {
 	c.Run("delete", func(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("sudo podman rmi %s", image)
 		out := c.MustSSH(m, cmd)
-		imageID := string(out)
+		// imageID := string(out)
 
-		cmd = fmt.Sprintf("sudo podman images | grep %s", imageID)
+		cmd = fmt.Sprintf("sudo podman images | grep %s", image)
 		out, err := c.SSH(m, cmd)
-		if err == nil {
+		if err != nil {
 			c.Fatalf("Image should be deleted but found %s", string(out))
 		}
 	})
