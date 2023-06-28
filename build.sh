@@ -28,11 +28,11 @@ configure_yum_repos() {
     #echo -e "[${version_id}-nestos]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://10.1.110.88/nestos-assembler/\ngpgcheck=0\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos.repo
     rm -rf /etc/yum.repos.d/*
     # openeuler 22.03-LTS
-    echo -e "[${version_id}]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS/standard_$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-LTS.repo
-    echo -e "[${version_id}-Next]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS:/Epol/standard_$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-EPOL.repo
-    
-    echo -e "[${version_id}-SP1]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS:/SP1/standard_$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-SP1.repo
-    echo -e "[${version_id}-SP1-epol]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://119.3.219.20:82/openEuler:/22.03:/LTS:/SP1:/Epol/standard_$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-sp1-epol.repo
+    echo -e "[${version_id}]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS/everything/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-LTS.repo
+    echo -e "[${version_id}-Next]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS/EPOL/main/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-EPOL.repo
+
+    echo -e "[${version_id}-SP1]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS-SP1/everything/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-SP1.repo
+    echo -e "[${version_id}-SP1-epol]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS-SP1/EPOL/main/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-sp1-epol.repo
 }
 
 install_rpms() {
@@ -45,8 +45,8 @@ install_rpms() {
     yum install -y qemu-img qemu-block-iscsi qemu-block-curl qemu-hw-usb-host qemu-system-x86_64 qemu liburing-devel glib2-devel
     arch=$(uname -m)
     case $arch in
-    "x86_64")  rpm -iUh qemu-*.x86_64.rpm libslirp-*.x86_64.rpm;;
-    "aarch64")  rpm -iUh qemu-*.aarch64.rpm libslirp-*.aarch64.rpm;;
+    "x86_64")  rpm -iUh qemu-*.x86_64.rpm;;
+    "aarch64")  rpm -iUh qemu-*.aarch64.rpm;;
     *)         fatal "Architecture ${arch} not supported"
     esac
 
