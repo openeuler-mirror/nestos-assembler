@@ -50,6 +50,11 @@ install_rpms() {
     *)         fatal "Architecture ${arch} not supported"
     esac
 
+    case $arch in
+    "x86_64")  yum install virglrenderer;;
+    *)         echo "Only x86_64 need to install virglrenderer additionally"
+    esac
+
     yum install -y libsolv rpm-devel grubby initscripts iptables nftables python3-setuptools linux-firmware bubblewrap json-c ostree json-glib polkit-libs ostree-devel dnf-plugins-core container-selinux oci-runtime
     arch=$(uname -m)
     case $arch in
