@@ -261,7 +261,7 @@ def generate_iso():
     # Generate initramfs stamp file indicating that this is a live
     # initramfs.  Store the build ID in it.
     
-    stamppath = os.path.join(tmpinitrd_base, 'etc/coreos-live-initramfs')
+    stamppath = os.path.join(tmpinitrd_base, 'etc/nestos-live-initramfs')
     os.makedirs(os.path.dirname(stamppath), exist_ok=True)
     with open(stamppath, 'w') as fh:
         fh.write(args.build + '\n')
@@ -269,7 +269,7 @@ def generate_iso():
     # Generate rootfs stamp file with the build ID, indicating that the
     # rootfs has been appended and confirming that initramfs and rootfs are
     # from the same build.
-    stamppath = os.path.join(tmpinitrd_rootfs, 'etc/coreos-live-rootfs')
+    stamppath = os.path.join(tmpinitrd_rootfs, 'etc/nestos-live-rootfs')
     os.makedirs(os.path.dirname(stamppath), exist_ok=True)
     with open(stamppath, 'w') as fh:
         fh.write(args.build + '\n')
@@ -320,7 +320,7 @@ def generate_iso():
     cp_reflink(iso_rootfs, pxe_rootfs)
     # Save stream hash of rootfs for verifying out-of-band fetches
     os.makedirs(os.path.join(tmpinitrd_base, 'etc'), exist_ok=True)
-    make_stream_hash(pxe_rootfs, os.path.join(tmpinitrd_base, 'etc/coreos-live-want-rootfs'))
+    make_stream_hash(pxe_rootfs, os.path.join(tmpinitrd_base, 'etc/nestos-live-want-rootfs'))
     # Add common content
     iso_initramfs = os.path.join(tmpisoimagespxe, initrd_img)
     extend_initrd(iso_initramfs, tmpinitrd_base)
