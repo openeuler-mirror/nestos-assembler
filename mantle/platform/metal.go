@@ -343,7 +343,7 @@ func (t *installerRun) destroy() error {
 
 func (t *installerRun) completePxeSetup(kargs []string) error {
 	if t.kern.rootfs != "" && !t.inst.PxeAppendRootfs {
-		kargs = append(kargs, fmt.Sprintf("coreos.live.rootfs_url=%s/%s", t.baseurl, t.kern.rootfs))
+		kargs = append(kargs, fmt.Sprintf("nestos.live.rootfs_url=%s/%s", t.baseurl, t.kern.rootfs))
 	}
 	kargsStr := strings.Join(kargs, " ")
 
