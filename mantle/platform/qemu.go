@@ -1500,7 +1500,7 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 	builder.Append("-mon", fmt.Sprintf("chardev=%s,mode=control", qmpID))
 
 	// Set up the virtio channel to get Ignition failures by default
-	journalPipeR, err := builder.VirtioChannelRead("com.coreos.ignition.journal")
+	journalPipeR, err := builder.VirtioChannelRead("com.nestos.ignition.journal")
 	inst.journalPipe = journalPipeR
 	if err != nil {
 		return nil, err
