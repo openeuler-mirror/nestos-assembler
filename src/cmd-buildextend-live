@@ -333,7 +333,7 @@ def generate_iso():
             img_metal], stdout=subprocess.PIPE, text=True)
     kargs_array = [karg for karg in result.stdout.split()
             if karg.split('=')[0] not in live_exclude_kargs]
-    kargs_array.append(f"coreos.liveiso={volid}")
+    kargs_array.append(f"nestos.liveiso={volid}")
     kargs = ' '.join(kargs_array)
     print(f'Substituting ISO kernel arguments: {kargs}')
 
@@ -584,7 +584,7 @@ def generate_iso():
     # The only difference with the miniso is that we drop these two files.
     # Keep everything else the same to maximize file matching between the
     # two versions so we can get the smallest delta. E.g. we keep the
-    # `coreos.liveiso` karg, even though the miniso doesn't need it.
+    # `nestos.liveiso` karg, even though the miniso doesn't need it.
     # nestos-installer takes care of removing it.
     os.unlink(iso_rootfs)
     os.unlink(miniso_data)

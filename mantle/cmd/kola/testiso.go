@@ -690,7 +690,7 @@ func testLiveLogin(ctx context.Context, outdir string) error {
 		return err
 	}
 
-	completionChannel, err := builder.VirtioChannelRead("coreos.liveiso-success")
+	completionChannel, err := builder.VirtioChannelRead("nestos.liveiso-success")
 	if err != nil {
 		return err
 	}
