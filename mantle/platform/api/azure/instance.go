@@ -58,7 +58,7 @@ func (a *API) getVMParameters(name, userdata, sshkey, storageAccountURI string, 
 	password := fmt.Sprintf("%s%s%s", "ABC&", strconv.Itoa(rand.Int()), "xyz")
 
 	osProfile := compute.OSProfile{
-		AdminUsername: util.StrToPtr("core"),   // unused
+		AdminUsername: util.StrToPtr("test"),   // unused
 		AdminPassword: util.StrToPtr(password), // unused
 		ComputerName:  &name,
 	}
@@ -67,7 +67,7 @@ func (a *API) getVMParameters(name, userdata, sshkey, storageAccountURI string, 
 			SSH: &compute.SSHConfiguration{
 				PublicKeys: &[]compute.SSHPublicKey{
 					{
-						Path:    util.StrToPtr("/home/core/.ssh/authorized_keys"),
+						Path:    util.StrToPtr("/home/nest/.ssh/authorized_keys"),
 						KeyData: &sshkey,
 					},
 				},

@@ -35,12 +35,12 @@ func init() {
 		      "links": [
 		          {
 		              "group": {
-		                  "name": "core"
+		                  "name": "nest"
 		              },
 		              "overwrite": true,
 		              "path": "/etc/localtime",
 		              "user": {
-		                  "name": "core"
+		                  "name": "nest"
 		              },
 		              "hard": false,
 		              "target": "/usr/share/zoneinfo/Europe/Zurich"

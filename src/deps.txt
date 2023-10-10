@@ -65,7 +65,7 @@ python3-libvirt
 openssl
 
 # Support for Koji uploads.
-krb5-libs krb5-workstation
+#krb5-libs krb5-workstation
 
 # LUKS support
 cryptsetup

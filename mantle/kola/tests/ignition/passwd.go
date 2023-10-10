@@ -63,7 +63,7 @@ func init() {
 		             "passwd": {
 		               "users": [
 		                 {
-		                   "name": "core",
+		                   "name": "nest",
 		                   "passwordHash": "foobar"
 		                 },
 		                 {
@@ -116,8 +116,8 @@ func users(c cluster.TestCluster) {
 
 	tests := []userTest{
 		{
-			user:           "core",
-			passwdRecord:   "core:x:1000:1000:CoreOS Admin:/var/home/core:/bin/bash",
+			user:           "nest",
+			passwdRecord:   "nest:x:1000:1000:NestOS Admin:/var/home/nest:/bin/bash",
 			shadowPassword: "foobar",
 		},
 		{

@@ -96,7 +96,7 @@ if os.path.isdir(tmpdir):
     shutil.rmtree(tmpdir)
 
 tmpisoroot = os.path.join(tmpdir, 'live')
-tmpisocoreos = os.path.join(tmpisoroot, 'coreos')
+tmpisocoreos = os.path.join(tmpisoroot, 'nestos')
 tmpisoimages = os.path.join(tmpisoroot, 'images')
 tmpisoimagespxe = os.path.join(tmpisoimages, 'pxeboot')
 tmpisoisolinux = os.path.join(tmpisoroot, 'isolinux')
@@ -147,7 +147,7 @@ def get_os_features():
 
     f = run_verbose(['/usr/bin/ostree', 'cat', '--repo', repo,
             buildmeta_commit,
-            '/usr/lib/dracut/modules.d/35coreos-network/coreos-copy-firstboot-network.sh'],
+            '/usr/lib/dracut/modules.d/35nestos-network/nestos-copy-firstboot-network.sh'],
             capture_output=True).stdout.decode()
     # eventually we can assume /etc/coreos-firstboot-network support and
     # hardcode the feature flag

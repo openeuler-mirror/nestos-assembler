@@ -129,7 +129,7 @@ func TestPodmanWgetHead() error {
 // This execs gdbus, because we need to change uses to test perms.
 func TestDbusPerms() error {
 	c := exec.Command(
-		"sudo", "-u", "core",
+		"sudo", "-u", "nest",
 		"gdbus", "call", "--system",
 		"--dest", "org.freedesktop.systemd1",
 		"--object-path", "/org/freedesktop/systemd1",
@@ -148,7 +148,7 @@ func TestDbusPerms() error {
 	}
 
 	c = exec.Command(
-		"sudo", "-u", "core",
+		"sudo", "-u", "nest",
 		"gdbus", "call", "--system",
 		"--dest", "org.freedesktop.systemd1",
 		"--object-path", "/org/freedesktop/systemd1/unit/ntpd_2eservice",

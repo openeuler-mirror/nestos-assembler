@@ -79,11 +79,11 @@ func init() {
       {
         "name": "kolet-httpd.path",
         "enabled": true,
-        "contents": "[Path]\nPathExists=/var/home/core/kolet\n[Install]\nWantedBy=multi-user.target"
+        "contents": "[Path]\nPathExists=/var/home/nest/kolet\n[Install]\nWantedBy=multi-user.target"
       },
       {
         "name": "kolet-httpd.service",
-        "contents": "[Service]\nExecStart=/var/home/core/kolet run fcos.upgrade.basic httpd -v\n[Install]\nWantedBy=multi-user.target"
+        "contents": "[Service]\nExecStart=/var/home/nest/kolet run fcos.upgrade.basic httpd -v\n[Install]\nWantedBy=multi-user.target"
       }
     ]
   },
@@ -116,7 +116,7 @@ func init() {
         "path": "WORKDIR",
         "mode": 493,
         "user": {
-          "name": "core"
+          "name": "nest"
         }
       }
     ]
@@ -352,7 +352,7 @@ func rebaseToStream(c cluster.TestCluster, m platform.Machine, ref, version stri
 func httpd() error {
 	http.Handle("/", http.FileServer(http.Dir(ostreeRepo)))
 	http.HandleFunc("/v1/graph", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "/var/home/core/graph.json")
+		http.ServeFile(w, r, "/var/home/nest/graph.json")
 	})
 	plog.Info("Starting server")
 	return http.ListenAndServe("localhost:8080", nil)

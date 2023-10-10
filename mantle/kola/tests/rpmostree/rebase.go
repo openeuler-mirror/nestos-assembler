@@ -18,11 +18,9 @@ func init(){
 }
 
 func rpmOstreeRebase(c cluster.TestCluster) {
-
-	
 	m := c.Machines()[0]
 	arch := c.MustSSH(m, "uname -m")
-	var newBranch string = "ostree-unverified-image:docker://docker.io/fushanqing/nestos-test:latest-" + string(arch)
+	var newBranch string = "ostree-unverified-registry:hub.oepkgs.net/nestos/nestos-test:22.03-LTS-SP2.20230922.0-" + string(arch)
 
 	originalStatus, err := util.GetRpmOstreeStatusJSON(c, m)
 	if err != nil{
@@ -33,10 +31,9 @@ func rpmOstreeRebase(c cluster.TestCluster) {
 		c.Fatalf(`Unexpected results from "rpm-ostree status"; received: %v`, originalStatus)
 	}
 
-	c.Run("ostree upgrade",func(c cluster.TestCluster){
-		
+	c.Run("ostree upgrade",func(c cluster.TestCluster){		
 		// use "rpm-ostree rebase" to get to the "new" commit
-		_ = c.MustSSH(m, "sudo rpm-ostree rebase --experimental "+newBranch+" --bypass-driver")
+		_ = c.MustSSH(m, "sudo systemctl start docker.service && sudo rpm-ostree rebase --experimental "+newBranch+" --bypass-driver")
 		// get latest rpm-ostree status output to check validity
 		postUpgradeStatus, err := util.GetRpmOstreeStatusJSON(c, m)
 		if err != nil {

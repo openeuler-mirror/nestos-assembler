@@ -400,7 +400,7 @@ func dockerOldClient(c cluster.TestCluster) {
 
 	genDockerContainer(c, m, "echo", []string{"echo"})
 
-	output := c.MustSSH(m, "/home/core/docker-1.9.1 run echo echo 'IT WORKED'")
+	output := c.MustSSH(m, "/home/nest/docker-1.9.1 run echo echo 'IT WORKED'")
 
 	if !bytes.Equal(output, []byte("IT WORKED")) {
 		c.Fatalf("unexpected result from docker client: %q", output)

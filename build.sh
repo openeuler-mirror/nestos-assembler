@@ -46,7 +46,7 @@ install_rpms() {
     arch=$(uname -m)
 
     case $arch in
-    "x86_64")  yum install virglrenderer;;
+    "x86_64")  yum install -y virglrenderer;;
     *)         echo "Only x86_64 need to install virglrenderer additionally"
     esac
 
@@ -58,8 +58,8 @@ install_rpms() {
 
     yum install -y libsolv rpm-devel grubby initscripts iptables nftables python3-setuptools linux-firmware bubblewrap json-c ostree json-glib polkit-libs ostree-devel dnf-plugins-core container-selinux oci-runtime
     case $arch in
-    "x86_64")  rpm -iUh libsolv-0.7.22-1.x86_64.rpm libsolv-devel-0.7.22-1.x86_64.rpm kernel-5.10.0-60.41.0.73.oe2203.x86_64.rpm kernel-headers-5.10.0-60.41.0.73.oe2203.x86_64.rpm buildah-1.26.1-1.x86_64.rpm butane-0.14.0-1.oe2203.x86_64.rpm dumb-init-1.2.5-4.oe2203.x86_64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.x86_64.rpm rpm-ostree-2022.8-3.oe2203.x86_64.rpm rpm-ostree-devel-2022.8-3.oe2203.x86_64.rpm supermin-5.3.2-1.x86_64.rpm;;
-    "aarch64")  rpm -iUh libsolv-0.7.22-1.aarch64.rpm libsolv-devel-0.7.22-1.aarch64.rpm kernel-5.10.0-118.0.0.64.oe2203.aarch64.rpm kernel-headers-5.10.0-118.0.0.64.oe2203.aarch64.rpm buildah-1.26.1-1.oe2203.aarch64.rpm butane-0.14.0-2.oe2203.aarch64.rpm dumb-init-1.2.5-1.oe2203.aarch64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.oe2203.aarch64.rpm rpm-ostree-2022.8-3.oe2203.aarch64.rpm rpm-ostree-devel-2022.8-3.oe2203.aarch64.rpm supermin-5.3.2-1.oe2203.aarch64.rpm;;
+    "x86_64")  rpm -iUh libsolv-0.7.22-1.x86_64.rpm libsolv-devel-0.7.22-1.x86_64.rpm kernel-5.10.0-60.41.0.73.oe2203.x86_64.rpm kernel-headers-5.10.0-60.41.0.73.oe2203.x86_64.rpm buildah-1.26.1-1.x86_64.rpm butane-0.14.0-1.oe2203.x86_64.rpm dumb-init-1.2.5-4.oe2203.x86_64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.x86_64.rpm rpm-ostree-2022.16-3.oe2203sp2.x86_64.rpm rpm-ostree-devel-2022.16-3.oe2203sp2.x86_64.rpm supermin-5.3.2-1.x86_64.rpm;;
+    "aarch64")  rpm -iUh libsolv-0.7.22-1.aarch64.rpm libsolv-devel-0.7.22-1.aarch64.rpm kernel-5.10.0-118.0.0.64.oe2203.aarch64.rpm kernel-headers-5.10.0-118.0.0.64.oe2203.aarch64.rpm buildah-1.26.1-1.oe2203.aarch64.rpm butane-0.14.0-2.oe2203.aarch64.rpm dumb-init-1.2.5-1.oe2203.aarch64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.oe2203.aarch64.rpm rpm-ostree-2022.16-3.oe2203sp2.aarch64.rpm rpm-ostree-devel-2022.16-3.oe2203sp2.aarch64.rpm supermin-5.3.2-1.oe2203.aarch64.rpm;;
     *)         fatal "Architecture ${arch} not supported"
     esac
     

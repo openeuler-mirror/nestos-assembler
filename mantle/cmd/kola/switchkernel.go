@@ -43,7 +43,7 @@ var (
 )
 
 var (
-	homeDir            = `/var/home/core`
+	homeDir            = `/var/home/nest`
 	switchKernelScript = `#!/usr/bin/env bash
 	# This script is a shameless translation of: https://github.com/openshift/machine-config-operator/blob/f363c7be6d2d506d900e196fa2e2d05ca08b93b6/pkg/daemon/update.go#L651
 	# Usage:
@@ -111,7 +111,7 @@ func runSwitchKernel(cmd *cobra.Command, args []string) error {
 			"files": [
 				{
 					"filesystem": "root",
-					"path": "/var/home/core/switch-kernel.sh",
+					"path": "/var/home/nest/switch-kernel.sh",
 					"contents": {
 						"source": "data:text/plain;base64,%s"
 					},

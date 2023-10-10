@@ -27,11 +27,11 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Run:         rpmOstreeUpgradeRollback,
-		ClusterSize: 1,
-		Name:        "rpmostree.upgrade-rollback",
-		FailFast:    true,
-		Tags:        []string{"rpm-ostree", "upgrade"},
+		Run:              rpmOstreeUpgradeRollback,
+		ClusterSize:      1,
+		Name:             "rpmostree.upgrade-rollback",
+		FailFast:         true,
+		Tags:             []string{"rpm-ostree", "upgrade"},
 		ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
@@ -169,20 +169,20 @@ func rpmOstreeUpgradeRollback(c cluster.TestCluster) {
 // This uses a dummy RPM that was originally created for the atomic-host-tests;
 // see: https://github.com/projectatomic/atomic-host-tests
 func rpmOstreeInstallUninstall(c cluster.TestCluster) {
-	var ahtRpmPath = "/var/home/core/aht-dummy-1.0-1.noarch.rpm"
+	var ahtRpmPath = "/var/home/nest/aht-dummy-1.0-1.noarch.rpm"
 	var installPkgName = "aht-dummy-1.0-1.noarch"
 	var installBinName = "aht-dummy"
 	var installBinPath string
 
-	if c.Distribution() == "fcos" {
+	if c.Distribution() == "fcos" || c.Distribution() == "nestos" {
 		installBinPath = fmt.Sprintf("/usr/bin/%v", installBinName)
 	} else {
 		installBinPath = fmt.Sprintf("/bin/%v", installBinName)
 	}
 
 	m := c.Machines()[0]
-	
-	_, err := c.SSH(m, `sudo wget http://1.203.97.152/kola/aht-dummy-1.0-1.noarch.rpm`)
+
+	_, err := c.SSH(m, `sudo wget -P /var/home/nest http://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm`)
 	if err != nil {
 		c.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	c.Run("install", func(c cluster.TestCluster) {
 		// install package and reboot
-		c.RunCmdSync(m, "sudo rpm-ostree install "+ahtRpmPath)
+		c.RunCmdSync(m, "sudo rpm-ostree install --cache-only "+ahtRpmPath)
 
 		installRebootErr := m.Reboot()
 		if installRebootErr != nil {
