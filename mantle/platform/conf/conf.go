@@ -961,13 +961,13 @@ func (c *Conf) AddAuthorizedKeys(user string, keys []string) {
 }
 
 // CopyKeys copies public keys from agent ag into the configuration to the
-// appropriate configuration section for the core user.
+// appropriate configuration section for the nest user.
 func (c *Conf) CopyKeys(keys []*agent.Key) {
 	var keyStrs []string
 	for _, key := range keys {
 		keyStrs = append(keyStrs, key.String())
 	}
-	c.AddAuthorizedKeys("core", keyStrs)
+	c.AddAuthorizedKeys("nest", keyStrs)
 }
 
 func (c *Conf) addConfigSourceV3(source string) {
@@ -1103,7 +1103,7 @@ func (c *Conf) IsEmpty() bool {
 func getAutologinUnit(name, args string) string {
 	return fmt.Sprintf(`[Service]
 	ExecStart=
-	ExecStart=-/sbin/agetty --autologin core -o '-p -f core' %s %%I $TERM
+	ExecStart=-/sbin/agetty --autologin nest -o '-p -f nest' %s %%I $TERM
 	`, args)
 }
 

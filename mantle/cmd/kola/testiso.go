@@ -594,7 +594,7 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 
 	var keys []string
 	keys = append(keys, strings.TrimSpace(string(sshPubKeyBuf)))
-	virtioJournalConfig.AddAuthorizedKeys("core", keys)
+	virtioJournalConfig.AddAuthorizedKeys("nest", keys)
 
 	liveConfig := *virtioJournalConfig
 	liveConfig.AddSystemdUnit("live-signal-ok.service", liveSignalOKUnit, conf.Enable)
@@ -645,7 +645,7 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offl
 
 	var keys []string
 	keys = append(keys, strings.TrimSpace(string(sshPubKeyBuf)))
-	virtioJournalConfig.AddAuthorizedKeys("core", keys)
+	virtioJournalConfig.AddAuthorizedKeys("nest", keys)
 
 	liveConfig := *virtioJournalConfig
 	liveConfig.AddSystemdUnit("live-signal-ok.service", liveSignalOKUnit, conf.Enable)

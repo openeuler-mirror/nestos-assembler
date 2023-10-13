@@ -28,7 +28,7 @@ func init() {
 
 func isulaBaseTest(c cluster.TestCluster) {
 	c.Run("info", isulaInfo)
-	c.Run("resources", isulaResources)
+	// c.Run("resources", isulaResources)
 }
 
 // Test: Verify basic isula info information

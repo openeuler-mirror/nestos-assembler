@@ -30,7 +30,7 @@ import (
 
 const (
 	defaultPort = 22
-	defaultUser = "core"
+	defaultUser = "nest"
 )
 
 // DefaultSSHDir is a process-global path that can be set, and
@@ -64,7 +64,7 @@ func NewSSHAgent(dialer Dialer) (*SSHAgent, error) {
 
 	addedkey := agent.AddedKey{
 		PrivateKey: key,
-		Comment:    "core@default",
+		Comment:    "nest@default",
 	}
 
 	keyring := agent.NewKeyring()

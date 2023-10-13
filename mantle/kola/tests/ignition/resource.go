@@ -93,7 +93,7 @@ func init() {
 			  {
 			      "path": "/var/resource/http",
 			      "contents": {
-				  "source": "http://1.203.97.152/kola/nestos-ignition-resource-remote.txt"
+				  "source": "http://www.nestos.org.cn/kola/nestos-ignition-resource-remote.txt"
 			      },
 			      "mode": 420
 			  }
@@ -131,7 +131,7 @@ func resourceRemote(c cluster.TestCluster) {
 	m := c.Machines()[0]
 
 	checkResources(c, m, map[string]string{
-		"http":   "NestOS",
+		"http": "NestOS",
 	})
 }
 

@@ -39,7 +39,7 @@ func CheckUserShells(c cluster.TestCluster) {
 		"sync":                 "/bin/sync",
 		"shutdown":             "/sbin/shutdown",
 		"halt":                 "/sbin/halt",
-		"core":                 "/bin/bash",
+		"nest":                 "/bin/bash",
 		"fedora-coreos-pinger": "/usr/sbin/nologin",
 		"zincati":              "/usr/sbin/nologin",
 	}

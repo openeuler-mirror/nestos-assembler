@@ -79,7 +79,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 		return err
 	}
 	keys := []string{strings.TrimSpace(string(sshPubKeyBuf))}
-	conf.AddAuthorizedKeys("core", keys)
+	conf.AddAuthorizedKeys("nest", keys)
 	builder.SetConfig(conf)
 
 	// errChan communicates errors from go routines
@@ -157,7 +157,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 	defer func() { fmt.Printf("\n\n") }() // make the console pretty again
 
 	// Start the SSH client
-	sc := newSshClient("core", ip, sshKeyPath, sshCommand)
+	sc := newSshClient("nest", ip, sshKeyPath, sshCommand)
 	go sc.controlStartStop()
 
 	ready := false
@@ -274,7 +274,7 @@ func checkWriteState(msg string, c chan<- guestState) {
 		strings.Contains(msg, "Starting Halt...") {
 		c <- guestStateHalted
 	}
-	if strings.Contains(msg, "pam_unix(sshd:session): session closed for user core") {
+	if strings.Contains(msg, "pam_unix(sshd:session): session closed for user nest") {
 		c <- guestStateSshDisconnected
 	}
 	if strings.Contains(msg, "The selected entry will be started automatically in 1s.") {

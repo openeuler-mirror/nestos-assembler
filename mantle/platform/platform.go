@@ -468,6 +468,9 @@ func CheckMachine(ctx context.Context, m Machine) error {
 	// ensure we're talking to a supported system
 	var distribution string
 	switch string(out) {
+	case `nestos-container`:
+		distribution = "nestos"
+	// Reserved for older versions of NestOS
 	case `NestOS-nestos`:
 		distribution = "nestos"
 	case `fedora-coreos`:

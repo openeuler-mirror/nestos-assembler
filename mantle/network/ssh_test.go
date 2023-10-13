@@ -71,7 +71,7 @@ func TestSSHNewClient(t *testing.T) {
 
 	cfg := ssh.ServerConfig{
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			if conn.User() == "core" && bytes.Equal(key.Marshal(), keys[0].Marshal()) {
+			if conn.User() == "nest" && bytes.Equal(key.Marshal(), keys[0].Marshal()) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("pubkey rejected")
