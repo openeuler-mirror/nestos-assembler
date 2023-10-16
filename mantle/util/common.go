@@ -80,7 +80,9 @@ func CreateSSHAuthorizedKey(tmpd string) ([]byte, string, error) {
 	var err error
 	sshKeyPath := filepath.Join(tmpd, "ssh.key")
 	sshPubKeyPath := sshKeyPath + ".pub"
-	err = exec.Command("ssh-keygen", "-N", "", "-t", "ed25519", "-f", sshKeyPath).Run()
+	c := exec.Command("ssh-keygen", "-N", "", "-t", "ed25519", "-f", sshKeyPath)
+	c.Stderr = os.Stderr
+	err = c.Run()
 	if err != nil {
 		return nil, "", errors.Wrapf(err, "running ssh-keygen")
 	}
@@ -114,7 +116,7 @@ func RunCmdTimeout(timeout time.Duration, cmd string, args ...string) error {
 	case <-time.After(timeout):
 		// this uses the waitid(WNOWAIT) trick to avoid racing:
 		// https://github.com/golang/go/commit/cea29c4a358004d84d8711a07628c2f856b381e8
-		c.Process.Kill()
+		_ = c.Process.Kill()
 		<-errc
 		return fmt.Errorf("%s timed out after %s", cmd, timeout)
 	}

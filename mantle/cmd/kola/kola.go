@@ -18,17 +18,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"text/tabwriter"
+	"time"
 
 	"github.com/coreos/pkg/capnslog"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
-	"github.com/coreos/coreos-assembler-schema/cosa"
+	cosa "github.com/coreos/coreos-assembler/pkg/builds"
 	"github.com/coreos/mantle/cli"
 	"github.com/coreos/mantle/fcos"
 	"github.com/coreos/mantle/harness/reporters"
@@ -37,6 +40,7 @@ import (
 	"github.com/coreos/mantle/kola/register"
 	"github.com/coreos/mantle/system"
 	"github.com/coreos/mantle/util"
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
 
 	// register OS test suite
 	_ "github.com/coreos/mantle/kola/registry"
@@ -104,6 +108,14 @@ This can be useful for e.g. serving locally built OSTree repos to qemu.
 		SilenceUsage: true,
 	}
 
+	cmdNcpu = &cobra.Command{
+		Use:   "ncpu",
+		Short: "Report the number of available CPUs for parallelism",
+		RunE:  runNcpu,
+
+		SilenceUsage: true,
+	}
+
 	listJSON           bool
 	listPlatform       string
 	listDistro         string
@@ -112,9 +124,12 @@ This can be useful for e.g. serving locally built OSTree repos to qemu.
 	qemuImageDir       string
 	qemuImageDirIsTemp bool
 
-	runExternals []string
-	runMultiply  int
-	runRerunFlag bool
+	runExternals      []string
+	runMultiply       int
+	runRerunFlag      bool
+	allowRerunSuccess bool
+
+	nonexclusiveWrapperMatch = regexp.MustCompile(`^non-exclusive-test-bucket-[0-9]$`)
 )
 
 func init() {
@@ -122,6 +137,7 @@ func init() {
 	cmdRun.Flags().StringArrayVarP(&runExternals, "exttest", "E", nil, "Externally defined tests (will be found in DIR/tests/kola)")
 	cmdRun.Flags().IntVar(&runMultiply, "multiply", 0, "Run the provided tests N times (useful to find race conditions)")
 	cmdRun.Flags().BoolVar(&runRerunFlag, "rerun", false, "re-run failed tests once")
+	cmdRun.Flags().BoolVar(&allowRerunSuccess, "allow-rerun-success", false, "Allow kola test run to be successful when tests pass during re-run")
 
 	root.AddCommand(cmdList)
 	cmdList.Flags().StringArrayVarP(&runExternals, "exttest", "E", nil, "Externally defined tests in directory")
@@ -138,9 +154,13 @@ func init() {
 	cmdRunUpgrade.Flags().BoolVar(&runRerunFlag, "rerun", false, "re-run failed tests once")
 
 	root.AddCommand(cmdRerun)
+
+	root.AddCommand(cmdNcpu)
 }
 
 func main() {
+	// initialize global state
+	rand.Seed(time.Now().UnixNano())
 	cli.Execute(root)
 }
 
@@ -199,12 +219,22 @@ func runRerun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	for _, test := range data.Tests {
-		name, isRerunnable := kola.GetRerunnableTestName(test.Name)
-		if test.Result == testresult.Fail && isRerunnable {
-			patterns = append(patterns, name)
+		if nonexclusiveWrapperMatch.MatchString(test.Name) {
+			// When the test hasn't started yet, we get the subtests
+			// of the test(nonExclusiveWrapper) for re-running
+			for _, subtest := range test.Subtests {
+				name, isRerunnable := kola.GetRerunnableTestName(subtest)
+				if test.Result == testresult.Fail && isRerunnable {
+					patterns = append(patterns, name)
+				}
+			}
+		} else {
+			name, isRerunnable := kola.GetRerunnableTestName(test.Name)
+			if test.Result == testresult.Fail && isRerunnable {
+				patterns = append(patterns, name)
+			}
 		}
 	}
-
 	return kolaRunPatterns(patterns, false)
 }
 
@@ -219,7 +249,7 @@ func kolaRunPatterns(patterns []string, rerun bool) error {
 		return err
 	}
 
-	runErr := kola.RunTests(patterns, runMultiply, rerun, kolaPlatform, outputDir, !kola.Options.NoTestExitError)
+	runErr := kola.RunTests(patterns, runMultiply, rerun, allowRerunSuccess, kolaPlatform, outputDir, !kola.Options.NoTestExitError)
 
 	// needs to be after RunTests() because harness empties the directory
 	if err := writeProps(); err != nil {
@@ -363,7 +393,8 @@ func runList(cmd *cobra.Command, args []string) error {
 			test.Architectures,
 			test.ExcludeArchitectures,
 			test.Distros,
-			test.ExcludeDistros}
+			test.ExcludeDistros,
+			test.Tags}
 		item.updateValues()
 		testlist = append(testlist, item)
 	}
@@ -375,7 +406,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	if !listJSON {
 		var w = tabwriter.NewWriter(os.Stdout, 0, 8, 0, '\t', 0)
 
-		fmt.Fprintln(w, "Test Name\tPlatforms\tArchitectures\tDistributions")
+		fmt.Fprintln(w, "Test Name\tPlatforms\tArchitectures\tDistributions\tTags")
 		fmt.Fprintln(w, "\t")
 		for _, item := range testlist {
 			platformFound := (listPlatform == "all")
@@ -422,6 +453,7 @@ type item struct {
 	ExcludeArchitectures []string `json:"-"`
 	Distros              []string
 	ExcludeDistros       []string `json:"-"`
+	Tags                 []string
 }
 
 func (i *item) updateValues() {
@@ -461,7 +493,7 @@ func (i *item) updateValues() {
 }
 
 func (i item) String() string {
-	return fmt.Sprintf("%v\t%v\t%v\t%v", i.Name, i.Platforms, i.Architectures, i.Distros)
+	return fmt.Sprintf("%v\t%v\t%v\t%v\t%v", i.Name, i.Platforms, i.Architectures, i.Distros, i.Tags)
 }
 
 func runHTTPServer(cmd *cobra.Command, args []string) error {
@@ -527,15 +559,15 @@ func syncFindParentImageOptions() error {
 		// Hardcoded for now based on https://github.com/openshift/installer/blob/release-4.6/data/data/rhcos.json
 		tag := "rhcos-4.6"
 		release := "46.82.202011260640-0"
-		switch system.RpmArch() {
+		switch coreosarch.CurrentRpmArch() {
 		case "s390x":
-			tag += "-" + system.RpmArch()
+			tag += "-" + coreosarch.CurrentRpmArch()
 			release = "46.82.202011261339-0"
 		case "ppc64le":
-			tag += "-" + system.RpmArch()
+			tag += "-" + coreosarch.CurrentRpmArch()
 			release = "46.82.202011260639-0"
 		}
-		parentBaseURL = fmt.Sprintf("https://releases-art-rhcos.svc.ci.openshift.org/art/storage/releases/%s/%s/%s/", tag, release, system.RpmArch())
+		parentBaseURL = fmt.Sprintf("https://rhcos.mirror.openshift.com/art/storage/releases/%s/%s/%s/", tag, release, coreosarch.CurrentRpmArch())
 		// sigh...someday we'll get the stuff signed by ART or maybe https://github.com/openshift/enhancements/pull/201 will just happen
 		skipSignature = true
 	default:
@@ -557,6 +589,9 @@ func syncFindParentImageOptions() error {
 				return err
 			}
 			qemuImageDirIsTemp = true
+		}
+		if parentCosaBuild.BuildArtifacts.Qemu == nil {
+			return fmt.Errorf("No QEMU in parent meta.json")
 		}
 		qcowURL := parentBaseURL + parentCosaBuild.BuildArtifacts.Qemu.Path
 		qcowLocal := filepath.Join(qemuImageDir, parentCosaBuild.BuildArtifacts.Qemu.Path)
@@ -595,17 +630,29 @@ func getParentFcosBuildBase(stream string) (string, error) {
 	if kola.CosaBuild.Meta.FedoraCoreOsParentVersion != "" {
 		parentVersion = kola.CosaBuild.Meta.FedoraCoreOsParentVersion
 	} else {
-		// ok, we're probably operating on a local dev build since the pipeline
-		// always injects the parent; just instead fetch the release index
-		// for that stream and get the last build id from there
+		// ok, we're probably operating on a local dev build or in the
+		// bump-lockfile job since the pipeline always injects the
+		// parent; just instead fetch the release index for that stream
+		// and get the last build id from there
 		index, err := fcos.FetchAndParseCanonicalReleaseIndex(stream)
 		if err != nil {
 			return "", err
 		}
-
-		n := len(index.Releases)
-		if n == 0 {
-			// hmmm, no builds; likely a new stream. let's just fallback on testing-devel.
+		// as we build for multi-architectures now,
+		// inorder to allow failures to be non-fatal and
+		// enable them to promote to non-prod streams
+		// when any specific previous release is unavailable for that arch.
+		// in that case, releases are searched in reverse order
+		// and the most recent release which has the secondary arch is considered.
+		for _, release := range index.Releases {
+			for _, commit := range release.Commits {
+				if commit.Architecture == (kola.Options.CosaBuildArch) {
+					parentVersion = release.Version
+					break
+				}
+			}
+		}
+		if parentVersion == "" {
 			msg := fmt.Sprintf("no parent version in build metadata, and no build on stream %s", stream)
 			if stream == "testing-devel" {
 				return "", errors.New(msg)
@@ -613,8 +660,6 @@ func getParentFcosBuildBase(stream string) (string, error) {
 			plog.Infof("%s; falling back to testing-devel", msg)
 			return getParentFcosBuildBase("testing-devel")
 		}
-
-		parentVersion = index.Releases[n-1].Version
 	}
 
 	return fcos.GetCosaBuildURL(stream, parentVersion, kola.Options.CosaBuildArch), nil
@@ -643,4 +688,13 @@ func runRunUpgrade(cmd *cobra.Command, args []string) error {
 	}
 
 	return runErr
+}
+
+func runNcpu(cmd *cobra.Command, args []string) error {
+	count, err := system.GetProcessors()
+	if err != nil {
+		return err
+	}
+	fmt.Println(count)
+	return nil
 }

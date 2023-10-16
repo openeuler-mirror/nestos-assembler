@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,9 +14,11 @@
 package misc
 
 import (
-	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
+
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
 
 	"github.com/coreos/mantle/kola"
 	"github.com/coreos/mantle/kola/cluster"
@@ -25,7 +27,6 @@ import (
 	"github.com/coreos/mantle/platform"
 	"github.com/coreos/mantle/platform/conf"
 	"github.com/coreos/mantle/platform/machine/unprivqemu"
-	"github.com/coreos/mantle/system"
 	ut "github.com/coreos/mantle/util"
 )
 
@@ -56,34 +57,35 @@ boot_device:
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Run:         runBootMirrorTest,
-		ClusterSize: 0,
-		Name:        `nestos.boot-mirror`,
-		Platforms:   []string{"qemu-unpriv"},
+		Run:            runBootMirrorTest,
+		ClusterSize:    0,
+		Name:           `coreos.boot-mirror`,
+		Platforms:      []string{"qemu-unpriv"},
+		ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x
 		ExcludeArchitectures: []string{"s390x"},
 		// skipping this test on UEFI until https://github.com/coreos/coreos-assembler/issues/2039
 		// gets resolved.
 		ExcludeFirmwares: []string{"uefi"},
-		Tags:             []string{"boot-mirror", "raid1"},
+		Tags:             []string{"boot-mirror", "raid1", "reprovision"},
 		FailFast:         true,
 		Timeout:          15 * time.Minute,
 	})
 	register.RegisterTest(&register.Test{
-		Run:         runBootMirrorLUKSTest,
-		ClusterSize: 0,
-		Name:        `nestos.boot-mirror.luks`,
-		Platforms:   []string{"qemu-unpriv"},
+		Run:            runBootMirrorLUKSTest,
+		ClusterSize:    0,
+		Name:           `coreos.boot-mirror.luks`,
+		Platforms:      []string{"qemu-unpriv"},
+		ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x, and qemu s390x doesn't
 		// support TPM
 		ExcludeArchitectures: []string{"s390x"},
 		// skipping this test on UEFI until https://github.com/coreos/coreos-assembler/issues/2039
 		// gets resolved.
 		ExcludeFirmwares: []string{"uefi"},
-		Tags:             []string{"boot-mirror", "luks", "raid1", "tpm2", kola.NeedsInternetTag},
+		Tags:             []string{"boot-mirror", "luks", "raid1", "tpm2", kola.NeedsInternetTag, "reprovision"},
 		FailFast:         true,
 		Timeout:          15 * time.Minute,
-		Distros:     []string{"fcos"},
 	})
 }
 
@@ -100,7 +102,7 @@ func runBootMirrorTest(c cluster.TestCluster) {
 	}
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
-	userdata := bootmirror.Subst("LAYOUT", system.RpmArch())
+	userdata := bootmirror.Subst("LAYOUT", coreosarch.CurrentRpmArch())
 	m, err = c.Cluster.(*unprivqemu.Cluster).NewMachineWithQemuOptions(userdata, options)
 	if err != nil {
 		c.Fatal(err)
@@ -119,7 +121,7 @@ func runBootMirrorTest(c cluster.TestCluster) {
 	if strings.Compare(string(fsTypeForRoot), "xfs") != 0 {
 		c.Fatalf("didn't match fstype for root")
 	}
-	bootMirrorSanityTest(c, m)
+	bootMirrorSanityTest(c, m, []string{"/dev/vda", "/dev/vdb", "/dev/vdc"})
 
 	detachPrimaryBlockDevice(c, m)
 	// Check if there are two devices with the active raid
@@ -147,7 +149,7 @@ func runBootMirrorLUKSTest(c cluster.TestCluster) {
 	}
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
-	userdata := bootmirrorluks.Subst("LAYOUT", system.RpmArch())
+	userdata := bootmirrorluks.Subst("LAYOUT", coreosarch.CurrentRpmArch())
 	m, err = c.Cluster.(*unprivqemu.Cluster).NewMachineWithQemuOptions(userdata, options)
 	if err != nil {
 		c.Fatal(err)
@@ -160,7 +162,7 @@ func runBootMirrorLUKSTest(c cluster.TestCluster) {
 	if !strings.Contains(string(bootOutput), "/dev/vda3") || !strings.Contains(string(bootOutput), "/dev/vdb3") {
 		c.Fatalf("boot raid device missing; found devices: %v", string(bootOutput))
 	}
-	bootMirrorSanityTest(c, m)
+	bootMirrorSanityTest(c, m, []string{"/dev/vda", "/dev/vdb"})
 	luksTPMTest(c, m, true)
 
 	detachPrimaryBlockDevice(c, m)
@@ -181,20 +183,36 @@ func runBootMirrorLUKSTest(c cluster.TestCluster) {
 func luksTPMTest(c cluster.TestCluster, m platform.Machine, tpm2 bool) {
 	rootPart := "/dev/md/md-root"
 	// hacky,  but needed for s390x because of gpt issue with naming on big endian systems: https://bugzilla.redhat.com/show_bug.cgi?id=1899990
-	if system.RpmArch() == "s390x" {
+	if coreosarch.CurrentRpmArch() == "s390x" {
 		rootPart = "/dev/disk/by-id/virtio-primary-disk-part4"
 	}
 	var tangd util.TangServer
 	util.LUKSSanityTest(c, tangd, m, true, false, rootPart)
 }
 
-func bootMirrorSanityTest(c cluster.TestCluster, m platform.Machine) {
+func bootMirrorSanityTest(c cluster.TestCluster, m platform.Machine, devices []string) {
 	c.Run("sanity-check", func(c cluster.TestCluster) {
 		// Check for boot
 		checkIfMountpointIsRaid(c, m, "/boot")
 		c.AssertCmdOutputContains(m, "findmnt -nvr /boot -o FSTYPE", "ext4")
 		// Check that growpart didn't run
 		c.RunCmdSync(m, "if [ -e /run/coreos-growpart.stamp ]; then exit 1; fi")
+		// Check that we took ownership of the rootfs
+		c.RunCmdSync(m, "sudo test -f /boot/.root_uuid")
+		// Check for bootuuid dropins where available
+		switch coreosarch.CurrentRpmArch() {
+		case "s390x":
+		case "x86_64", "aarch64":
+			for _, dev := range devices {
+				c.RunCmdSync(m, fmt.Sprintf(`
+					sudo mount -o ro %s2 /boot/efi
+					sudo sh -c 'test -f /boot/efi/EFI/*/bootuuid.cfg'
+					sudo umount /boot/efi`, dev))
+			}
+			fallthrough
+		case "ppc64le":
+			c.RunCmdSync(m, "sudo test -f /boot/grub2/bootuuid.cfg")
+		}
 	})
 }
 
@@ -229,68 +247,12 @@ func verifyBootMirrorAfterReboot(c cluster.TestCluster, m platform.Machine) {
 	})
 }
 
-type lsblkOutput struct {
-	Blockdevices []blockdevice `json:"blockdevices"`
-}
-
-type blockdevice struct {
-	Name       string  `json:"name"`
-	Type       string  `json:"type"`
-	Mountpoint *string `json:"mountpoint"`
-	// new lsblk outputs `mountpoints` instead of
-	// `mountpoint`; we handle both
-	Mountpoints []string      `json:"mountpoints"`
-	Children    []blockdevice `json:"children"`
-}
-
 // checkIfMountpointIsRaid will check if a given machine has a device of type
 // raid1 mounted at the given mountpoint. If it does not, the test is failed.
 func checkIfMountpointIsRaid(c cluster.TestCluster, m platform.Machine, mountpoint string) {
-	output := c.MustSSH(m, "lsblk --json")
-
-	l := lsblkOutput{}
-	err := json.Unmarshal(output, &l)
-	if err != nil {
-		c.Fatalf("couldn't unmarshal lsblk output: %v", err)
+	backing_device := string(c.MustSSH(m, "findmnt -no SOURCE "+mountpoint))
+	device_type := string(c.MustSSH(m, "lsblk -no TYPE "+backing_device))
+	if device_type != "raid1" {
+		c.Fatalf("expected mountpoint backed by raid1, but got %q", device_type)
 	}
-
-	foundDevice := checkIfMountpointIsRaidWalker(c, l.Blockdevices, mountpoint)
-	if !foundDevice {
-		c.Fatalf("didn't find %q mountpoint in lsblk output", mountpoint)
-	}
-}
-
-// checkIfMountpointIsRaidWalker will iterate over bs and recurse into its
-// children, looking for a device mounted at / with type raid1. true is returned
-// if such a device is found. The test is failed if a device of a different type
-// is found to be mounted at /.
-func checkIfMountpointIsRaidWalker(c cluster.TestCluster, bs []blockdevice, mountpoint string) bool {
-	for _, b := range bs {
-		if checkIfBlockdevHasMountPoint(b, mountpoint) {
-			if b.Type != "raid1" {
-				c.Fatalf("device %q is mounted at %q with type %q (was expecting raid1)", b.Name, mountpoint, b.Type)
-			}
-			return true
-		}
-		foundDevice := checkIfMountpointIsRaidWalker(c, b.Children, mountpoint)
-		if foundDevice {
-			return true
-		}
-	}
-	return false
-}
-
-// checkIfBlockdevHasMountPoint checks if a given block device has the
-// required mountpoint.
-func checkIfBlockdevHasMountPoint(b blockdevice, mountpoint string) bool {
-	if b.Mountpoint != nil && *b.Mountpoint == mountpoint {
-		return true
-	} else if len(b.Mountpoints) != 0 {
-		for _, mnt := range b.Mountpoints {
-			if mnt != "" && mnt == mountpoint {
-				return true
-			}
-		}
-	}
-	return false
 }

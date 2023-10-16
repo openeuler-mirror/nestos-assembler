@@ -60,11 +60,13 @@ type Media struct {
 	Exoscale     *PlatformBase     `json:"exoscale"`
 	Gcp          *PlatformGcp      `json:"gcp"`
 	Ibmcloud     *PlatformIBMCloud `json:"ibmcloud"`
+	KubeVirt     *PlatformKubeVirt `json:"kubevirt"`
 	Metal        *PlatformBase     `json:"metal"`
 	Nutanix      *PlatformBase     `json:"nutanix"`
 	Openstack    *PlatformBase     `json:"openstack"`
 	PowerVS      *PlatformIBMCloud `json:"powervs"`
 	Qemu         *PlatformBase     `json:"qemu"`
+	VirtualBox   *PlatformBase     `json:"virtualbox"`
 	Vmware       *PlatformBase     `json:"vmware"`
 	Vultr        *PlatformBase     `json:"vultr"`
 }
@@ -98,6 +100,12 @@ type PlatformIBMCloud struct {
 	Images map[string]IBMCloudImage `json:"images"`
 }
 
+// PlatformKubeVirt containerDisk metadata
+type PlatformKubeVirt struct {
+	PlatformBase
+	Image *ContainerImage `json:"image"`
+}
+
 // ImageFormat contains all artifacts for a single OS image
 type ImageFormat struct {
 	Disk      *Artifact `json:"disk,omitempty"`
@@ -117,6 +125,13 @@ type Artifact struct {
 // CloudImage generic image detail
 type CloudImage struct {
 	Image string `json:"image"`
+}
+
+// ContainerImage represents a tagged container image
+type ContainerImage struct {
+	// Preferred way to reference the image, which might be by tag or digest
+	Image     string `json:"image"`
+	DigestRef string `json:"digest-ref"`
 }
 
 // GcpImage represents a GCP cloud image

@@ -130,10 +130,8 @@ func (a *API) checkIfObjectExists(objectName, bucketName string) bool {
 	}
 
 	_, err := a.s3client.s3Session.GetObject(input)
-	if err != nil {
-		return false
-	}
-	return true
+	// XXX: this should actually check the exact error returned
+	return err == nil
 }
 
 //UploadObject - upload to s3 bucket
@@ -176,10 +174,9 @@ func (a *API) CopyObject(srcBucket, srcName, destBucket string) error {
 	})
 	if err != nil {
 		if awserr, ok := err.(awserr.Error); ok {
-			if awserr.Code() == "BucketAlreadyOwnedByYou" {
-				return nil
-			}
+			err = awserr
 		}
+		return fmt.Errorf("Error copying object to bucket: %v", err)
 	}
 
 	// Wait to see if the item got copied

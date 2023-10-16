@@ -71,35 +71,9 @@ func init() {
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"Serve": register.CreateNativeFuncWrap(Serve),
 		},
-		Tags: []string{"ignition"},
-		// https://github.com/coreos/bugs/issues/2205
-		ExcludePlatforms: []string{"do", "qemu-unpriv", "qemu-iso"},
+		Tags:             []string{"ignition"},
+		ExcludePlatforms: []string{"qemu-unpriv"},
 		Timeout:          20 * time.Minute,
-	})
-	register.RegisterTest(&register.Test{
-		Name:        "nestos.ignition.resource.remote",
-		Run:         resourceRemote,
-		ClusterSize: 1,
-		Flags:       []register.Flag{register.RequiresInternetAccess},
-		Tags:        []string{"ignition"},
-		// https://github.com/coreos/bugs/issues/2205 for DO
-		ExcludePlatforms: []string{"do"},
-		UserData: conf.Ignition(`{
-		  "ignition": {
-		      "version": "3.0.0"
-		  },
-		  "storage": {
-		      "files": [
-			  {
-			      "path": "/var/resource/http",
-			      "contents": {
-				  "source": "http://www.nestos.org.cn/kola/nestos-ignition-resource-remote.txt"
-			      },
-			      "mode": 420
-			  }
-		      ]
-		  }
-	      }`),
 	})
 }
 
@@ -124,47 +98,6 @@ func resourceLocal(c cluster.TestCluster) {
 		"data": "kola-data",
 		"http": "kola-http",
 		"tftp": "kola-tftp",
-	})
-}
-
-func resourceRemote(c cluster.TestCluster) {
-	m := c.Machines()[0]
-
-	checkResources(c, m, map[string]string{
-		"http": "NestOS",
-	})
-}
-
-func resourceS3(c cluster.TestCluster) {
-	m := c.Machines()[0]
-
-	checkResources(c, m, map[string]string{
-		// object accessible by any authenticated S3 user, such as
-		// the IAM role associated with the instance
-		"s3-auth": "kola-authenticated",
-		// object created by configuration accessible by any authenticated
-		// S3 user, such as the IAM role associated with the instance
-		"s3-config": "kola-config",
-	})
-
-	// verify that the objects are inaccessible anonymously
-	for _, objectName := range []string{"authenticated", "authenticated.ign"} {
-		_, _, err := m.SSH("curl -sf https://rh-kola-fixtures.s3.amazonaws.com/resources/" + objectName)
-		if err == nil {
-			c.Fatal("anonymously fetching authenticated resource should have failed, but did not")
-		}
-	}
-
-	// ...but that the anonymous object is accessible
-	c.RunCmdSync(m, "curl -sf https://rh-kola-fixtures.s3.amazonaws.com/resources/anonymous")
-}
-
-func resourceS3Versioned(c cluster.TestCluster) {
-	m := c.Machines()[0]
-
-	checkResources(c, m, map[string]string{
-		"original": "original",
-		"latest":   "updated",
 	})
 }
 

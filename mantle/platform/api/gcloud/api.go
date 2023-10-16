@@ -18,7 +18,6 @@ package gcloud
 import (
 	"context"
 	"google.golang.org/api/option"
-	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -40,6 +39,7 @@ type Options struct {
 	MachineType string
 	DiskType    string
 	Network     string
+	ServiceAcct string
 	JSONKeyFile string
 	ServiceAuth bool
 	*platform.Options
@@ -67,21 +67,12 @@ func New(opts *Options) (*API, error) {
 
 	if opts.ServiceAuth {
 		client = auth.GoogleServiceClient()
-	} else if opts.JSONKeyFile != "" {
-		b, err := ioutil.ReadFile(opts.JSONKeyFile)
+	} else {
+		client, err = auth.GoogleClientFromKeyFile(opts.JSONKeyFile)
 		if err != nil {
 			plog.Fatal(err)
+			return nil, err
 		}
-		client, err = auth.GoogleClientFromJSONKey(b)
-		if err != nil {
-			plog.Error(err)
-		}
-	} else {
-		client, err = auth.GoogleClient()
-	}
-
-	if err != nil {
-		return nil, err
 	}
 
 	ctx := context.Background()
@@ -89,6 +80,14 @@ func New(opts *Options) (*API, error) {
 	computeService, err := compute.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, err
+	}
+
+	if opts.ServiceAcct == "" {
+		proj, err := computeService.Projects.Get(opts.Project).Do()
+		if err != nil {
+			return nil, err
+		}
+		opts.ServiceAcct = proj.DefaultServiceAccount
 	}
 
 	api := &API{

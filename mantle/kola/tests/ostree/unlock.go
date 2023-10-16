@@ -16,7 +16,6 @@ package ostree
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/coreos/mantle/kola/cluster"
 	"github.com/coreos/mantle/kola/register"
@@ -33,7 +32,6 @@ func init() {
 		Flags:       []register.Flag{register.RequiresInternetAccess}, // need network to pull RPM
 		FailFast:    true,
 		Tags:        []string{"ostree"},
-		ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         ostreeHotfixTest,
@@ -42,7 +40,6 @@ func init() {
 		Name:        "ostree.hotfix",
 		FailFast:    true,
 		Tags:        []string{"ostree"},
-		ExcludePlatforms: []string{"qemu-iso"},
 		// enable debugging for https://github.com/coreos/fedora-coreos-tracker/issues/942
 		// we can drop it once we resolved it
 		UserData: conf.Butane(`
@@ -61,7 +58,7 @@ systemd:
 }
 
 var (
-	rpmUrl  string = "https://gitee.com/openeuler/nestos-assembler/tree/master/mantle/kola/tests/rpm/aht-dummy-1.0-1.noarch.rpm"
+	rpmUrl  string = "https://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm"
 	rpmName string = "aht-dummy"
 )
 
@@ -130,9 +127,13 @@ func rpmUninstallVerify(c cluster.TestCluster, m platform.Machine, rpmName strin
 		return fmt.Errorf(`Failed to uninstall RPM: %v`, uninstallErr)
 	}
 
+	_, missCmdErr := c.SSH(m, ("command -v " + rpmName))
+	if missCmdErr == nil {
+		return fmt.Errorf(`Found a binary that should not be there: %v`, missCmdErr)
+	}
 
 	_, missRpmErr := c.SSH(m, ("rpm -q " + rpmName))
-	if missRpmErr != nil {
+	if missRpmErr == nil {
 		return fmt.Errorf(`RPM incorrectly in rpmdb after RPM uninstall: %v`, missRpmErr)
 	}
 
@@ -188,14 +189,13 @@ func ostreeUnlockTest(c cluster.TestCluster) {
 			c.Fatalf(`Deployment was incorrectly unlocked; got: %q`, ros.Deployments[0].Unlocked)
 		}
 
-
-		result, secRpmErr := c.SSH(m, ("rpm -q " + rpmName))
+		_, secCmdErr := c.SSH(m, ("command -v " + rpmName))
+		if secCmdErr == nil {
+			c.Fatalf(`Binary was incorrectly found after reboot`)
+		}
+		_, secRpmErr := c.SSH(m, ("rpm -q " + rpmName))
 		if secRpmErr == nil {
-			if strings.Contains(string(result), "aht-dummy is not installed"){
-				fmt.Println("package aht-dummy is not installed")
-			} else {
-				c.Fatalf(`RPM incorrectly in rpmdb after reboot`)
-			}
+			c.Fatalf(`RPM incorrectly in rpmdb after reboot`)
 		}
 	})
 }
@@ -249,6 +249,8 @@ func ostreeHotfixTest(c cluster.TestCluster) {
 			c.Fatalf(`Hotfix mode was not detected; got: %q`, ros.Deployments[0].Unlocked)
 		}
 
+		c.RunCmdSync(m, ("command -v " + rpmName))
+
 		c.RunCmdSync(m, ("rpm -q " + rpmName))
 	})
 
@@ -270,11 +272,13 @@ func ostreeHotfixTest(c cluster.TestCluster) {
 			c.Fatalf(`Rollback did not remove hotfix mode; got: %q`, rollbackStatus.Deployments[0].Unlocked)
 		}
 
-		result, _ := c.SSH(m, ("rpm -q " + rpmName))
-		if result != nil{
-			if !strings.Contains(string(result), "package aht-dummy is not installed"){
-				c.Fatalf(`RPM incorrectly in rpmdb after reboot`)
-			}
+		_, secCmdErr := c.SSH(m, ("command -v " + rpmName))
+		if secCmdErr == nil {
+			c.Fatalf(`Binary was incorrectly found after reboot`)
+		}
+		_, secRpmErr := c.SSH(m, ("rpm -q " + rpmName))
+		if secRpmErr == nil {
+			c.Fatalf(`RPM incorrectly in rpmdb after reboot`)
 		}
 	})
 }

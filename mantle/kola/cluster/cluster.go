@@ -152,30 +152,15 @@ func (t *TestCluster) SSH(m platform.Machine, cmd string) ([]byte, error) {
 	f := func() {
 		stdout, stderr, err = m.SSH(cmd)
 	}
-	t.Log("cmd:", cmd)
 
 	errMsg := fmt.Sprintf("ssh: %s", cmd)
 	// If f does not before the test timeout, the RunWithExecTimeoutCheck
 	// will end this goroutine and mark the test as failed
 	t.H.RunWithExecTimeoutCheck(f, errMsg)
-	/*if len(stdout) > 0 {
-		for _, line := range strings.Split(string(stdout), "\n") {
-			t.Log(line)
-		}
-	}*/
 	if len(stderr) > 0 {
 		for _, line := range strings.Split(string(stderr), "\n") {
 			t.Log(line)
 		}
-	}
-	if err != nil{
-		if strings.Contains(string(stdout), "aht-dummy"){
-			return stdout, nil
-		}
-		if strings.Contains(string(err.Error()), "Process exited with status 1"){
-			return stdout, nil
-		}
-		t.Fatal(err)
 	}
 	return stdout, err
 }

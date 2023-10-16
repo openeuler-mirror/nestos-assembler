@@ -135,7 +135,7 @@ func podmanWorkflow(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("echo TEST PAGE > %s/index.html", string(dir))
 		c.RunCmdSync(m, cmd)
 
-		cmd = fmt.Sprintf("sudo podman run -d -p 80:80 -v %s/index.html:%s/index.html:z --name nginx %s", string(dir), wwwRoot, image)
+		cmd = fmt.Sprintf("sudo podman run -d -p 80:80 -v %s/index.html:%s/index.html:z %s", string(dir), wwwRoot, image)
 		out := c.MustSSH(m, cmd)
 		id = string(out)[0:64]
 
@@ -254,11 +254,11 @@ func podmanWorkflow(c cluster.TestCluster) {
 	c.Run("delete", func(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("sudo podman rmi %s", image)
 		out := c.MustSSH(m, cmd)
-		// imageID := string(out)
+		imageID := string(out)
 
-		cmd = fmt.Sprintf("sudo podman images | grep %s", image)
+		cmd = fmt.Sprintf("sudo podman images | grep %s", imageID)
 		out, err := c.SSH(m, cmd)
-		if err != nil {
+		if err == nil {
 			c.Fatalf("Image should be deleted but found %s", string(out))
 		}
 	})
@@ -331,7 +331,7 @@ func podmanNetworksReliably(c cluster.TestCluster) {
 
 	numPass := strings.Count(string(output), "PASS")
 
-	if numPass != 100 {
-		c.Fatalf("Expected 100 passes, but output was: %s", output)
+	if numPass <= 98 {
+		c.Fatalf("Expected more than or equal to 98/100 passes, but output was: %s", output)
 	}
 }

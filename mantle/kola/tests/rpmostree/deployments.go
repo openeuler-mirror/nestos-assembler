@@ -27,12 +27,11 @@ import (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Run:              rpmOstreeUpgradeRollback,
-		ClusterSize:      1,
-		Name:             "rpmostree.upgrade-rollback",
-		FailFast:         true,
-		Tags:             []string{"rpm-ostree", "upgrade"},
-		ExcludePlatforms: []string{"qemu-iso"},
+		Run:         rpmOstreeUpgradeRollback,
+		ClusterSize: 1,
+		Name:        "rpmostree.upgrade-rollback",
+		FailFast:    true,
+		Tags:        []string{"rpm-ostree", "upgrade"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         rpmOstreeInstallUninstall,
@@ -43,6 +42,23 @@ func init() {
 		UserData: conf.Ignition(`{
 			"ignition": {
 			  "version": "3.1.0"
+			},
+			"storage": {
+			  "files": [
+				{
+				  "path": "/var/home/nest/aht-dummy.rpm",
+				  "user": {
+					"name": "nest"
+				  },
+				  "contents": {
+					"source": "https://github.com/projectatomic/atomic-host-tests/raw/master/rpm/aht-dummy-1.0-1.noarch.rpm",
+					"verification": {
+					  "hash": "sha512-da29ae637b30647cab2386a2ce6b4223c3ad7120ae8dd32d9ce275f26a11946400bba0b86f6feabb9fb83622856ef39f8cecf14b4975638c4d8c0cf33b0f7b26"
+					}
+				  },
+				  "mode": 420
+				}
+			  ]
 			}
 		  }
 		  `),
@@ -78,8 +94,11 @@ func rpmOstreeUpgradeRollback(c cluster.TestCluster) {
 		createCommit := "sudo ostree commit -b " + newBranch + " --tree ref=" + originalCsum + " --add-metadata-string version=" + newVersion
 		newCommit := c.MustSSH(m, createCommit)
 
+		// And no zincati because we're intentionally overriding, also it fails
+		c.RunCmdSync(m, "sudo systemctl mask --now zincati")
+
 		// use "rpm-ostree rebase" to get to the "new" commit
-		c.RunCmdSync(m, "sudo rpm-ostree rebase :"+newBranch+" --bypass-driver")
+		c.RunCmdSync(m, "sudo rpm-ostree rebase :"+newBranch)
 
 		// get latest rpm-ostree status output to check validity
 		postUpgradeStatus, err := util.GetRpmOstreeStatusJSON(c, m)
@@ -174,7 +193,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 	var installBinName = "aht-dummy"
 	var installBinPath string
 
-	if c.Distribution() == "fcos" || c.Distribution() == "nestos" {
+	if c.Distribution() == "nestos" {
 		installBinPath = fmt.Sprintf("/usr/bin/%v", installBinName)
 	} else {
 		installBinPath = fmt.Sprintf("/bin/%v", installBinName)
@@ -200,6 +219,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	c.Run("install", func(c cluster.TestCluster) {
 		// install package and reboot
+		// this is only testing local rpm install, `--cache-only` avoid fetching RPM data from remote
 		c.RunCmdSync(m, "sudo rpm-ostree install --cache-only "+ahtRpmPath)
 
 		installRebootErr := m.Reboot()

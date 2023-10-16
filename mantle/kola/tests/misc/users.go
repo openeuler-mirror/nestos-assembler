@@ -26,8 +26,8 @@ func init() {
 		Run:              CheckUserShells,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"gce"},
-		Name:             "nestos.users.shells",
-		Distros:          []string{"fcos","nestos"},
+		Name:             "fcos.users.shells",
+		Distros:          []string{"fcos", "nestos"},
 	})
 }
 
@@ -36,12 +36,11 @@ func CheckUserShells(c cluster.TestCluster) {
 	var badusers []string
 
 	ValidUsers := map[string]string{
-		"sync":                 "/bin/sync",
-		"shutdown":             "/sbin/shutdown",
-		"halt":                 "/sbin/halt",
-		"nest":                 "/bin/bash",
-		"fedora-coreos-pinger": "/usr/sbin/nologin",
-		"zincati":              "/usr/sbin/nologin",
+		"sync":          "/bin/sync",
+		"shutdown":      "/sbin/shutdown",
+		"halt":          "/sbin/halt",
+		"nest":          "/bin/bash",
+		"node_exporter": "/bin/nologin",
 	}
 
 	output := c.MustSSH(m, "getent passwd")

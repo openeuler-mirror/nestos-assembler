@@ -35,17 +35,16 @@ func init() {
 		Run:         NetworkListeners,
 		ClusterSize: 1,
 		Name:        "nestos.network.listeners",
-		Distros:     []string{"fcos","nestos"},
+		Distros:     []string{"fcos", "nestos"},
 		// be sure to notice listeners in the docker stack
 		UserData: conf.EmptyIgnition(),
 	})
 	// TODO: rewrite test for NetworkManager
 	register.RegisterTest(&register.Test{
-		Run:              NetworkInitramfsSecondBoot,
-		ClusterSize:      1,
-		Name:             "coreos.network.initramfs.second-boot",
-		ExcludePlatforms: []string{"do"},
-		ExcludeDistros:   []string{"fcos", "rhcos", "nestos"},
+		Run:            NetworkInitramfsSecondBoot,
+		ClusterSize:    1,
+		Name:           "coreos.network.initramfs.second-boot",
+		ExcludeDistros: []string{"fcos", "rhcos", "nestos"},
 	})
 	// This test follows the same network configuration used on https://github.com/RHsyseng/rhcos-slb
 	// with a slight change, where the MCO script is run from ignition: https://github.com/RHsyseng/rhcos-slb/blob/main/setup-ovs.sh.
@@ -136,9 +135,6 @@ NextProcess:
 			continue
 		}
 		process := processStr[1 : len(processStr)-1]
-		if process == "rpcbind"{
-			continue
-		}
 		thisListener := listener{
 			process:  process,
 			protocol: proto,
@@ -169,7 +165,9 @@ func NetworkListeners(c cluster.TestCluster) {
 		// https://serverfault.com/a/929642
 		{"tcp", "5355", "systemd-resolve"},
 		{"udp", "5355", "systemd-resolve"},
-		{"udp", "68", "dhclient"},
+		// DHCPv6 from NetworkManager (when IPv6 network available)
+		// https://github.com/coreos/fedora-coreos-tracker/issues/1216
+		{"udp", "546", "NetworkManager"},
 	}
 	checkList := func() error {
 		return checkListeners(c, expectedListeners)
@@ -318,7 +316,8 @@ var (
 
           # Run a dnsmasq service on the network_namespace, to set the host-side veth ends a ip via their MAC addresses
           echo -e "dhcp-range=192.168.0.50,192.168.0.60,255.255.255.0,12h\ndhcp-host=${primary_mac},${primary_ip}\ndhcp-host=${secondary_mac},${secondary_ip}" > /etc/dnsmasq.d/dhcp
-          ip netns exec ${network_namespace} dnsmasq &
+          # Disable interface=lo as new dnsmasq version has it by default
+          ip netns exec ${network_namespace} dnsmasq --except-interface=lo --bind-interfaces -u dnsmasq -g dnsmasq --conf-dir=/etc/dnsmasq.d,.rpmnew,.rpmsave,.rpmorig --conf-file=/dev/null &
 
           # Tell NM to manage the "veth-host" interface and bring it up (will attempt DHCP).
           # Do this after we start dnsmasq so we don't have to deal with DHCP timeouts.
@@ -702,7 +701,7 @@ func setupMultipleNetworkTest(c cluster.TestCluster, primaryMac, secondaryMac st
 					"name": "capture-macs.service"
 				},
 				{
-					"contents": "[Unit]\nDescription=Setup OVS bonding\nBefore=ovs-configuration.service\nAfter=NetworkManager.service\nAfter=openvswitch.service\nAfter=capture-macs.service\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/setup-ovs\n\n[Install]\nRequiredBy=multi-user.target\n",
+					"contents": "[Unit]\nDescription=Setup OVS bonding\nBefore=ovs-configuration.service\nAfter=NetworkManager.service\nAfter=openvswitch.service\nAfter=capture-macs.service\nConditionKernelCommandLine=macAddressList\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/setup-ovs\n\n[Install]\nRequiredBy=multi-user.target\n",
 					"enabled": true,
 					"name": "setup-ovs.service"
 				}

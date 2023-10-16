@@ -55,9 +55,9 @@ import (
 	"github.com/coreos/mantle/platform/machine/packet"
 	"github.com/coreos/mantle/platform/machine/qemuiso"
 	"github.com/coreos/mantle/platform/machine/unprivqemu"
-	"github.com/coreos/mantle/sdk"
 	"github.com/coreos/mantle/system"
 	"github.com/coreos/mantle/util"
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
 )
 
 // InstalledTestsDir is a directory where "installed" external
@@ -65,7 +65,12 @@ import (
 // tests at /usr/lib/coreos-assembler/tests/kola/ostree/...
 // and this will be automatically picked up.
 const InstalledTestsDir = "/usr/lib/coreos-assembler/tests/kola"
+
+// InstalledTestMetaPrefix is the prefix for JSON-formatted metadata
 const InstalledTestMetaPrefix = "# kola:"
+
+// InstalledTestMetaPrefixYaml is the prefix for YAML-formatted metadata
+const InstalledTestMetaPrefixYaml = "## kola:"
 
 // InstalledTestDefaultTest is a special name; see the README-kola-ext.md
 // for more information.
@@ -74,6 +79,13 @@ const InstalledTestDefaultTest = "test.sh"
 // This is the same string from https://salsa.debian.org/ci-team/autopkgtest/raw/master/doc/README.package-tests.rst
 // Specifying this in the tags list is required to denote a need for Internet access
 const NeedsInternetTag = "needs-internet"
+
+// PlatformIndependentTag is currently equivalent to platform: qemu, but that may change in the future.
+// For more, see the doc in external-tests.md.
+const PlatformIndependentTag = "platform-independent"
+
+// defaultPlatformIndependentPlatform is the platform where we run tests that claim platform independence
+const defaultPlatformIndependentPlatform = "qemu"
 
 // Don't e.g. check console for kernel errors, SELinux AVCs, etc.
 const SkipBaseChecksTag = "skip-base-checks"
@@ -95,11 +107,13 @@ var (
 	QEMUOptions      = unprivqemu.Options{Options: &Options}   // glue to set platform options from main
 	QEMUIsoOptions   = qemuiso.Options{Options: &Options}      // glue to set platform options from main
 
-	CosaBuild *sdk.LocalBuild // this is a parsed cosa build
+	CosaBuild *util.LocalBuild // this is a parsed cosa build
 
 	TestParallelism int    //glue var to set test parallelism from main
 	TAPFile         string // if not "", write TAP results here
 	NoNet           bool   // Disable tests requiring Internet
+	// ForceRunPlatformIndependent will cause tests that claim platform-independence to run
+	ForceRunPlatformIndependent bool
 
 	DenylistedTests []string // tests which are on the denylist
 	Tags            []string // tags to be ran
@@ -137,18 +151,8 @@ var (
 			match: regexp.MustCompile(`WARNING: CPU: \d+ PID: \d+ at (.+)`),
 		},
 		{
-			desc:  "kernel circular locking dependency warning",
-			match: regexp.MustCompile("WARNING: possible circular locking dependency detected"),
-		},
-		{
 			desc:  "failure of disk under I/O",
 			match: regexp.MustCompile("rejecting I/O to offline device"),
-		},
-		{
-			// Failure to set up Packet networking in initramfs,
-			// perhaps due to unresponsive metadata server
-			desc:  "coreos-metadata failure to set up initramfs network",
-			match: regexp.MustCompile("Failed to start CoreOS Static Network Agent"),
 		},
 		{
 			// https://github.com/coreos/bugs/issues/2065
@@ -176,11 +180,6 @@ var (
 			match: regexp.MustCompile(`initrd-cleanup\.service: Main process exited, code=killed, status=15/TERM`),
 		},
 		{
-			// kernel 4.14.11
-			desc:  "bad page table",
-			match: regexp.MustCompile(`mm/pgtable-generic.c:\d+: bad (p.d|pte)`),
-		},
-		{
 			desc:  "Go panic",
 			match: regexp.MustCompile("panic: (.*)"),
 		},
@@ -196,6 +195,15 @@ var (
 			desc:  "systemd ordering cycle",
 			match: regexp.MustCompile("Ordering cycle found"),
 		},
+		{
+			desc:  "oom killer",
+			match: regexp.MustCompile("invoked oom-killer"),
+		},
+		{
+			// https://github.com/coreos/fedora-coreos-config/pull/1797
+			desc:  "systemd generator failure",
+			match: regexp.MustCompile(`systemd\[[0-9]+\]: (.*) failed with exit status`),
+		},
 	}
 )
 
@@ -205,6 +213,9 @@ const (
 
 	// kolaExtBinDataEnv is an environment variable pointing to the above
 	kolaExtBinDataEnv = "KOLA_EXT_DATA"
+
+	// kolaExtContainerDataEnv includes the path to the ostree base container image in oci-archive format.
+	kolaExtContainerDataEnv = "KOLA_EXT_OSTREE_OCIARCHIVE"
 
 	// kolaExtBinDataName is the name for test dependency data
 	kolaExtBinDataName = "data"
@@ -292,6 +303,15 @@ func hasString(s string, slice []string) bool {
 	return false
 }
 
+func testSkipBaseChecks(test *register.Test) bool {
+	for _, tag := range test.Tags {
+		if tag == SkipBaseChecksTag {
+			return true
+		}
+	}
+	return false
+}
+
 func testRequiresInternet(test *register.Test) bool {
 	for _, flag := range test.Flags {
 		if flag == register.RequiresInternetAccess {
@@ -314,12 +334,18 @@ type DenyListObj struct {
 	Arches     []string `yaml:"arches"`
 	Platforms  []string `yaml:"platforms"`
 	SnoozeDate string   `yaml:"snooze"`
+	OsVersion  []string `yaml:"osversion"`
 }
 
 type ManifestData struct {
-	AddCommitMetadata struct {
-		FcosStream string `yaml:"fedora-coreos.stream"`
-	} `yaml:"add-commit-metadata"`
+	Variables struct {
+		Stream    string `yaml:"stream"`
+		OsVersion string `yaml:"osversion"`
+	} `yaml:"variables"`
+}
+
+type InitConfigData struct {
+	ConfigVariant string `json:"coreos-assembler.config-variant"`
 }
 
 func parseDenyListYaml(pltfrm string) error {
@@ -342,25 +368,44 @@ func parseDenyListYaml(pltfrm string) error {
 
 	plog.Debug("Parsed kola-denylist.yaml")
 
-	// Get stream and arch
-	pathToManifest := filepath.Join(Options.CosaWorkdir, "src/config/manifest.yaml")
-	manifestFile, err := ioutil.ReadFile(pathToManifest)
+	// Look for the right manifest, taking into account the variant
+	var manifest ManifestData
+	var pathToManifest string
+	pathToInitConfig := filepath.Join(Options.CosaWorkdir, "src/config.json")
+	initConfigFile, err := ioutil.ReadFile(pathToInitConfig)
 	if os.IsNotExist(err) {
-		return nil
+		// No variant config found. Let's read the default manifest
+		pathToManifest = filepath.Join(Options.CosaWorkdir, "src/config/manifest.yaml")
 	} else if err != nil {
+		// Unexpected error
+		return err
+	} else {
+		// Figure out the variant and read the corresponding manifests
+		var initConfig InitConfigData
+		err = json.Unmarshal(initConfigFile, &initConfig)
+		if err != nil {
+			return err
+		}
+		pathToManifest = filepath.Join(Options.CosaWorkdir, fmt.Sprintf("src/config/manifest-%s.yaml", initConfig.ConfigVariant))
+	}
+	manifestFile, err := ioutil.ReadFile(pathToManifest)
+	if err != nil {
 		return err
 	}
-
-	var manifest ManifestData
 	err = yaml.Unmarshal(manifestFile, &manifest)
 	if err != nil {
 		return err
 	}
 
-	stream := manifest.AddCommitMetadata.FcosStream
+	// Get the stream and osversion variables from the manifest
+	stream := manifest.Variables.Stream
+	osversion := manifest.Variables.OsVersion
+
+	// Get the current arch & current time
 	arch := Options.CosaBuildArch
-	plog.Debugf("Arch: %v detected.", arch)
 	today := time.Now()
+
+	plog.Debugf("Denylist: Skipping tests for stream: '%s', osversion: '%s', arch: '%s'\n", stream, osversion, arch)
 
 	// Accumulate patterns filtering by set policies
 	plog.Debug("Processing denial patterns from yaml...")
@@ -377,6 +422,10 @@ func parseDenyListYaml(pltfrm string) error {
 			continue
 		}
 
+		if len(osversion) > 0 && len(obj.OsVersion) > 0 && !hasString(osversion, obj.OsVersion) {
+			continue
+		}
+
 		if obj.SnoozeDate != "" {
 			snoozeDate, err := time.Parse(snoozeFormat, obj.SnoozeDate)
 			if err != nil {
@@ -390,7 +439,9 @@ func parseDenyListYaml(pltfrm string) error {
 			fmt.Printf("⚠️  Skipping kola test pattern \"%s\":\n", obj.Pattern)
 		}
 
-		fmt.Printf("  👉 %s\n", obj.Tracker)
+		if obj.Tracker != "" {
+			fmt.Printf("  👉 %s\n", obj.Tracker)
+		}
 		DenylistedTests = append(DenylistedTests, obj.Pattern)
 	}
 
@@ -405,6 +456,17 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 	// qemu-unpriv has the same restrictions as QEMU but might also want additional restrictions due to the lack of a Local cluster
 	if pltfrm == "qemu-unpriv" {
 		checkPlatforms = append(checkPlatforms, "qemu")
+	}
+
+	// sort tags into include/exclude
+	positiveTags := []string{}
+	negativeTags := []string{}
+	for _, tag := range Tags {
+		if strings.HasPrefix(tag, "!") {
+			negativeTags = append(negativeTags, tag[1:])
+		} else {
+			positiveTags = append(positiveTags, tag)
+		}
 	}
 
 	// Higher-level functions default to '*' if the user didn't pass anything.
@@ -461,11 +523,22 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 		}
 
 		tagMatch := false
-		for _, tag := range Tags {
+		for _, tag := range positiveTags {
 			tagMatch = hasString(tag, t.Tags) || tag == t.RequiredTag
 			if tagMatch {
 				break
 			}
+		}
+
+		negativeTagMatch := false
+		for _, tag := range negativeTags {
+			negativeTagMatch = hasString(tag, t.Tags)
+			if negativeTagMatch {
+				break
+			}
+		}
+		if negativeTagMatch {
+			continue
 		}
 
 		if t.RequiredTag != "" && // if the test has a required tag...
@@ -484,7 +557,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 			// If the user didn't explicitly type a pattern, then normally we
 			// accept all tests, but if they *did* specify tags, then we only
 			// accept tests which match those tags.
-			if len(Tags) > 0 && !tagMatch {
+			if len(positiveTags) > 0 && !tagMatch {
 				continue
 			}
 		}
@@ -508,6 +581,18 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 			return allowed, excluded
 		}
 
+		// For now, we hardcode platform independent tests to run only on one platform.
+		// But in the future, we should optimize this so that an overall
+		// test planner/scheduler knows to run the test at most once or twice.
+		// Platform independent tests could also run on AWS sometimes for example.
+		if !ForceRunPlatformIndependent {
+			for _, tag := range t.Tags {
+				if tag == PlatformIndependentTag {
+					t.Platforms = []string{defaultPlatformIndependentPlatform}
+				}
+			}
+		}
+
 		isExcluded := false
 		allowed := false
 		for _, platform := range checkPlatforms {
@@ -516,7 +601,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 				isExcluded = true
 				break
 			}
-			allowedArchitecture, _ := isAllowed(system.RpmArch(), t.Architectures, t.ExcludeArchitectures)
+			allowedArchitecture, _ := isAllowed(coreosarch.CurrentRpmArch(), t.Architectures, t.ExcludeArchitectures)
 			allowed = allowed || (allowedPlatform && allowedArchitecture)
 		}
 		if isExcluded || !allowed {
@@ -539,7 +624,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 				delete(t.NativeFuncs, k)
 				continue
 			}
-			_, excluded = isAllowed(system.RpmArch(), nil, NativeFuncWrap.Exclusions)
+			_, excluded = isAllowed(coreosarch.CurrentRpmArch(), nil, NativeFuncWrap.Exclusions)
 			if excluded {
 				delete(t.NativeFuncs, k)
 			}
@@ -557,7 +642,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 // register tests in their init() function.  outputDir is where various test
 // logs and data will be written for analysis after the test run. If it already
 // exists it will be erased!
-func runProvidedTests(testsBank map[string]*register.Test, patterns []string, multiply int, rerun bool, pltfrm, outputDir string, propagateTestErrors bool) error {
+func runProvidedTests(testsBank map[string]*register.Test, patterns []string, multiply int, rerun bool, allowRerunSuccess bool, pltfrm, outputDir string, propagateTestErrors bool) error {
 	var versionStr string
 
 	// Avoid incurring cost of starting machine in getClusterSemver when
@@ -586,6 +671,9 @@ func runProvidedTests(testsBank map[string]*register.Test, patterns []string, mu
 	var nonExclusiveTests []*register.Test
 	for _, test := range tests {
 		if test.NonExclusive {
+			if test.ExternalTest == "" {
+				plog.Fatalf("Tests compiled in kola must be exclusive: %v", test.Name)
+			}
 			nonExclusiveTests = append(nonExclusiveTests, test)
 			delete(tests, test.Name)
 		}
@@ -694,7 +782,10 @@ func runProvidedTests(testsBank map[string]*register.Test, patterns []string, mu
 	if len(testsToRerun) > 0 && rerun {
 		newOutputDir := filepath.Join(outputDir, "rerun")
 		fmt.Printf("\n\n======== Re-running failed tests (flake detection) ========\n\n")
-		runProvidedTests(testsBank, testsToRerun, multiply, false, pltfrm, newOutputDir, propagateTestErrors)
+		reRunErr := runProvidedTests(testsBank, testsToRerun, multiply, false, allowRerunSuccess, pltfrm, newOutputDir, propagateTestErrors)
+		if allowRerunSuccess {
+			return reRunErr
+		}
 	}
 
 	// If the intial run failed and the rerun passed, we still return an error
@@ -729,39 +820,50 @@ func GetRerunnableTestName(testName string) (string, bool) {
 func getRerunnable(tests []*harness.H) []string {
 	var testsToRerun []string
 	for _, h := range tests {
-		name, isRerunnable := GetRerunnableTestName(h.Name())
-		if h.Failed() && isRerunnable {
-			testsToRerun = append(testsToRerun, name)
+		// The current nonexclusive test wrapper would have all non-exclusive tests.
+		// We would add all those tests for rerunning if none of the non-exclusive
+		// subtests start due to some initial failure.
+		if nonexclusiveWrapperMatch.MatchString(h.Name()) && !h.GetNonExclusiveTestStarted() {
+			if h.Failed() {
+				testsToRerun = append(testsToRerun, h.Subtests()...)
+			}
+		} else {
+			name, isRerunnable := GetRerunnableTestName(h.Name())
+			if h.Failed() && isRerunnable {
+				testsToRerun = append(testsToRerun, name)
+			}
 		}
 	}
 	return testsToRerun
 }
 
-func RunTests(patterns []string, multiply int, rerun bool, pltfrm, outputDir string, propagateTestErrors bool) error {
-	return runProvidedTests(register.Tests, patterns, multiply, rerun, pltfrm, outputDir, propagateTestErrors)
+func RunTests(patterns []string, multiply int, rerun bool, allowRerunSuccess bool, pltfrm, outputDir string, propagateTestErrors bool) error {
+	return runProvidedTests(register.Tests, patterns, multiply, rerun, allowRerunSuccess, pltfrm, outputDir, propagateTestErrors)
 }
 
 func RunUpgradeTests(patterns []string, rerun bool, pltfrm, outputDir string, propagateTestErrors bool) error {
-	return runProvidedTests(register.UpgradeTests, patterns, 0, rerun, pltfrm, outputDir, propagateTestErrors)
+	return runProvidedTests(register.UpgradeTests, patterns, 0, rerun, false, pltfrm, outputDir, propagateTestErrors)
 }
 
 // externalTestMeta is parsed from kola.json in external tests
 type externalTestMeta struct {
-	Architectures             string   `json:"architectures,omitempty"`
-	Platforms                 string   `json:"platforms,omitempty"`
-	Distros                   string   `json:"distros,omitempty"`
-	Tags                      string   `json:"tags,omitempty"`
-	RequiredTag               string   `json:"requiredTag,omitempty"`
-	AdditionalDisks           []string `json:"additionalDisks,omitempty"`
-	MinMemory                 int      `json:"minMemory,omitempty"`
-	MinDiskSize               int      `json:"minDisk,omitempty"`
-	AdditionalNics            int      `json:"additionalNics,omitempty"`
-	AppendKernelArgs          string   `json:"appendKernelArgs,omitempty"`
-	AppendFirstbootKernelArgs string   `json:"appendFirstbootKernelArgs,omitempty"`
-	Exclusive                 bool     `json:"exclusive"`
-	TimeoutMin                int      `json:"timeoutMin"`
-	Conflicts                 []string `json:"conflicts"`
-	AllowConfigWarnings       bool     `json:"allowConfigWarnings"`
+	Architectures             string   `json:"architectures,omitempty"             yaml:"architectures,omitempty"`
+	Platforms                 string   `json:"platforms,omitempty"                 yaml:"platforms,omitempty"`
+	Distros                   string   `json:"distros,omitempty"                   yaml:"distros,omitempty"`
+	Tags                      string   `json:"tags,omitempty"                      yaml:"tags,omitempty"`
+	RequiredTag               string   `json:"requiredTag,omitempty"               yaml:"requiredTag,omitempty"`
+	AdditionalDisks           []string `json:"additionalDisks,omitempty"           yaml:"additionalDisks,omitempty"`
+	InjectContainer           bool     `json:"injectContainer,omitempty"           yaml:"injectContainer,omitempty"`
+	MinMemory                 int      `json:"minMemory,omitempty"                 yaml:"minMemory,omitempty"`
+	MinDiskSize               int      `json:"minDisk,omitempty"                   yaml:"minDisk,omitempty"`
+	AdditionalNics            int      `json:"additionalNics,omitempty"            yaml:"additionalNics,omitempty"`
+	AppendKernelArgs          string   `json:"appendKernelArgs,omitempty"          yaml:"appendKernelArgs,omitempty"`
+	AppendFirstbootKernelArgs string   `json:"appendFirstbootKernelArgs,omitempty" yaml:"appendFirstbootKernelArgs,omitempty"`
+	Exclusive                 bool     `json:"exclusive"                           yaml:"exclusive"`
+	TimeoutMin                int      `json:"timeoutMin"                          yaml:"timeoutMin"`
+	Conflicts                 []string `json:"conflicts"                           yaml:"conflicts"`
+	AllowConfigWarnings       bool     `json:"allowConfigWarnings"                 yaml:"allowConfigWarnings"`
+	NoInstanceCreds           bool     `json:"noInstanceCreds"                     yaml:"noInstanceCreds"`
 }
 
 // metadataFromTestBinary extracts JSON-in-comment like:
@@ -776,6 +878,8 @@ func metadataFromTestBinary(executable string) (*externalTestMeta, error) {
 	defer f.Close()
 	r := bufio.NewReader(io.LimitReader(f, 8192))
 	meta := &externalTestMeta{Exclusive: true}
+	inmeta := false    // true if we saw a ## kola: prefix after which we expect YAML
+	metadatayaml := "" // accumulated YAML metadata
 	for {
 		line, err := r.ReadString('\n')
 		if err == io.EOF {
@@ -783,17 +887,38 @@ func metadataFromTestBinary(executable string) (*externalTestMeta, error) {
 		} else if err != nil {
 			return nil, err
 		}
-		if !strings.HasPrefix(line, InstalledTestMetaPrefix) {
-			continue
+
+		// Handle the older JSON metadata
+		if strings.HasPrefix(line, InstalledTestMetaPrefix) {
+			if inmeta {
+				return nil, fmt.Errorf("found both yaml and json test prefixes (%v %v)", InstalledTestMetaPrefixYaml, InstalledTestMetaPrefix)
+			}
+			buf := strings.TrimSpace(line[len(InstalledTestMetaPrefix):])
+			dec := json.NewDecoder(strings.NewReader(buf))
+			dec.DisallowUnknownFields()
+			meta = &externalTestMeta{Exclusive: true}
+			if err := dec.Decode(meta); err != nil {
+				return nil, errors.Wrapf(err, "parsing %s", line)
+			}
+			break // We're done processing
 		}
-		buf := strings.TrimSpace(line[len(InstalledTestMetaPrefix):])
-		dec := json.NewDecoder(strings.NewReader(buf))
-		dec.DisallowUnknownFields()
-		meta = &externalTestMeta{Exclusive: true}
-		if err := dec.Decode(meta); err != nil {
-			return nil, errors.Wrapf(err, "parsing %s", line)
+
+		// Look for the new YAML metadata
+		if strings.HasPrefix(line, InstalledTestMetaPrefixYaml) {
+			if inmeta {
+				return nil, fmt.Errorf("found multiple %s", InstalledTestMetaPrefixYaml)
+			}
+			inmeta = true
+		} else if inmeta {
+			if !strings.HasPrefix(line, "## ") {
+				if err := yaml.UnmarshalStrict([]byte(metadatayaml), &meta); err != nil {
+					return nil, err
+				}
+				break
+			} else {
+				metadatayaml += fmt.Sprintf("%s\n", line[3:])
+			}
 		}
-		break
 	}
 	return meta, nil
 }
@@ -912,11 +1037,18 @@ Environment=KOLA_TEST_EXE=%s
 Environment=%s=%s
 ExecStart=%s
 `, unitName, testname, base, kolaExtBinDataEnv, destDataDir, remotepath)
+	if targetMeta.InjectContainer {
+		if CosaBuild == nil {
+			return fmt.Errorf("test %v uses injectContainer, but no cosa build found", testname)
+		}
+		ostreeContainer := CosaBuild.Meta.BuildArtifacts.Ostree
+		unit += fmt.Sprintf("Environment=%s=/home/nest/%s\n", kolaExtContainerDataEnv, ostreeContainer.Path)
+	}
 	config.AddSystemdUnit(unitName, unit, conf.NoState)
 
 	// Architectures using 64k pages use slightly more memory, ask for more than requested
 	// to make sure that we don't run out of it. Currently ppc64le and aarch64 use 64k pages.
-	switch system.RpmArch() {
+	switch coreosarch.CurrentRpmArch() {
 	case "ppc64le", "aarch64":
 		if targetMeta.MinMemory <= 4096 {
 			targetMeta.MinMemory = targetMeta.MinMemory * 2
@@ -931,6 +1063,7 @@ ExecStart=%s
 		Tags:          []string{"external"},
 
 		AdditionalDisks:           targetMeta.AdditionalDisks,
+		InjectContainer:           targetMeta.InjectContainer,
 		MinMemory:                 targetMeta.MinMemory,
 		MinDiskSize:               targetMeta.MinDiskSize,
 		AdditionalNics:            targetMeta.AdditionalNics,
@@ -951,7 +1084,7 @@ ExecStart=%s
 				} else {
 					fmt.Printf("Fetching status failed: %v\n", suberr)
 				}
-				if Options.SSHOnTestFailure {
+				if mach.RuntimeConf().SSHOnTestFailure {
 					plog.Errorf("dropping to shell: kolet failed: %v: %s", err, stderr)
 					if err := platform.Manhole(mach); err != nil {
 						plog.Errorf("failed to get terminal via ssh: %v", err)
@@ -984,6 +1117,9 @@ ExecStart=%s
 		t.ExcludeDistros = strings.Fields(targetMeta.Distros[1:])
 	} else {
 		t.Distros = strings.Fields(targetMeta.Distros)
+	}
+	if targetMeta.NoInstanceCreds {
+		t.Flags = append(t.Flags, register.NoInstanceCreds)
 	}
 	t.Tags = append(t.Tags, strings.Fields(targetMeta.Tags)...)
 	// TODO validate tags here
@@ -1070,15 +1206,15 @@ func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
 				return err
 			}
 		} else if isreg && (c.Mode().Perm()&0001) == 0 {
-			_, err := os.Open(filepath.Join(dir, c.Name()))
+			file, err := os.Open(filepath.Join(dir, c.Name()))
 			if err != nil {
 				return errors.Wrapf(err, "opening %s", c.Name())
 			}
-			/*scanner := bufio.NewScanner(file)
+			scanner := bufio.NewScanner(file)
 			scanner.Scan()
 			if strings.HasPrefix(scanner.Text(), "#!") {
 				plog.Warningf("Found non-executable file with shebang: %s\n", c.Name())
-			}*/
+			}
 		}
 	}
 
@@ -1188,7 +1324,7 @@ func createTestBuckets(tests []*register.Test) [][]*register.Test {
 			if _, found := testMap[conflict]; found {
 				testMap[conflict].Conflicts = append(testMap[conflict].Conflicts, test.Name)
 			} else {
-				plog.Fatalf("%v specified %v as a conflict but %v was not found. Double-check that it is marked as non-exclusive.",
+				plog.Debugf("%v specified %v as a conflict but %v was not found. If you are running both tests, verify that both are marked as non-exclusive.",
 					test.Name, conflict, conflict)
 			}
 		}
@@ -1239,12 +1375,20 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 	var flags []register.Flag
 	var nonExclusiveTestConfs []*conf.Conf
 	dependencyDirs := make(register.DepDirMap)
+	var subtests []string
 	for _, test := range tests {
+		subtests = append(subtests, test.Name)
 		if test.HasFlag(register.NoSSHKeyInMetadata) || test.HasFlag(register.NoSSHKeyInUserData) {
 			plog.Fatalf("Non-exclusive test %v cannot have NoSSHKeyIn* flag", test.Name)
 		}
+		if test.HasFlag(register.NoInstanceCreds) {
+			plog.Fatalf("Non-exclusive test %v cannot have NoInstanceCreds flag", test.Name)
+		}
 		if test.HasFlag(register.AllowConfigWarnings) {
 			plog.Fatalf("Non-exclusive test %v cannot have AllowConfigWarnings flag", test.Name)
+		}
+		if test.AppendKernelArgs != "" {
+			plog.Fatalf("Non-exclusive test %v cannot have AppendKernelArgs", test.Name)
 		}
 		if !internetAccess && testRequiresInternet(test) {
 			flags = append(flags, register.RequiresInternetAccess)
@@ -1276,6 +1420,7 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 			for _, t := range tests {
 				t := t
 				run := func(h *harness.H) {
+					tcluster.H.NonExclusiveTestStarted()
 					testResults.add(h)
 					// tcluster has a reference to the wrapper's harness
 					// We need a new TestCluster that has a reference to the
@@ -1305,6 +1450,7 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 			}
 		},
 		UserData: mergedConfig,
+		Subtests: subtests,
 		// This will allow runTest to copy kolet to machine
 		NativeFuncs: make(map[string]register.NativeFuncWrap),
 		ClusterSize: 1,
@@ -1321,13 +1467,18 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 // analysis after the test run. It should already exist.
 func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flight) {
 	h.Parallel()
+	h.SetSubtests(t.Subtests)
 
 	rconf := &platform.RuntimeConfig{
-		OutputDir:          h.OutputDir(),
-		NoSSHKeyInUserData: t.HasFlag(register.NoSSHKeyInUserData),
-		NoSSHKeyInMetadata: t.HasFlag(register.NoSSHKeyInMetadata),
-		WarningsAction:     conf.FailWarnings,
+		AllowFailedUnits:   testSkipBaseChecks(t),
 		InternetAccess:     testRequiresInternet(t),
+		NoInstanceCreds:    t.HasFlag(register.NoInstanceCreds),
+		NoSSHKeyInMetadata: t.HasFlag(register.NoSSHKeyInMetadata),
+		NoSSHKeyInUserData: t.HasFlag(register.NoSSHKeyInUserData),
+		OutputDir:          h.OutputDir(),
+		SSHOnTestFailure:   Options.SSHOnTestFailure,
+		WarningsAction:     conf.FailWarnings,
+		EarlyRelease:       h.Release,
 	}
 	if t.HasFlag(register.AllowConfigWarnings) {
 		rconf.WarningsAction = conf.IgnoreWarnings
@@ -1341,11 +1492,9 @@ func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flig
 	defer func() {
 		h.StopExecTimer()
 		c.Destroy()
-		for _, k := range t.Tags {
-			if k == SkipBaseChecksTag {
-				plog.Debugf("Skipping base checks for %s", t.Name)
-				return
-			}
+		if testSkipBaseChecks(t) {
+			plog.Debugf("Skipping base checks for %s", t.Name)
+			return
 		}
 		for id, output := range c.ConsoleOutput() {
 			for _, badness := range CheckConsole([]byte(output), t) {
@@ -1429,6 +1578,17 @@ func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flig
 	// drop kolet binary on machines
 	if t.ExternalTest != "" || t.NativeFuncs != nil {
 		if err := scpKolet(tcluster.Machines()); err != nil {
+			h.Fatal(err)
+		}
+	}
+
+	if t.InjectContainer {
+		if CosaBuild == nil {
+			h.Fatalf("Test %s uses injectContainer, but no cosa build found", t.Name)
+		}
+		ostreeContainer := CosaBuild.Meta.BuildArtifacts.Ostree
+		ostreeContainerPath := filepath.Join(CosaBuild.Dir, ostreeContainer.Path)
+		if err := cluster.DropFile(tcluster.Machines(), ostreeContainerPath); err != nil {
 			h.Fatal(err)
 		}
 	}

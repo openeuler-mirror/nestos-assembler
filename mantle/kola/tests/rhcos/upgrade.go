@@ -24,7 +24,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/coreos-assembler-schema/cosa"
+	cosa "github.com/coreos/coreos-assembler/pkg/builds"
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
+
 	"github.com/coreos/mantle/kola"
 	"github.com/coreos/mantle/kola/cluster"
 	"github.com/coreos/mantle/kola/register"
@@ -32,7 +34,6 @@ import (
 	"github.com/coreos/mantle/platform"
 	"github.com/coreos/mantle/platform/conf"
 	"github.com/coreos/mantle/platform/machine/unprivqemu"
-	"github.com/coreos/mantle/system"
 	installer "github.com/coreos/mantle/util"
 )
 
@@ -120,7 +121,7 @@ func setup(c cluster.TestCluster) {
 			outputname="%s"
 			commit="%s"
 			ostree --repo=tmp/repo-cache init --mode=bare-user
-			rpm-ostree ex-container import --repo=tmp/repo ostree-unverified-image:oci-archive:$tarname:latest
+			ostree container unencapsulate --repo=tmp/repo ostree-unverified-image:oci-archive:$tarname:latest
 			ostree --repo=tmp/repo pull-local tmp/repo-cache "$commit"
 			tar -cf "$outputname" -C tmp/repo .
 			rm tmp/repo-cache -rf
@@ -309,7 +310,9 @@ func downloadLatestReleasedRHCOS(target string) (string, error) {
 
 	graph := &Graph{}
 	graphUrl := fmt.Sprintf("https://api.openshift.com/api/upgrades_info/v1/graph?channel=%s", channel)
-	getJson(graphUrl, &graph)
+	if err := getJson(graphUrl, &graph); err != nil {
+		return "", err
+	}
 
 	// no-op on unreleased OCP versions
 	if len(graph.Nodes) == 0 {
@@ -355,31 +358,28 @@ func downloadLatestReleasedRHCOS(target string) (string, error) {
 		return
 	}(releaseIndex, unique)
 
-	// The origin-clients package in Fedora doesn't `oc adm release info`
-	// ability.
-	ocUrl := fmt.Sprintf("https://mirror.openshift.com/pub/openshift-v4/%s/clients/ocp/latest/openshift-client-linux.tar.gz", system.RpmArch())
-	cmdString := fmt.Sprintf("curl -Ls %s | sudo tar -zxvf - -C /usr/bin", ocUrl)
-	if err := exec.Command("bash", "-c", cmdString).Run(); err != nil {
-		return "", err
-	}
-
 	var ocpRelease *OcpRelease
 	latestOcpPayload := graph.Nodes[difference[0]].Payload
-	cmd := exec.Command("oc", "adm", "release", "info", latestOcpPayload, "-o", "json")
+	// oc should be included in cosa since https://github.com/coreos/coreos-assembler/pull/2777
+	cmd := exec.Command("/usr/bin/oc", "adm", "release", "info", latestOcpPayload, "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
-	json.Unmarshal(output, &ocpRelease)
+	if err = json.Unmarshal(output, &ocpRelease); err != nil {
+		return "", err
+	}
 
 	var latestOcpRhcosBuild *cosa.Build
 	rhcosVersion := ocpRelease.DisplayVersions.MachineOS.Version
 	latestBaseUrl := fmt.Sprintf("https://rhcos-redirector.apps.art.xq1c.p1.openshiftapps.com/art/storage/releases/rhcos-%s/%s/%s",
 		ocpVersionF,
 		rhcosVersion,
-		system.RpmArch())
+		coreosarch.CurrentRpmArch())
 	latestRhcosBuildMetaUrl := fmt.Sprintf("%s/meta.json", latestBaseUrl)
-	getJson(latestRhcosBuildMetaUrl, &latestOcpRhcosBuild)
+	if err := getJson(latestRhcosBuildMetaUrl, &latestOcpRhcosBuild); err != nil {
+		return "", err
+	}
 
 	latestRhcosQcow2 := latestOcpRhcosBuild.BuildArtifacts.Qemu.Path
 	latestRhcosQcow2Url := fmt.Sprintf("%s/%s", latestBaseUrl, latestRhcosQcow2)

@@ -24,14 +24,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 
 	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/sdk"
-	"github.com/coreos/mantle/system"
 	"github.com/coreos/mantle/system/exec"
+	"github.com/coreos/mantle/util"
 )
 
 const (
@@ -78,7 +79,7 @@ func NewMetalQemuBuilderDefault() *QemuBuilder {
 }
 
 type Install struct {
-	CosaBuild       *sdk.LocalBuild
+	CosaBuild       *util.LocalBuild
 	Builder         *QemuBuilder
 	Insecure        bool
 	Native4k        bool
@@ -98,12 +99,28 @@ type InstalledMachine struct {
 	BootStartedErrorChannel chan error
 }
 
-func (inst *Install) PXE(kargs []string, liveIgnition, ignition conf.Conf, offline bool) (*InstalledMachine, error) {
-	if inst.CosaBuild.Meta.BuildArtifacts.Metal == nil {
-		return nil, fmt.Errorf("Build %s must have a `metal` artifact", inst.CosaBuild.Meta.OstreeVersion)
+// Check that artifact has been built and locally exists
+func (inst *Install) checkArtifactsExist(artifacts []string) error {
+	version := inst.CosaBuild.Meta.OstreeVersion
+	for _, name := range artifacts {
+		artifact, err := inst.CosaBuild.Meta.GetArtifact(name)
+		if err != nil {
+			return fmt.Errorf("Missing artifact %s for %s build: %s", name, version, err)
+		}
+		path := filepath.Join(inst.CosaBuild.Dir, artifact.Path)
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("Missing local file for artifact %s for build %s", name, version)
+			}
+		}
 	}
-	if inst.CosaBuild.Meta.BuildArtifacts.LiveKernel == nil {
-		return nil, fmt.Errorf("build %s has no live installer kernel", inst.CosaBuild.Meta.Name)
+	return nil
+}
+
+func (inst *Install) PXE(kargs []string, liveIgnition, ignition conf.Conf, offline bool) (*InstalledMachine, error) {
+	artifacts := []string{"live-kernel", "live-rootfs"}
+	if err := inst.checkArtifactsExist(artifacts); err != nil {
+		return nil, err
 	}
 
 	inst.kargs = kargs
@@ -182,14 +199,14 @@ func setupMetalImage(builddir, metalimg, destdir string) (string, error) {
 }
 
 func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
-	if kern.kernel == "" {
-		return nil, fmt.Errorf("Missing kernel artifact")
+	var artifacts []string
+	if inst.Native4k {
+		artifacts = append(artifacts, "metal4k")
+	} else {
+		artifacts = append(artifacts, "metal")
 	}
-	if kern.initramfs == "" {
-		return nil, fmt.Errorf("Missing initramfs artifact")
-	}
-	if kern.rootfs == "" {
-		return nil, fmt.Errorf("Missing rootfs artifact")
+	if err := inst.checkArtifactsExist(artifacts); err != nil {
+		return nil, err
 	}
 
 	builder := inst.Builder
@@ -251,7 +268,7 @@ func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
 
 	pxe := pxeSetup{}
 	pxe.tftpipaddr = "192.168.76.2"
-	switch system.RpmArch() {
+	switch coreosarch.CurrentRpmArch() {
 	case "x86_64":
 		pxe.networkdevice = "e1000"
 		if builder.Firmware == "uefi" {
@@ -281,7 +298,7 @@ func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
 		pxe.tftpipaddr = "10.0.2.2"
 		pxe.bootindex = "1"
 	default:
-		return nil, fmt.Errorf("Unsupported arch %s" + system.RpmArch())
+		return nil, fmt.Errorf("Unsupported arch %s" + coreosarch.CurrentRpmArch())
 	}
 
 	mux := http.NewServeMux()
@@ -317,7 +334,7 @@ func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
 }
 
 func renderBaseKargs() []string {
-	return append(baseKargs, fmt.Sprintf("console=%s", consoleKernelArgument[system.RpmArch()]))
+	return append(baseKargs, fmt.Sprintf("console=%s", consoleKernelArgument[coreosarch.CurrentRpmArch()]))
 }
 
 func renderInstallKargs(t *installerRun, offline bool) []string {
@@ -362,7 +379,7 @@ func (t *installerRun) completePxeSetup(kargs []string) error {
 			KERNEL %s
 			APPEND initrd=%s %s
 		`, t.kern.kernel, t.kern.initramfs, kargsStr))
-		if system.RpmArch() == "s390x" {
+		if coreosarch.CurrentRpmArch() == "s390x" {
 			pxeconfig = []byte(kargsStr)
 		}
 		if err := ioutil.WriteFile(filepath.Join(pxeconfigdir, "default"), pxeconfig, 0777); err != nil {
@@ -420,10 +437,24 @@ func (t *installerRun) completePxeSetup(kargs []string) error {
 func switchBootOrderSignal(qinst *QemuInstance, bootstartedchan *os.File, booterrchan *chan error) {
 	*booterrchan = make(chan error)
 	go func() {
+		err := qinst.Wait()
+		// only one Wait() gets process data, so also manually check for signal
+		if err == nil && qinst.Signaled() {
+			err = errors.New("process killed")
+		}
+		if err != nil {
+			*booterrchan <- errors.Wrapf(err, "QEMU unexpectedly exited while waiting for %s", bootStartedSignal)
+		}
+	}()
+	go func() {
 		r := bufio.NewReader(bootstartedchan)
 		l, err := r.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
+				// this may be from QEMU getting killed or exiting; wait a bit
+				// to give a chance for .Wait() above to feed the channel with a
+				// better error
+				time.Sleep(1 * time.Second)
 				*booterrchan <- fmt.Errorf("Got EOF from boot started channel, %s expected", bootStartedSignal)
 			} else {
 				*booterrchan <- errors.Wrapf(err, "reading from boot started channel")
@@ -467,7 +498,7 @@ func (t *installerRun) run() (*QemuInstance, error) {
 	builder := t.builder
 	netdev := fmt.Sprintf("%s,netdev=mynet0,mac=52:54:00:12:34:56", t.pxe.networkdevice)
 	if t.pxe.bootindex == "" {
-		builder.Append("-boot", "once=n", "-option-rom", "/usr/share/qemu/pxe-rtl8139.rom")
+		builder.Append("-boot", "once=n")
 	} else {
 		netdev += fmt.Sprintf(",bootindex=%s", t.pxe.bootindex)
 	}
@@ -531,13 +562,14 @@ type installerConfig struct {
 }
 
 func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgnition conf.Conf, outdir string, offline, minimal bool) (*InstalledMachine, error) {
-	if !inst.Native4k && inst.CosaBuild.Meta.BuildArtifacts.Metal == nil {
-		return nil, fmt.Errorf("Build %s must have a `metal` artifact", inst.CosaBuild.Meta.OstreeVersion)
-	} else if inst.Native4k && inst.CosaBuild.Meta.BuildArtifacts.Metal4KNative == nil {
-		return nil, fmt.Errorf("Build %s must have a `metal4k` artifact", inst.CosaBuild.Meta.OstreeVersion)
+	artifacts := []string{"live-iso"}
+	if inst.Native4k {
+		artifacts = append(artifacts, "metal4k")
+	} else {
+		artifacts = append(artifacts, "metal")
 	}
-	if inst.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-		return nil, fmt.Errorf("Build %s must have a live ISO", inst.CosaBuild.Meta.Name)
+	if err := inst.checkArtifactsExist(artifacts); err != nil {
+		return nil, err
 	}
 	if minimal && offline { // ideally this'd be one enum parameter
 		panic("Can't run minimal install offline")

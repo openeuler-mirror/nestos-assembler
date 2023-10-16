@@ -15,12 +15,14 @@ func init() {
 		Run:         isulaBaseTest,
 		ClusterSize: 1,
 		Name:        `isula.base`,
+		Distros:     []string{"nestos"},
 		Flags:       []register.Flag{register.RequiresInternetAccess},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         isulaWorkflow,
 		ClusterSize: 1,
 		Name:        `isula.workflow`,
+		Distros:     []string{"nestos"},
 		Flags:       []register.Flag{register.RequiresInternetAccess},
 		FailFast:    true,
 	})
@@ -179,7 +181,7 @@ func isulaWorkflow(c cluster.TestCluster) {
 
 	// Test: Remove container
 	c.Run("remove", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo isula rm busybox && sudo isula ps -a | grep busybox")
+		_, err := c.SSH(m, "sudo isula rm busybox")
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -190,11 +192,6 @@ func isulaWorkflow(c cluster.TestCluster) {
 		_, err := c.SSH(m, "sudo isula rmi hub.oepkgs.net/library/busybox")
 		if err != nil {
 			c.Fatal(err)
-		}
-
-		_, err = c.SSH(m, "sudo isula images | grep hub.oepkgs.net/library/busybox")
-		if err != nil {
-			c.Fatalf("Image should be deleted but found")
 		}
 	})
 }

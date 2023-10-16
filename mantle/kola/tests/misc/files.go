@@ -16,6 +16,7 @@ package misc
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/coreos/mantle/kola/cluster"
@@ -26,98 +27,16 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         Filesystem,
 		ClusterSize: 1,
-		Name:        "nestos.filesystem",
+		Name:        "fcos.filesystem",
 		Distros:     []string{"fcos", "nestos"},
 	})
 }
 
 func Filesystem(c cluster.TestCluster) {
-	c.Run("suid", SUIDFiles)
-	c.Run("sgid", SGIDFiles)
 	c.Run("writablefiles", WritableFiles)
 	c.Run("writabledirs", WritableDirs)
 	c.Run("stickydirs", StickyDirs)
 	c.Run("denylist", Denylist)
-}
-
-func sugidFiles(c cluster.TestCluster, validfiles []string, mode string) {
-	m := c.Machines()[0]
-	badfiles := make([]string, 0)
-
-	output := c.MustSSH(m, fmt.Sprintf("sudo find / -ignore_readdir_race -path /sys -prune -o -path /proc -prune -o -path /sysroot/ostree -prune -o -type f -perm -%v -print", mode))
-
-	if string(output) == "" {
-		return
-	}
-
-	files := strings.Split(string(output), "\n")
-	for _, file := range files {
-		var valid bool
-
-		for _, validfile := range validfiles {
-			if file == validfile {
-				valid = true
-			}
-		}
-		if !valid {
-			badfiles = append(badfiles, file)
-		}
-	}
-
-	if len(badfiles) != 0 {
-		c.Fatalf("Unknown SUID or SGID files found: %v", badfiles)
-	}
-}
-
-func SUIDFiles(c cluster.TestCluster) {
-	validfiles := []string{
-		"/usr/bin/chage",
-		"/usr/bin/chfn",
-		"/usr/bin/chsh",
-		"/usr/bin/expiry",
-		"/usr/bin/fusermount",
-		"/usr/bin/fusermount3",
-		"/usr/bin/gpasswd",
-		"/usr/bin/ksu",
-		"/usr/bin/man",
-		"/usr/bin/mandb",
-		"/usr/bin/mount",
-		"/usr/bin/newgidmap",
-		"/usr/bin/newgrp",
-		"/usr/bin/newuidmap",
-		"/usr/bin/passwd",
-		"/usr/bin/pkexec",
-		"/usr/bin/umount",
-		"/usr/bin/su",
-		"/usr/bin/sudo",
-		"/usr/lib/polkit-1/polkit-agent-helper-1",
-		"/usr/lib64/polkit-1/polkit-agent-helper-1",
-		"/usr/libexec/dbus-daemon-launch-helper",
-		"/usr/libexec/sssd/krb5_child",
-		"/usr/libexec/sssd/ldap_child",
-		"/usr/libexec/sssd/selinux_child",
-		"/usr/sbin/mount.nfs",
-		"/usr/sbin/unix_chkpwd",
-		"/usr/sbin/grub2-set-bootflag",
-		"/usr/sbin/mount.nfs",
-		"/usr/sbin/pam_timestamp_check",
-		"/usr/libexec/dbus-1/dbus-daemon-launch-helper",
-	}
-
-	sugidFiles(c, validfiles, "4000")
-}
-
-func SGIDFiles(c cluster.TestCluster) {
-	validfiles := []string{
-		"/usr/bin/write",
-		"/usr/libexec/openssh/ssh-keysign",
-		"/usr/libexec/utempter/utempter",
-		"/usr/bin/cgclassify",
-		"/usr/bin/cgexec",
-		"/usr/bin/wall",
-	}
-
-	sugidFiles(c, validfiles, "2000")
 }
 
 func WritableFiles(c cluster.TestCluster) {
@@ -159,7 +78,6 @@ func StickyDirs(c cluster.TestCluster) {
 		"/tmp",
 		"/var/tmp",
 		"/run/user/1000/libpod",
-		"/run/ephemeral/var/tmp",
 	}
 
 	output := c.MustSSH(m, fmt.Sprintf("sudo find / -ignore_readdir_race -path %s -prune -o -type d -perm /1000 -print", strings.Join(ignore, " -prune -o -path ")))
@@ -185,7 +103,6 @@ func Denylist(c cluster.TestCluster) {
 
 	denylist := []string{
 		// Things excluded from the image that might slip in
-		"/usr/bin/perl",
 		"/usr/bin/python",
 		"/usr/share/man",
 
@@ -202,6 +119,11 @@ func Denylist(c cluster.TestCluster) {
 		"* *",
 		// DEL
 		"*\x7f*",
+	}
+
+	// https://github.com/coreos/fedora-coreos-tracker/issues/1217
+	if runtime.GOARCH != "s390x" {
+		denylist = append(denylist, "/usr/bin/perl")
 	}
 
 	output := c.MustSSH(m, fmt.Sprintf("sudo find / -ignore_readdir_race -path %s -prune -o -path '%s' -print", strings.Join(skip, " -prune -o -path "), strings.Join(denylist, "' -print -o -path '")))

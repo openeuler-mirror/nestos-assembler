@@ -1,4 +1,5 @@
-// Copyright 2016 CoreOS, Inc.
+// Copyright 2022 Red Hat
+// Copyright 2018 CoreOS, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +16,9 @@
 package azure
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Microsoft/azure-vhd-utils/vhdcore/validator"
@@ -24,9 +27,10 @@ import (
 
 var (
 	cmdUploadBlob = &cobra.Command{
-		Use:   "upload-blob storage-account container blob-name file",
-		Short: "Upload a blob to Azure storage",
-		Run:   runUploadBlob,
+		Use:     "upload-blob",
+		Short:   "Upload a blob to Azure storage",
+		Run:     runUploadBlob,
+		Aliases: []string{"upload-blob-arm"},
 	}
 
 	// upload blob options
@@ -42,27 +46,40 @@ var (
 
 func init() {
 	bv := cmdUploadBlob.Flags().BoolVar
+	sv := cmdUploadBlob.Flags().StringVar
 
 	bv(&ubo.overwrite, "overwrite", false, "overwrite blob")
 	bv(&ubo.validate, "validate", true, "validate blob as VHD file")
+
+	sv(&ubo.storageacct, "storage-account", "kola", "storage account name")
+	sv(&ubo.container, "container", "vhds", "container name")
+	sv(&ubo.blob, "blob-name", "", "name of the blob")
+	sv(&ubo.vhd, "file", "", "path to CoreOS VHD image")
+	sv(&resourceGroup, "resource-group", "kola", "resource group name that owns the storage account")
 
 	Azure.AddCommand(cmdUploadBlob)
 }
 
 func runUploadBlob(cmd *cobra.Command, args []string) {
-	if len(args) != 4 {
-		plog.Fatalf("Expecting 4 arguments, got %d", len(args))
+	if ubo.vhd == "" {
+		plog.Fatal("--file is required")
+	}
+	if ubo.blob == "" {
+		plog.Fatal("--blob-name is required")
 	}
 
-	ubo.storageacct = args[0]
-	ubo.container = args[1]
-	ubo.blob = args[2]
-	ubo.vhd = args[3]
+	if err := api.SetupClients(); err != nil {
+		plog.Fatalf("setting up clients: %v\n", err)
+	}
 
 	if ubo.validate {
 		plog.Printf("Validating VHD %q", ubo.vhd)
 		if !strings.HasSuffix(strings.ToLower(ubo.blob), ".vhd") {
 			plog.Fatalf("Blob name should end with .vhd")
+		}
+
+		if !strings.HasSuffix(strings.ToLower(ubo.vhd), ".vhd") {
+			plog.Fatalf("Image should end with .vhd")
 		}
 
 		if err := validator.ValidateVhd(ubo.vhd); err != nil {
@@ -74,16 +91,29 @@ func runUploadBlob(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	kr, err := api.GetStorageServiceKeys(ubo.storageacct)
+	kr, err := api.GetStorageServiceKeys(ubo.storageacct, resourceGroup)
 	if err != nil {
 		plog.Fatalf("Fetching storage service keys failed: %v", err)
 	}
 
-	if err := api.UploadBlob(ubo.storageacct, kr.PrimaryKey, ubo.vhd, ubo.container, ubo.blob, ubo.overwrite); err != nil {
+	if kr.Keys == nil || len(*kr.Keys) == 0 {
+		plog.Fatalf("No storage service keys found")
+	}
+
+	//only use the first service key to avoid uploading twice
+	//see https://github.com/coreos/coreos-assembler/pull/1849
+	k := (*kr.Keys)[0]
+	if err := api.UploadBlob(ubo.storageacct, *k.Value, ubo.vhd, ubo.container, ubo.blob, ubo.overwrite); err != nil {
 		plog.Fatalf("Uploading blob failed: %v", err)
 	}
 
-	uri := fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", ubo.storageacct, ubo.container, ubo.blob)
+	err = json.NewEncoder(os.Stdout).Encode(&struct {
+		URL string
+	}{
+		URL: fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", ubo.storageacct, ubo.container, ubo.blob),
+	})
 
-	plog.Printf("Blob uploaded to %q", uri)
+	if err != nil {
+		plog.Fatal(err)
+	}
 }
