@@ -34,10 +34,10 @@ func (a *API) vmname() string {
 }
 
 // Taken from: https://github.com/golang/build/blob/master/buildlet/gce.go
-func (a *API) mkinstance(userdata, name string, keys []*agent.Key) *compute.Instance {
+func (a *API) mkinstance(userdata, name string, keys []*agent.Key, useServiceAcct bool) *compute.Instance {
 	mantle := "mantle"
 	metadataItems := []*compute.MetadataItems{
-		&compute.MetadataItems{
+		{
 			// this should be done with a label instead, but
 			// our old vendored Go binding doesn't support those
 			Key:   "created-by",
@@ -84,9 +84,9 @@ func (a *API) mkinstance(userdata, name string, keys []*agent.Key) *compute.Inst
 			},
 		},
 		NetworkInterfaces: []*compute.NetworkInterface{
-			&compute.NetworkInterface{
+			{
 				AccessConfigs: []*compute.AccessConfig{
-					&compute.AccessConfig{
+					{
 						Type: "ONE_TO_ONE_NAT",
 						Name: "External NAT",
 					},
@@ -94,6 +94,15 @@ func (a *API) mkinstance(userdata, name string, keys []*agent.Key) *compute.Inst
 				Network: instancePrefix + "/global/networks/" + a.options.Network,
 			},
 		},
+	}
+	if useServiceAcct {
+		// allow the instance to perform authenticated GCS fetches
+		instance.ServiceAccounts = []*compute.ServiceAccount{
+			{
+				Email:  a.options.ServiceAcct,
+				Scopes: []string{"https://www.googleapis.com/auth/devstorage.read_only"},
+			},
+		}
 	}
 	// add cloud config
 	if userdata != "" {
@@ -108,9 +117,9 @@ func (a *API) mkinstance(userdata, name string, keys []*agent.Key) *compute.Inst
 }
 
 // CreateInstance creates a Google Compute Engine instance.
-func (a *API) CreateInstance(userdata string, keys []*agent.Key) (*compute.Instance, error) {
+func (a *API) CreateInstance(userdata string, keys []*agent.Key, useServiceAcct bool) (*compute.Instance, error) {
 	name := a.vmname()
-	inst := a.mkinstance(userdata, name, keys)
+	inst := a.mkinstance(userdata, name, keys, useServiceAcct)
 
 	plog.Debugf("Creating instance %q", name)
 

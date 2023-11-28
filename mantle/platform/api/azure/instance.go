@@ -15,13 +15,14 @@
 package azure
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math/rand"
+	"math"
+	"math/big"
 	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/arm/compute"
@@ -55,10 +56,13 @@ func (a *API) getVMParameters(name, userdata, sshkey, storageAccountURI string, 
 	//             from the following: Contains an uppercase character, Contains a
 	//             lowercase character, Contains a numeric digit, Contains a special
 	//             character) Control characters are not allowed"
-	password := fmt.Sprintf("%s%s%s", "ABC&", strconv.Itoa(rand.Int()), "xyz")
-
+	n, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	if err != nil {
+		panic(fmt.Sprintf("calling crypto/rand.Int() failed and that shouldn't happen: %v", err))
+	}
+	password := fmt.Sprintf("%s%s%s", "ABC&", n, "xyz")
 	osProfile := compute.OSProfile{
-		AdminUsername: util.StrToPtr("test"),   // unused
+		AdminUsername: util.StrToPtr("nest"),   // unused
 		AdminPassword: util.StrToPtr(password), // unused
 		ComputerName:  &name,
 	}
@@ -152,9 +156,13 @@ func (a *API) CreateInstance(name, userdata, sshkey, resourceGroup, storageAccou
 
 	vmParams := a.getVMParameters(name, userdata, sshkey, fmt.Sprintf("https://%s.blob.core.windows.net/", storageAccount), ip, nic)
 
-	_, err = a.compClient.CreateOrUpdate(resourceGroup, name, vmParams, nil)
+	cancel := make(chan struct{})
+	time.AfterFunc(8*time.Minute, func() {
+		close(cancel)
+	})
+	_, err = a.compClient.CreateOrUpdate(resourceGroup, name, vmParams, cancel)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating instance failed: %w", err)
 	}
 
 	err = util.WaitUntilReady(5*time.Minute, 10*time.Second, func() (bool, error) {
@@ -205,7 +213,7 @@ func (a *API) TerminateInstance(name, resourceGroup string) error {
 }
 
 func (a *API) GetConsoleOutput(name, resourceGroup, storageAccount string) ([]byte, error) {
-	kr, err := a.GetStorageServiceKeysARM(storageAccount, resourceGroup)
+	kr, err := a.GetStorageServiceKeys(storageAccount, resourceGroup)
 	if err != nil {
 		return nil, fmt.Errorf("retrieving storage service keys: %v", err)
 	}

@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
 	"github.com/coreos/stream-metadata-go/stream"
 	"github.com/pkg/errors"
 
@@ -28,16 +30,17 @@ import (
 	"github.com/coreos/mantle/kola"
 	"github.com/coreos/mantle/platform"
 	"github.com/coreos/mantle/rhcos"
-	"github.com/coreos/mantle/sdk"
 	"github.com/coreos/mantle/system"
+	"github.com/coreos/mantle/util"
 )
 
 var (
 	outputDir         string
 	kolaPlatform      string
+	kolaParallelArg   string
 	kolaArchitectures = []string{"amd64"}
 	kolaPlatforms     = []string{"aws", "azure", "do", "esx", "gce", "openstack", "packet", "qemu", "qemu-unpriv", "qemu-iso"}
-	kolaDistros       = []string{"fcos", "rhcos", "nestos"}
+	kolaDistros       = []string{"fcos", "rhcos", "scos", "nestos"}
 )
 
 func init() {
@@ -50,19 +53,20 @@ func init() {
 	sv(&outputDir, "output-dir", "", "Temporary output directory for test data and logs")
 	root.PersistentFlags().StringVarP(&kolaPlatform, "platform", "p", "", "VM platform: "+strings.Join(kolaPlatforms, ", "))
 	root.PersistentFlags().StringVarP(&kola.Options.Distribution, "distro", "b", "", "Distribution: "+strings.Join(kolaDistros, ", "))
-	root.PersistentFlags().IntVarP(&kola.TestParallelism, "parallel", "j", 1, "number of tests to run in parallel")
+	root.PersistentFlags().StringVarP(&kolaParallelArg, "parallel", "j", "1", "number of tests to run in parallel, or \"auto\" to match CPU count")
 	sv(&kola.TAPFile, "tapfile", "", "file to write TAP results to")
 	root.PersistentFlags().BoolVarP(&kola.Options.NoTestExitError, "no-test-exit-error", "T", false, "Don't exit with non-zero if tests fail")
 	sv(&kola.Options.BaseName, "basename", "kola", "Cluster name prefix")
 	ss("debug-systemd-unit", []string{}, "full-unit-name.service to enable SYSTEMD_LOG_LEVEL=debug on. Can be specified multiple times.")
 	ssv(&kola.DenylistedTests, "denylist-test", []string{}, "Test pattern to add to denylist. Can be specified multiple times.")
 	bv(&kola.NoNet, "no-net", false, "Don't run tests that require an Internet connection")
+	bv(&kola.ForceRunPlatformIndependent, "run-platform-independent", false, "Run tests that claim platform independence")
 	ssv(&kola.Tags, "tag", []string{}, "Test tag to run. Can be specified multiple times.")
 	bv(&kola.Options.SSHOnTestFailure, "ssh-on-test-failure", false, "SSH into a machine when tests fail")
 	sv(&kola.Options.Stream, "stream", "", "CoreOS stream ID (e.g. for Fedora CoreOS: stable, testing, next)")
 	sv(&kola.Options.CosaWorkdir, "workdir", "", "coreos-assembler working directory")
 	sv(&kola.Options.CosaBuildId, "build", "", "coreos-assembler build ID")
-	sv(&kola.Options.CosaBuildArch, "arch", system.RpmArch(), "The target architecture of the build")
+	sv(&kola.Options.CosaBuildArch, "arch", coreosarch.CurrentRpmArch(), "The target architecture of the build")
 	// rhcos-specific options
 	sv(&kola.Options.OSContainer, "oscontainer", "", "oscontainer image pullspec for pivot (RHCOS only)")
 
@@ -108,13 +112,14 @@ func init() {
 
 	// gce-specific options
 	sv(&kola.GCEOptions.Image, "gce-image", "", "GCE image, full api endpoints names are accepted if resource is in a different project")
-	sv(&kola.GCEOptions.Project, "gce-project", "coreos-gce-testing", "GCE project name")
+	sv(&kola.GCEOptions.Project, "gce-project", "fedora-coreos-devel", "GCE project name")
 	sv(&kola.GCEOptions.Zone, "gce-zone", "us-central1-a", "GCE zone name")
 	sv(&kola.GCEOptions.MachineType, "gce-machinetype", "n1-standard-1", "GCE machine type")
 	sv(&kola.GCEOptions.DiskType, "gce-disktype", "pd-ssd", "GCE disk type")
 	sv(&kola.GCEOptions.Network, "gce-network", "default", "GCE network")
+	sv(&kola.GCEOptions.ServiceAcct, "gce-service-account", "", "GCE service account to attach to instance (default project default)")
 	bv(&kola.GCEOptions.ServiceAuth, "gce-service-auth", false, "for non-interactive auth when running within GCE")
-	sv(&kola.GCEOptions.JSONKeyFile, "gce-json-key", "", "use a service account's JSON key for authentication")
+	sv(&kola.GCEOptions.JSONKeyFile, "gce-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCEConfigPath+"\")")
 
 	// openstack-specific options
 	sv(&kola.OpenStackOptions.ConfigPath, "openstack-config-file", "", "Path to a clouds.yaml formatted OpenStack config file. The underlying library defaults to ./clouds.yaml")
@@ -180,6 +185,21 @@ func syncOptionsImpl(useCosa bool) error {
 		kolaPlatform = "qemu-iso"
 	}
 
+	// test parallelism
+	if kolaParallelArg == "auto" {
+		ncpu, err := system.GetProcessors()
+		if err != nil {
+			return fmt.Errorf("detecting CPU count: %w", err)
+		}
+		kola.TestParallelism = int(ncpu)
+	} else {
+		parallel, err := strconv.ParseInt(kolaParallelArg, 10, 32)
+		if err != nil {
+			return fmt.Errorf("parsing --parallel argument: %w", err)
+		}
+		kola.TestParallelism = int(parallel)
+	}
+
 	// native 4k requires a UEFI bootloader
 	if kola.QEMUOptions.Native4k && kola.QEMUOptions.Firmware == "bios" {
 		return fmt.Errorf("native 4k requires uefi firmware")
@@ -225,7 +245,7 @@ func syncOptionsImpl(useCosa bool) error {
 			kola.Options.CosaWorkdir = "."
 		}
 
-		localbuild, err := sdk.GetLocalBuild(kola.Options.CosaWorkdir,
+		localbuild, err := util.GetLocalBuild(kola.Options.CosaWorkdir,
 			kola.Options.CosaBuildId,
 			kola.Options.CosaBuildArch)
 		if err != nil {
@@ -243,7 +263,7 @@ func syncOptionsImpl(useCosa bool) error {
 			// specified neither --build nor --workdir; only opportunistically
 			// try to use the PWD as the workdir, but don't error out if it's
 			// not
-			if isroot, err := sdk.IsCosaRoot("."); err != nil {
+			if isroot, err := util.IsCosaRoot("."); err != nil {
 				return err
 			} else if isroot {
 				kola.Options.CosaWorkdir = "."
@@ -251,7 +271,7 @@ func syncOptionsImpl(useCosa bool) error {
 		}
 
 		if kola.Options.CosaWorkdir != "" && kola.Options.CosaWorkdir != "none" {
-			localbuild, err := sdk.GetLatestLocalBuild(kola.Options.CosaWorkdir,
+			localbuild, err := util.GetLatestLocalBuild(kola.Options.CosaWorkdir,
 				kola.Options.CosaBuildArch)
 			if err != nil {
 				if !os.IsNotExist(errors.Cause(err)) {
@@ -263,7 +283,7 @@ func syncOptionsImpl(useCosa bool) error {
 				foundCosa = true
 			}
 		} else if kola.QEMUOptions.DiskImage == "" {
-			localbuild, err := sdk.GetLocalFastBuildQemu()
+			localbuild, err := util.GetLocalFastBuildQemu()
 			if err != nil {
 				return err
 			}
@@ -288,12 +308,11 @@ func syncOptionsImpl(useCosa bool) error {
 		})
 	}
 
-	if kola.Options.OSContainer != "" && kola.Options.Distribution != "rhcos" {
-		return fmt.Errorf("oscontainer is only supported on rhcos")
-	}
-
 	if kola.Options.Distribution == "" {
 		kola.Options.Distribution = kolaDistros[0]
+	} else if kola.Options.Distribution == "scos" {
+		// Consider SCOS the same as RHCOS for now
+		kola.Options.Distribution = "rhcos"
 	} else if err := validateOption("distro", kola.Options.Distribution, kolaDistros); err != nil {
 		return err
 	}
@@ -341,7 +360,7 @@ func syncCosaOptions() error {
 	}
 
 	if kola.Options.Distribution == "" {
-		distro, err := sdk.TargetDistro(kola.CosaBuild.Meta)
+		distro, err := util.TargetDistro(kola.CosaBuild.Meta)
 		if err != nil {
 			return err
 		}
@@ -375,7 +394,6 @@ func syncStreamOptions() error {
 		if err != nil {
 			return errors.Wrapf(err, "failed to fetch stream")
 		}
-		break
 	default:
 		return fmt.Errorf("Unhandled stream for distribution %s", kola.Options.Distribution)
 	}

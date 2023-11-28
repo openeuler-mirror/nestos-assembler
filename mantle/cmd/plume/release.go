@@ -19,22 +19,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"net/url"
 	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/coreos/mantle/platform/api/aws"
-	"github.com/coreos/mantle/storage"
 	"github.com/coreos/stream-metadata-go/release"
 	"github.com/spf13/cobra"
-	"golang.org/x/net/context"
 )
 
 var (
-	releaseDryRun bool
-	cmdRelease    = &cobra.Command{
+	awsCredentialsFile string
+	selectedDistro     string
+
+	specBucket  string
+	specPolicy  string
+	specProfile string
+	specRegion  string
+	specStream  string
+	specVersion string
+
+	cmdRelease = &cobra.Command{
 		Use:   "release [options]",
 		Short: "Publish a new CoreOS release.",
 		Run:   runRelease,
@@ -45,116 +51,50 @@ var (
 func init() {
 	cmdRelease.Flags().StringVar(&awsCredentialsFile, "aws-credentials", "", "AWS credentials file")
 	cmdRelease.Flags().StringVar(&selectedDistro, "distro", "fcos", "system to release")
-	cmdRelease.Flags().StringVar(&azureProfile, "azure-profile", "", "Azure Profile json file")
-	cmdRelease.Flags().BoolVarP(&releaseDryRun, "dry-run", "n", false,
-		"perform a trial run, do not make changes")
-	AddSpecFlags(cmdRelease.Flags())
-	AddFedoraSpecFlags(cmdRelease.Flags())
-	AddFcosSpecFlags(cmdRelease.Flags())
+	cmdRelease.Flags().StringVar(&specBucket, "bucket", "fcos-builds", "S3 bucket")
+	cmdRelease.Flags().StringVar(&specPolicy, "policy", "public-read", "Canned ACL policy")
+	cmdRelease.Flags().StringVar(&specProfile, "profile", "default", "AWS profile")
+	cmdRelease.Flags().StringVar(&specRegion, "region", "us-east-1", "S3 bucket region")
+	cmdRelease.Flags().StringVarP(&specStream, "stream", "S", "testing", "target stream")
+	cmdRelease.Flags().StringVarP(&specVersion, "version", "V", "", "release version")
 	root.AddCommand(cmdRelease)
 }
 
 func runRelease(cmd *cobra.Command, args []string) {
 	switch selectedDistro {
 	case "fcos":
-		if err := runFcosRelease(cmd, args); err != nil {
-			plog.Fatal(err)
-		}
-	case "fedora":
-		if err := runFedoraRelease(cmd, args); err != nil {
-			plog.Fatal(err)
-		}
+		runFcosRelease(cmd, args)
 	default:
 		plog.Fatalf("Unknown distro %q:", selectedDistro)
 	}
 }
 
-func runFcosRelease(cmd *cobra.Command, args []string) error {
+func runFcosRelease(cmd *cobra.Command, args []string) {
 	if len(args) > 0 {
 		plog.Fatal("No args accepted")
 	}
+	if specVersion == "" {
+		plog.Fatal("--version is required")
+	}
+	if specStream == "" {
+		plog.Fatal("--stream is required")
+	}
+	if specBucket == "" {
+		plog.Fatal("--bucket is required")
+	}
+	if specRegion == "" {
+		plog.Fatal("--region is required")
+	}
 
-	spec := FcosChannelSpec()
-	FcosValidateArguments()
-
-	doS3(&spec)
-
-	modifyReleaseMetadataIndex(&spec, specCommitId)
-
-	return nil
+	doS3()
+	modifyReleaseMetadataIndex()
 }
 
-func runFedoraRelease(cmd *cobra.Command, args []string) error {
-	if len(args) > 0 {
-		plog.Fatal("No args accepted")
-	}
-
-	spec, err := ChannelFedoraSpec()
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	client := &http.Client{}
-
-	// Make AWS images public.
-	doAWS(ctx, client, nil, &spec)
-
-	return nil
-}
-
-func doAWS(ctx context.Context, client *http.Client, src *storage.Bucket, spec *channelSpec) {
-	if spec.AWS.Image == "" {
-		plog.Notice("AWS image creation disabled.")
-		return
-	}
-
-	awsImageMetadata, err := getSpecAWSImageMetadata(spec)
-	if err != nil {
-		return
-	}
-
-	imageName := awsImageMetadata["imageName"]
-
-	for _, part := range spec.AWS.Partitions {
-		for _, region := range part.Regions {
-			if releaseDryRun {
-				plog.Printf("Checking for images in %v %v...", part.Name, region)
-			} else {
-				plog.Printf("Publishing images in %v %v...", part.Name, region)
-			}
-
-			api, err := aws.New(&aws.Options{
-				CredentialsFile: awsCredentialsFile,
-				Profile:         part.Profile,
-				Region:          region,
-			})
-			if err != nil {
-				plog.Fatalf("creating client for %v %v: %v", part.Name, region, err)
-			}
-
-			publish := func(imageName string) {
-				imageID, err := api.FindImage(imageName)
-				if err != nil {
-					plog.Fatalf("couldn't find image %q in %v %v: %v", imageName, part.Name, region, err)
-				}
-
-				if !releaseDryRun {
-					err := api.PublishImage(imageID)
-					if err != nil {
-						plog.Fatalf("couldn't publish image in %v %v: %v", part.Name, region, err)
-					}
-				}
-			}
-			publish(imageName + "-hvm")
-		}
-	}
-}
-
-func doS3(spec *fcosChannelSpec) {
+func doS3() {
 	api, err := aws.New(&aws.Options{
 		CredentialsFile: awsCredentialsFile,
-		Profile:         spec.Profile,
-		Region:          spec.Region,
+		Profile:         specProfile,
+		Region:          specRegion,
 	})
 	if err != nil {
 		plog.Fatalf("creating aws client: %v", err)
@@ -162,17 +102,17 @@ func doS3(spec *fcosChannelSpec) {
 
 	// Assumes the bucket layout defined inside of
 	// https://github.com/coreos/fedora-coreos-tracker/issues/189
-	err = api.UpdateBucketObjectsACL(spec.Bucket, filepath.Join("prod", "streams", specChannel, "builds", specVersion), specPolicy)
+	err = api.UpdateBucketObjectsACL(specBucket, filepath.Join("prod", "streams", specStream, "builds", specVersion), specPolicy)
 	if err != nil {
 		plog.Fatalf("updating object ACLs: %v", err)
 	}
 }
 
-func modifyReleaseMetadataIndex(spec *fcosChannelSpec, commitId string) {
+func modifyReleaseMetadataIndex() {
 	api, err := aws.New(&aws.Options{
 		CredentialsFile: awsCredentialsFile,
-		Profile:         spec.Profile,
-		Region:          spec.Region,
+		Profile:         specProfile,
+		Region:          specRegion,
 	})
 	if err != nil {
 		plog.Fatalf("creating aws client: %v", err)
@@ -184,9 +124,9 @@ func modifyReleaseMetadataIndex(spec *fcosChannelSpec, commitId string) {
 	// version.  Plus we need S3 creds anyway later on to push the modified
 	// release index back.
 
-	path := filepath.Join("prod", "streams", specChannel, "releases.json")
+	path := filepath.Join("prod", "streams", specStream, "releases.json")
 	data, err := func() ([]byte, error) {
-		f, err := api.DownloadFile(spec.Bucket, path)
+		f, err := api.DownloadFile(specBucket, path)
 		if err != nil {
 			if awsErr, ok := err.(awserr.Error); ok {
 				if awsErr.Code() == "NoSuchKey" {
@@ -212,13 +152,13 @@ func modifyReleaseMetadataIndex(spec *fcosChannelSpec, commitId string) {
 		plog.Fatalf("unmarshaling release metadata json: %v", err)
 	}
 
-	releasePath := filepath.Join("prod", "streams", specChannel, "builds", specVersion, "release.json")
+	releasePath := filepath.Join("prod", "streams", specStream, "builds", specVersion, "release.json")
 	url, err := url.Parse(fmt.Sprintf("https://builds.coreos.fedoraproject.org/%s", releasePath))
 	if err != nil {
 		plog.Fatalf("creating metadata url: %v", err)
 	}
 
-	releaseFile, err := api.DownloadFile(spec.Bucket, releasePath)
+	releaseFile, err := api.DownloadFile(specBucket, releasePath)
 	if err != nil {
 		plog.Fatalf("downloading release metadata at %s: %v", releasePath, err)
 	}
@@ -297,7 +237,7 @@ func modifyReleaseMetadataIndex(spec *fcosChannelSpec, commitId string) {
 
 	releaseIdx.Metadata.LastModified = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	releaseIdx.Note = "For use only by Fedora CoreOS internal tooling.  All other applications should obtain release info from stream metadata endpoints."
-	releaseIdx.Stream = specChannel
+	releaseIdx.Stream = specStream
 
 	out, err := json.Marshal(releaseIdx)
 	if err != nil {
@@ -306,7 +246,7 @@ func modifyReleaseMetadataIndex(spec *fcosChannelSpec, commitId string) {
 
 	// we don't want this to be cached for very long so that e.g. Cincinnati picks it up quickly
 	var releases_max_age = 60 * 5
-	err = api.UploadObjectExt(bytes.NewReader(out), spec.Bucket, path, true, specPolicy, aws.ContentTypeJSON, releases_max_age)
+	err = api.UploadObjectExt(bytes.NewReader(out), specBucket, path, true, specPolicy, aws.ContentTypeJSON, releases_max_age)
 	if err != nil {
 		plog.Fatalf("uploading release metadata json: %v", err)
 	}

@@ -165,11 +165,11 @@ func testGroup(c cluster.TestCluster, m platform.Machine, tests []groupTest) {
 		} else if out != t.groupRecord {
 			c.Errorf("%q wasn't correctly created: got %q, expected %q", t.group, out, t.groupRecord)
 		}
-		/*if out, err := getent(c, m, "gshadow", t.group); err != nil {
+		if out, err := getent(c, m, "gshadow", t.group); err != nil {
 			c.Fatal(err)
 		} else if out != t.gshadowRecord {
 			c.Errorf("%q wasn't correctly created: got %q, expected %q", t.group, out, t.gshadowRecord)
-		}*/
+		}
 	}
 }
 

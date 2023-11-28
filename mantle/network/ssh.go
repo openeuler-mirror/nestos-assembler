@@ -15,9 +15,8 @@
 package network
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -31,6 +30,7 @@ import (
 const (
 	defaultPort = 22
 	defaultUser = "nest"
+	rsaKeySize  = 2048
 )
 
 // DefaultSSHDir is a process-global path that can be set, and
@@ -45,7 +45,7 @@ type Dialer interface {
 // SSHAgent can manage keys, updates cloud config, and loves ponies.
 // The embedded dialer is used for establishing new SSH connections.
 type SSHAgent struct {
-	agent.Agent
+	agent.ExtendedAgent
 	Dialer
 	User         string
 	Socket       string
@@ -57,7 +57,7 @@ type SSHAgent struct {
 // NewSSHAgent constructs a new SSHAgent using dialer to create ssh
 // connections.
 func NewSSHAgent(dialer Dialer) (*SSHAgent, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
 	if err != nil {
 		return nil, err
 	}
@@ -99,13 +99,13 @@ func NewSSHAgent(dialer Dialer) (*SSHAgent, error) {
 	}
 
 	a := &SSHAgent{
-		Agent:        keyring,
-		Dialer:       dialer,
-		User:         defaultUser,
-		Socket:       sockPath,
-		sockDir:      sockDir,
-		sockdirOwned: sockdirOwned,
-		listener:     listener,
+		ExtendedAgent: keyring.(agent.ExtendedAgent),
+		Dialer:        dialer,
+		User:          defaultUser,
+		Socket:        sockPath,
+		sockDir:       sockDir,
+		sockdirOwned:  sockdirOwned,
+		listener:      listener,
 	}
 
 	go func() {

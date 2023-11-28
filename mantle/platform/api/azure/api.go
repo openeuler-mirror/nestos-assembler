@@ -27,7 +27,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/arm/network"
 	"github.com/Azure/azure-sdk-for-go/arm/resources/resources"
 	armStorage "github.com/Azure/azure-sdk-for-go/arm/storage"
-	"github.com/Azure/azure-sdk-for-go/management"
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/coreos/pkg/capnslog"
@@ -40,7 +39,6 @@ var (
 )
 
 type API struct {
-	client     management.Client
 	rgClient   resources.GroupsClient
 	imgClient  compute.ImagesClient
 	compClient compute.VirtualMachinesClient
@@ -55,13 +53,6 @@ type API struct {
 // New creates a new Azure client. If no publish settings file is provided or
 // can't be parsed, an anonymous client is created.
 func New(opts *Options) (*API, error) {
-	conf := management.DefaultConfig()
-	conf.APIVersion = "2015-04-01"
-
-	if opts.ManagementURL != "" {
-		conf.ManagementURL = opts.ManagementURL
-	}
-
 	if opts.StorageEndpointSuffix == "" {
 		opts.StorageEndpointSuffix = storage.DefaultBaseURL
 	}
@@ -96,31 +87,16 @@ func New(opts *Options) (*API, error) {
 		opts.SubscriptionName = subOpts.SubscriptionName
 	}
 
-	if opts.ManagementURL == "" {
-		opts.ManagementURL = subOpts.ManagementURL
-	}
-
-	if opts.ManagementCertificate == nil {
-		opts.ManagementCertificate = subOpts.ManagementCertificate
-	}
-
 	if opts.StorageEndpointSuffix == "" {
 		opts.StorageEndpointSuffix = subOpts.StorageEndpointSuffix
 	}
 
-	client, err := management.NewClientFromConfig(opts.SubscriptionID, opts.ManagementCertificate, conf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create azure client: %v", err)
-	}
-
 	api := &API{
-		client: client,
-		opts:   opts,
+		opts: opts,
 	}
 
-	err = api.resolveImage()
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve image: %v", err)
+	if opts.Sku != "" && opts.DiskURI == "" && opts.Version == "" {
+		return nil, fmt.Errorf("SKU set to %q but Disk URI and version not set; can't resolve", opts.Sku)
 	}
 
 	return api, nil
@@ -182,12 +158,25 @@ func (a *API) GC(gracePeriod time.Duration) error {
 
 	for _, l := range *listGroups.Value {
 		if strings.HasPrefix(*l.Name, "kola-cluster") {
-			createdAt := *(*l.Tags)["createdAt"]
-			timeCreated, err := time.Parse(time.RFC3339, createdAt)
-			if err != nil {
-				return fmt.Errorf("error parsing time: %v", err)
+			terminate := false
+			if l.Tags == nil || (*l.Tags)["createdAt"] == nil {
+				// If the group name starts with kola-cluster and has
+				// no tags OR no createdAt then it failed to properly
+				// get created and we should clean it up.
+				// https://github.com/coreos/coreos-assembler/issues/3057
+				terminate = true
+			} else {
+				createdAt := *(*l.Tags)["createdAt"]
+				timeCreated, err := time.Parse(time.RFC3339, createdAt)
+				if err != nil {
+					return fmt.Errorf("error parsing time: %v", err)
+				}
+				if !timeCreated.After(durationAgo) {
+					// If the group is older than specified time then gc
+					terminate = true
+				}
 			}
-			if !timeCreated.After(durationAgo) {
+			if terminate {
 				if err = a.TerminateResourceGroup(*l.Name); err != nil {
 					return err
 				}

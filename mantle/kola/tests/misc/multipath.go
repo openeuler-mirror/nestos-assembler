@@ -17,6 +17,8 @@ package misc
 import (
 	"strings"
 
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
+
 	"github.com/coreos/mantle/kola/cluster"
 	"github.com/coreos/mantle/kola/register"
 	"github.com/coreos/mantle/platform"
@@ -37,34 +39,6 @@ variant: fcos
 version: 1.4.0
 systemd:
   units:
-    - name: multipathd.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Device-Mapper Multipath Device Controller
-        Wants=systemd-udev-trigger.service systemd-udev-settle.service
-        Before=iscsi.service iscsid.service lvm2-activation-early.service
-        Before=local-fs-pre.target blk-availability.service shutdown.target
-        After=multipathd.socket systemd-udev-trigger.service systemd-udev-settle.service
-        ConditionPathExists=/etc/multipath.conf
-        DefaultDependencies=no
-        Conflicts=shutdown.target
-        ConditionKernelCommandLine=!nompath
-        ConditionKernelCommandLine=!multipath=off
-        ConditionVirtualization=!container
-    
-        [Service]
-        Type=notify
-        NotifyAccess=main
-        LimitCORE=infinity
-        ExecStartPre=-/sbin/modprobe -a scsi_dh_alua scsi_dh_emc scsi_dh_rdac dm-multipath
-        ExecStart=/sbin/multipathd -d -s
-        ExecReload=/sbin/multipathd reconfigure
-        TasksMax=infinity
-
-        [Install]
-        WantedBy=sysinit.target
-        Also=multipathd.socket
     - name: mpath-configure.service
       enabled: true
       contents: |
@@ -89,12 +63,17 @@ systemd:
         ConditionFirstBoot=true
         Requires=dev-mapper-mpatha.device
         After=dev-mapper-mpatha.device
+        # See https://github.com/coreos/coreos-assembler/pull/2457
+        # and https://github.com/openshift/os/issues/743
+        After=ostree-remount.service
         Before=kubelet.service
         DefaultDependencies=no
 
         [Service]
         Type=oneshot
         ExecStart=/usr/sbin/mkfs.xfs -L containers -m reflink=1 /dev/mapper/mpatha
+        # This is usually created by tmpfiles.d, but we run earlier than that.
+        ExecStart=/usr/bin/mkdir -p /var/lib/containers
 
         [Install]
         WantedBy=multi-user.target
@@ -103,8 +82,6 @@ systemd:
       contents: |
         [Unit]
         Description=Mount /var/lib/containers
-        # See https://github.com/coreos/coreos-assembler/pull/2457
-        After=ostree-remount.service
         After=mpath-var-lib-containers.service
         Before=kubelet.service
 
@@ -119,26 +96,28 @@ systemd:
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:          "multipath.day1",
-		Run:           runMultipathDay1,
-		ClusterSize:   1,
-		Platforms:     []string{"qemu-unpriv"},
-		Distros:       []string{"fcos"},
-		UserData:      mpath_on_boot_day1,
-		MultiPathDisk: true,
+		Name:           "multipath.day1",
+		Run:            runMultipathDay1,
+		ClusterSize:    1,
+		Platforms:      []string{"qemu-unpriv"},
+		ExcludeDistros: []string{"nestos"},
+		UserData:       mpath_on_boot_day1,
+		MultiPathDisk:  true,
 	})
 	register.RegisterTest(&register.Test{
-		Name:          "multipath.day2",
-		Run:           runMultipathDay2,
-		ClusterSize:   1,
-		Platforms:     []string{"qemu-unpriv"},
-		Distros:       []string{"fcos"},
+		Name:           "multipath.day2",
+		Run:            runMultipathDay2,
+		ClusterSize:    1,
+		Platforms:      []string{"qemu-unpriv"},
+		ExcludeDistros: []string{"nestos"},
+		MultiPathDisk:  true,
 	})
 	register.RegisterTest(&register.Test{
 		Name:            "multipath.partition",
 		Run:             runMultipathPartition,
 		ClusterSize:     1,
 		Platforms:       []string{"qemu-unpriv"},
+		ExcludeDistros:  []string{"nestos"},
 		UserData:        mpath_on_var_lib_containers,
 		AdditionalDisks: []string{"1G:mpath"},
 	})
@@ -149,6 +128,25 @@ func verifyMultipathBoot(c cluster.TestCluster, m platform.Machine) {
 		verifyMultipath(c, m, mnt)
 	}
 	c.MustSSH(m, "test -f /etc/multipath.conf")
+}
+
+func verifyBootDropins(c cluster.TestCluster, m platform.Machine, checkBootuuid bool) {
+	// Check that we took ownership of the rootfs
+	c.RunCmdSync(m, "sudo test -f /boot/.root_uuid")
+	if checkBootuuid {
+		// Check for bootuuid dropins where available
+		switch coreosarch.CurrentRpmArch() {
+		case "s390x":
+		case "x86_64", "aarch64":
+			c.RunCmdSync(m, `
+				sudo mount -o ro /dev/disk/by-label/EFI-SYSTEM /boot/efi
+				sudo sh -c 'test -f /boot/efi/EFI/*/bootuuid.cfg'
+				sudo umount /boot/efi`)
+			fallthrough
+		case "ppc64le":
+			c.RunCmdSync(m, "sudo test -f /boot/grub2/bootuuid.cfg")
+		}
+	}
 }
 
 func verifyMultipath(c cluster.TestCluster, m platform.Machine, path string) {
@@ -165,6 +163,7 @@ func runMultipathDay1(c cluster.TestCluster) {
 		c.Fatalf("Failed to reboot the machine: %v", err)
 	}
 	verifyMultipathBoot(c, m)
+	verifyBootDropins(c, m, true)
 }
 
 func runMultipathDay2(c cluster.TestCluster) {
@@ -174,6 +173,7 @@ func runMultipathDay2(c cluster.TestCluster) {
 		c.Fatalf("Failed to reboot the machine: %v", err)
 	}
 	verifyMultipathBoot(c, m)
+	verifyBootDropins(c, m, false)
 }
 
 func runMultipathPartition(c cluster.TestCluster) {

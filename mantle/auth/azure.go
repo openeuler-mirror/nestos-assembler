@@ -15,7 +15,6 @@
 package auth
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -44,66 +43,36 @@ type Options struct {
 	SubscriptionName string
 	SubscriptionID   string
 
-	// Azure API endpoint. If unset, the Azure SDK default will be used.
-	ManagementURL         string
-	ManagementCertificate []byte
-
 	// Azure Storage API endpoint suffix. If unset, the Azure SDK default will be used.
 	StorageEndpointSuffix string
 }
 
-type AzureEnvironment struct {
-	ActiveDirectoryEndpointURL                        string `json:"activeDirectoryEndpointUrl"`
-	ActiveDirectoryGraphAPIVersion                    string `json:"activeDirectoryGraphApiVersion"`
-	ActiveDirectoryGraphResourceID                    string `json:"activeDirectoryGraphResourceId"`
-	ActiveDirectoryResourceID                         string `json:"activeDirectoryResourceId"`
-	AzureDataLakeAnalyticsCatalogAndJobEndpointSuffix string `json:"azureDataLakeAnalyticsCatalogAndJobEndpointSuffix"`
-	AzureDataLakeStoreFileSystemEndpointSuffix        string `json:"azureDataLakeStoreFileSystemEndpointSuffix"`
-	GalleryEndpointURL                                string `json:"galleryEndpointUrl"`
-	KeyVaultDNSSuffix                                 string `json:"keyVaultDnsSuffix"`
-	ManagementEndpointURL                             string `json:"managementEndpointUrl"`
-	Name                                              string `json:"name"`
-	PortalURL                                         string `json:"portalUrl"`
-	PublishingProfileURL                              string `json:"publishingProfileUrl"`
-	ResourceManagerEndpointURL                        string `json:"resourceManagerEndpointUrl"`
-	SqlManagementEndpointURL                          string `json:"sqlManagementEndpointUrl"`
-	SqlServerHostnameSuffix                           string `json:"sqlServerHostnameSuffix"`
-	StorageEndpointSuffix                             string `json:"storageEndpointSuffix"`
+type azureEnvironment struct {
+	Name                  string `json:"name"`
+	StorageEndpointSuffix string `json:"storageEndpointSuffix"`
 }
 
-type AzureManagementCertificate struct {
-	Cert string `json:"cert"`
-	Key  string `json:"key"`
-}
-
-type AzureSubscription struct {
-	EnvironmentName       string                     `json:"environmentName"`
-	ID                    string                     `json:"id"`
-	IsDefault             bool                       `json:"isDefault"`
-	ManagementCertificate AzureManagementCertificate `json:"managementCertificate"`
-	ManagementEndpointURL string                     `json:"managementEndpointUrl"`
-	Name                  string                     `json:"name"`
-	RegisteredProviders   []string                   `json:"registeredProviders"`
-	State                 string                     `json:"state"`
+type azureSubscription struct {
+	EnvironmentName string `json:"environmentName"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
 }
 
 // AzureProfile represents a parsed Azure Profile Configuration File.
 type AzureProfile struct {
-	Environments  []AzureEnvironment  `json:"environments"`
-	Subscriptions []AzureSubscription `json:"subscriptions"`
+	Environments  []azureEnvironment  `json:"environments"`
+	Subscriptions []azureSubscription `json:"subscriptions"`
 }
 
 // AsOptions converts all subscriptions into a slice of Options.
 // If there is an environment with a name matching the subscription, that environment's storage endpoint will be copied to the options.
-func (ap *AzureProfile) AsOptions() []Options {
+func (ap *AzureProfile) asOptions() []Options {
 	var o []Options
 
 	for _, sub := range ap.Subscriptions {
 		newo := Options{
-			SubscriptionName:      sub.Name,
-			SubscriptionID:        sub.ID,
-			ManagementURL:         sub.ManagementEndpointURL,
-			ManagementCertificate: bytes.Join([][]byte{[]byte(sub.ManagementCertificate.Key), []byte(sub.ManagementCertificate.Cert)}, []byte("\n")),
+			SubscriptionName: sub.Name,
+			SubscriptionID:   sub.ID,
 		}
 
 		// find the storage endpoint for the subscription
@@ -124,7 +93,7 @@ func (ap *AzureProfile) AsOptions() []Options {
 // If the subscription name is "", the first subscription is returned.
 // If there are no subscriptions or the named subscription is not found, SubscriptionOptions returns nil.
 func (ap *AzureProfile) SubscriptionOptions(name string) *Options {
-	opts := ap.AsOptions()
+	opts := ap.asOptions()
 
 	if len(opts) == 0 {
 		return nil
@@ -133,7 +102,7 @@ func (ap *AzureProfile) SubscriptionOptions(name string) *Options {
 	if name == "" {
 		return &opts[0]
 	} else {
-		for _, o := range ap.AsOptions() {
+		for _, o := range opts {
 			if o.SubscriptionName == name {
 				return &o
 			}
@@ -156,7 +125,7 @@ func ReadAzureProfile(path string) (*AzureProfile, error) {
 		path = filepath.Join(user.HomeDir, AzureProfilePath)
 	}
 
-	contents, err := DecodeBOMFile(path)
+	contents, err := decodeBOMFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +142,7 @@ func ReadAzureProfile(path string) (*AzureProfile, error) {
 	return &ap, nil
 }
 
-func DecodeBOMFile(path string) ([]byte, error) {
+func decodeBOMFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

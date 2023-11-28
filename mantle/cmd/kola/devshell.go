@@ -31,11 +31,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/mantle/network"
 	"github.com/coreos/mantle/platform"
 	"github.com/coreos/mantle/platform/conf"
 	"github.com/coreos/mantle/util"
 	"github.com/pkg/errors"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 const devshellHostname = "cosa-devsh"
@@ -50,21 +51,25 @@ func stripControlCharacters(s string) string {
 	}, s)
 }
 
-func displayStatusMsg(status, msg string) {
+func displayStatusMsg(status, msg string, termMaxWidth int) {
 	s := strings.TrimSpace(msg)
 	if s == "" {
 		return
 	}
-	max := 100
-	if len(s) > max {
-		s = s[:max]
+	s = fmt.Sprintf("[%s] %s", status, stripControlCharacters(s))
+	if termMaxWidth > 0 && len(s) > termMaxWidth {
+		s = s[:termMaxWidth]
 	}
-	fmt.Printf("\033[2K\r[%s] %s", status, stripControlCharacters(s))
+	fmt.Printf("\033[2K\r%s", s)
 }
 
 func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *conf.Conf, sshCommand string) error {
-	if !terminal.IsTerminal(0) {
+	if !term.IsTerminal(0) {
 		return fmt.Errorf("stdin is not a tty")
+	}
+	termMaxWidth, _, err := term.GetSize(0)
+	if err != nil {
+		termMaxWidth = 100
 	}
 
 	tmpd, err := ioutil.TempDir("", "kola-devshell")
@@ -74,12 +79,18 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 	defer os.RemoveAll(tmpd)
 
 	// Define SSH key
-	sshPubKeyBuf, sshKeyPath, err := util.CreateSSHAuthorizedKey(tmpd)
+	agent, err := network.NewSSHAgent(network.NewRetryDialer())
 	if err != nil {
 		return err
 	}
-	keys := []string{strings.TrimSpace(string(sshPubKeyBuf))}
-	conf.AddAuthorizedKeys("nest", keys)
+	defer agent.Close()
+
+	keys, err := agent.List()
+	if err != nil {
+		return err
+	}
+
+	conf.CopyKeys(keys)
 	builder.SetConfig(conf)
 
 	// errChan communicates errors from go routines
@@ -89,7 +100,9 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 	// stateChan reports in-instance state such as shutdown, reboot, etc.
 	stateChan := make(chan guestState)
 
-	watchJournal(builder, conf, stateChan, errChan)
+	if err = watchJournal(builder, conf, stateChan, errChan); err != nil {
+		return err
+	}
 
 	// SerialPipe is the pipe output from the serial console.
 	serialPipe, err := builder.SerialPipe()
@@ -157,7 +170,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 	defer func() { fmt.Printf("\n\n") }() // make the console pretty again
 
 	// Start the SSH client
-	sc := newSshClient("nest", ip, sshKeyPath, sshCommand)
+	sc := newSshClient(ip, agent.Socket, sshCommand)
 	go sc.controlStartStop()
 
 	ready := false
@@ -169,13 +182,13 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 		// it directly to the instance. The intercept of ctrl-c will only happen when
 		// ssh is not in the foreground.
 		case <-sigintChan:
-			inst.Kill()
+			_ = inst.Kill()
 
 		// handle console messages. If SSH is not ready, then display a
 		// a status message on the console.
 		case serialMsg := <-serialChan:
 			if !ready {
-				displayStatusMsg(statusMsg, serialMsg)
+				displayStatusMsg(statusMsg, serialMsg, termMaxWidth)
 			}
 			lastMsg = serialMsg
 		// monitor the err channel
@@ -189,7 +202,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 
 		// monitor the instance state
 		case <-qemuWaitChan:
-			displayStatusMsg("DONE", "QEMU instance terminated")
+			displayStatusMsg("DONE", "QEMU instance terminated", termMaxWidth)
 			return nil
 
 		// monitor the machine state events from console/serial logs
@@ -207,7 +220,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 					statusMsg = "QEMU guest is shutting down"
 				case guestStateHalted:
 					statusMsg = "QEMU guest is halted"
-					inst.Kill()
+					_ = inst.Kill()
 				case guestStateInReboot:
 					statusMsg = "QEMU guest initiated reboot"
 				case guestStateOpenSshStopped:
@@ -220,17 +233,17 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 					statusMsg = "QEMU guest is booting"
 				}
 			}
-			displayStatusMsg(fmt.Sprintf("EVENT | %s", statusMsg), lastMsg)
+			displayStatusMsg(fmt.Sprintf("EVENT | %s", statusMsg), lastMsg, termMaxWidth)
 
 		// monitor the SSH connection
 		case err := <-sc.errChan:
 			if err == nil {
 				sc.controlChan <- sshNotReady
-				displayStatusMsg("SESSION", "Clean exit from SSH, terminating instance")
+				displayStatusMsg("SESSION", "Clean exit from SSH, terminating instance", termMaxWidth)
 				return nil
 			} else if sshCommand != "" {
 				sc.controlChan <- sshNotReady
-				displayStatusMsg("SESSION", "SSH command exited, terminating instance")
+				displayStatusMsg("SESSION", "SSH command exited, terminating instance", termMaxWidth)
 				return err
 			}
 			if ready {
@@ -439,10 +452,9 @@ const (
 // sshClient represents a single SSH session.
 type sshClient struct {
 	mu          sync.Mutex
-	user        string
 	host        string
 	port        string
-	privKey     string
+	agent       string
 	cmd         string
 	controlChan chan sshControlMessage
 	errChan     chan error
@@ -450,7 +462,7 @@ type sshClient struct {
 }
 
 // newSshClient creates a new sshClient.
-func newSshClient(user, host, privKey, cmd string) *sshClient {
+func newSshClient(host, agent, cmd string) *sshClient {
 	parts := strings.Split(host, ":")
 	host = parts[0]
 	port := parts[1]
@@ -460,10 +472,9 @@ func newSshClient(user, host, privKey, cmd string) *sshClient {
 
 	return &sshClient{
 		mu:          sync.Mutex{},
-		user:        user,
 		host:        host,
 		port:        port,
-		privKey:     privKey,
+		agent:       agent,
 		controlChan: make(chan sshControlMessage),
 		errChan:     make(chan error),
 		// this could be a []string, but ssh sends it over as a string anyway, so meh...
@@ -491,17 +502,18 @@ func (sc *sshClient) start() {
 
 	sshArgs := []string{
 		"ssh", "-t",
-		"-i", sc.privKey,
+		"-o", "User=nest",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "CheckHostIP=no",
-		"-o", "IdentityFile=/dev/null",
-		"-p", sc.port,
-		fmt.Sprintf("%s@%s", sc.user, sc.host),
+		"-o", "IdentityAgent=" + sc.agent,
+		"-o", "PreferredAuthentications=publickey",
+		"-p", sc.port, sc.host,
 	}
 	if sc.cmd != "" {
 		sshArgs = append(sshArgs, "--", sc.cmd)
 	}
-	fmt.Println("") // line break for prettier output
+	fmt.Printf("\033[2K\r")                // clear serial console line
+	fmt.Printf("[SESSION] Starting SSH\r") // and stage a status msg which will be erased
 	sshCmd := exec.Command(sshArgs[0], sshArgs[1:]...)
 	sshCmd.Stdin = os.Stdin
 	sshCmd.Stdout = os.Stdout
@@ -520,7 +532,7 @@ func (sc *sshClient) start() {
 		for scanner.Scan() {
 			msg := scanner.Text()
 			if strings.Contains(msg, "Connection to 127.0.0.1 closed") {
-				displayStatusMsg("SSH", "connection closed")
+				displayStatusMsg("SSH", "connection closed", 0)
 			}
 		}
 	}()

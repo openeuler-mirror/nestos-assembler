@@ -21,6 +21,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -198,11 +199,16 @@ type RuntimeConfig struct {
 
 	NoSSHKeyInUserData bool                // don't inject SSH key into Ignition/cloud-config
 	NoSSHKeyInMetadata bool                // don't add SSH key to platform metadata
+	NoInstanceCreds    bool                // don't grant credentials (AWS instance profile, GCP service account) to the instance
 	AllowFailedUnits   bool                // don't fail CheckMachine if a systemd unit has failed
 	WarningsAction     conf.WarningsAction // what to do on Ignition or Butane validation warnings
 
 	// InternetAccess is true if the cluster should be Internet connected
 	InternetAccess bool
+	EarlyRelease   func()
+
+	// whether a Manhole into a machine should be created on detected failure
+	SSHOnTestFailure bool
 }
 
 // Wrap a StdoutPipe as a io.ReadCloser
@@ -430,9 +436,30 @@ func checkSystemdUnitFailures(output string, distribution string) error {
 		}
 	}
 	if len(failedUnits) > 0 {
-		return fmt.Errorf("some systemd units failed:\n%s", output)
+		return fmt.Errorf("some systemd units failed: %s", failedUnits)
 	}
 
+	return nil
+}
+
+// checkSystemdUnitStuck ensures that no system unit stuck in activating state.
+// https://github.com/coreos/coreos-assembler/issues/2798
+// See https://bugzilla.redhat.com/show_bug.cgi?id=2072050
+func checkSystemdUnitStuck(output string, m Machine) error {
+	if len(output) == 0 {
+		return nil
+	}
+	var NRestarts int
+	for _, unit := range strings.Split(output, "\n") {
+		out, stderr, err := m.SSH(fmt.Sprintf("systemctl show -p NRestarts --value %s", unit))
+		if err != nil {
+			return fmt.Errorf("failed to query systemd unit NRestarts: %s: %v: %s", out, err, stderr)
+		}
+		NRestarts, _ = strconv.Atoi(string(out))
+		if NRestarts >= 2 {
+			return fmt.Errorf("systemd units %s has %v restarts", unit, NRestarts)
+		}
+	}
 	return nil
 }
 
@@ -468,29 +495,67 @@ func CheckMachine(ctx context.Context, m Machine) error {
 	// ensure we're talking to a supported system
 	var distribution string
 	switch string(out) {
-	case `nestos-container`:
+	case `nestos-container`, `NestOS-nestos`:
 		distribution = "nestos"
 	// Reserved for older versions of NestOS
-	case `NestOS-nestos`:
-		distribution = "nestos"
 	case `fedora-coreos`:
 		distribution = "fcos"
-	case `centos-coreos`, `rhcos-`:
+	case `scos-`, `scos-coreos`, `rhcos-`, `rhcos-coreos`:
 		distribution = "rhcos"
 	default:
 		return fmt.Errorf("not a supported instance: %v", string(out))
 	}
 
-	if !m.RuntimeConf().AllowFailedUnits {
-		// Ensure no systemd units failed during boot
-		out, stderr, err = m.SSH("busctl --json=short call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager ListUnitsFiltered as 2 state failed | jq -r '.data[][][0]'")
-		if err != nil {
-			return fmt.Errorf("failed to query systemd for failed units: %s: %v: %s", out, err, stderr)
+	// check systemd version on host to see if we can use `busctl --json=short`
+	var systemdVer int
+	var systemdCmd, failedUnitsCmd, activatingUnitsCmd string
+	var systemdFailures bool
+	minSystemdVer := 240
+	out, stderr, err = m.SSH("rpm -q --queryformat='%{VERSION}\n' systemd")
+	if err != nil {
+		return fmt.Errorf("failed to query systemd RPM for version: %s: %v: %s", out, err, stderr)
+	}
+	// Fedora can use XXX.Y as a version string, so just use the major version
+	systemdVer, _ = strconv.Atoi(string(out[0:3]))
+
+	if systemdVer >= minSystemdVer {
+		systemdCmd = "busctl --json=short call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager ListUnitsFiltered as 2 state status | jq -r '.data[][][0]'"
+	} else {
+		systemdCmd = "systemctl --no-legend --state status list-units | awk '{print $1}'"
+	}
+	failedUnitsCmd = strings.Replace(systemdCmd, "status", "failed", -1)
+	activatingUnitsCmd = strings.Replace(systemdCmd, "status", "activating", -1)
+
+	// Ensure no systemd units failed during boot
+	out, stderr, err = m.SSH(failedUnitsCmd)
+	if err != nil {
+		return fmt.Errorf("failed to query systemd for failed units: %s: %v: %s", out, err, stderr)
+	}
+	err = checkSystemdUnitFailures(string(out), distribution)
+	if err != nil {
+		plog.Error(err)
+		systemdFailures = true
+	}
+
+	// Ensure no systemd units stuck in activating state
+	out, stderr, err = m.SSH(activatingUnitsCmd)
+	if err != nil {
+		return fmt.Errorf("failed to query systemd for activating units: %s: %v: %s", out, err, stderr)
+	}
+	err = checkSystemdUnitStuck(string(out), m)
+	if err != nil {
+		plog.Error(err)
+		systemdFailures = true
+	}
+
+	if systemdFailures && !m.RuntimeConf().AllowFailedUnits {
+		if m.RuntimeConf().SSHOnTestFailure {
+			plog.Error("dropping to shell: detected failed or stuck systemd units")
+			if err := Manhole(m); err != nil {
+				plog.Errorf("failed to get terminal via ssh: %v", err)
+			}
 		}
-		err = checkSystemdUnitFailures(string(out), distribution)
-		if err != nil {
-			return err
-		}
+		return fmt.Errorf("detected failed or stuck systemd units")
 	}
 
 	return ctx.Err()

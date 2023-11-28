@@ -41,6 +41,12 @@ type BaseCluster struct {
 	bf    *BaseFlight
 	name  string
 	rconf *RuntimeConfig
+
+	// the number of machines running (have not been released)
+	// Note: numMachines <= len(machmap), since numMachines
+	// is decremented before the machine destroy process begins, and
+	// machmap is updated usually near the end.
+	numMachines int
 }
 
 func NewBaseCluster(bf *BaseFlight, rconf *RuntimeConfig) (*BaseCluster, error) {
@@ -158,6 +164,7 @@ func (bc *BaseCluster) AddMach(m Machine) {
 	if err := bc.appendSSH(m); err != nil {
 		panic(err)
 	}
+	bc.numMachines++
 }
 
 func (bc *BaseCluster) DelMach(m Machine) {
@@ -207,34 +214,29 @@ func (bc *BaseCluster) RenderUserData(userdata *platformConf.UserData, ignitionV
 		conf.CopyKeys(keys)
 	}
 
-	// disable Zincati & Pinger by default
+	// disable Zincati by default
 	if bc.Distribution() == "fcos" {
-		conf.AddFile("/etc/fedora-coreos-pinger/config.d/90-disable-reporting.toml", `[reporting]
-enabled = false`, 0644)
 		conf.AddFile("/etc/zincati/config.d/90-disable-auto-updates.toml", `[updates]
 enabled = false`, 0644)
 	}
 
 	if bc.bf.baseopts.OSContainer != "" {
-		if bc.Distribution() != "rhcos" {
-			return nil, fmt.Errorf("oscontainer is only supported on the rhcos distribution")
-		}
-		conf.AddSystemdUnitDropin("pivot.service", "00-before-sshd.conf", `[Unit]
-Before=sshd.service`)
-		conf.AddSystemdUnit("pivot.service", "", platformConf.Enable)
-		conf.AddSystemdUnit("pivot-write-reboot-needed.service", `[Unit]
-Description=Touch /run/pivot/reboot-needed
-ConditionFirstBoot=true
+		conf.AddSystemdUnit("kola-container-rebase.service", fmt.Sprintf(`[Unit]
+Description=Rebase to target container
+ConditionPathExists=!/etc/kola-rebase-done
+Before=sshd.service
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/mkdir -p /run/pivot
-ExecStart=/usr/bin/touch /run/pivot/reboot-needed
+ExecStart=rpm-ostree rebase --experimental %s
+ExecStart=touch /etc/kola-rebase-done
+ExecStart=systemctl reboot
 
 [Install]
 WantedBy=multi-user.target
-`, platformConf.Enable)
-		conf.AddFile("/etc/pivot/image-pullspec", bc.bf.baseopts.OSContainer, 0644)
+`, bc.bf.baseopts.OSContainer), platformConf.Enable)
 	}
 
 	if conf.IsIgnition() {
@@ -249,6 +251,7 @@ WantedBy=multi-user.target
 // Destroy destroys each machine in the cluster.
 func (bc *BaseCluster) Destroy() {
 	for _, m := range bc.Machines() {
+		bc.numMachines--
 		m.Destroy()
 	}
 }
@@ -291,4 +294,12 @@ func (bc *BaseCluster) JournalOutput() map[string]string {
 		ret[k] = v.JournalOutput()
 	}
 	return ret
+}
+
+func (bc *BaseCluster) EarlyRelease() {
+	bc.machlock.Lock()
+	defer bc.machlock.Unlock()
+	if bc.rconf.EarlyRelease != nil && bc.numMachines == 0 {
+		bc.rconf.EarlyRelease()
+	}
 }

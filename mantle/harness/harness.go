@@ -61,7 +61,7 @@ type H struct {
 	finished bool // Test function has completed.
 	done     bool // Test is finished and all subtests have completed.
 	hasSub   bool
-	subLock  sync.RWMutex // guards hasSub
+	subLock  sync.RWMutex // guards hasSub and subtests
 
 	suite    *Suite
 	parent   *H
@@ -69,11 +69,14 @@ type H struct {
 	name     string    // Name of test.
 	start    time.Time // Time test started
 	duration time.Duration
+	released bool      // Indicates whether the test has already released its parallel slot
 	barrier  chan bool // To signal parallel subtests they may start.
 	signal   chan bool // To signal a test is done.
 	sub      []*H      // Queue of subtests to be run in parallel.
+	subtests []string  // All subtests of this test
 
-	isParallel bool
+	isParallel               bool
+	nonExclusiveTestsStarted bool
 
 	timeout   time.Duration // Duration for which the test will be allowed to run
 	execTimer *time.Timer   // Used to interrupt the test after timeout
@@ -102,6 +105,19 @@ func (t *H) runTimeoutCheck(ctx context.Context, timeout time.Duration, f func()
 	case <-ioCompleted:
 		// Finish the test
 		return
+	}
+}
+
+// This functionn is robust to being called multiple times.
+// Previously t.suite.release() was only called by tRunner, so
+// tRunner ensured that a test is released only once. Since we are
+// now exposing the release mechanism outside the package level, it is
+// important to introduce idempotence to avoid any corrupted test queue
+// states that may result from one test being released multiple times.
+func (t *H) Release() {
+	if !t.released {
+		t.released = true
+		t.suite.release()
 	}
 }
 
@@ -222,6 +238,17 @@ func (c *H) Name() string {
 	return c.name
 }
 
+// Subtests returns the list of subtests
+func (c *H) Subtests() []string {
+	return c.subtests
+}
+
+func (c *H) SetSubtests(subtests []string) {
+	c.subLock.Lock()
+	c.subtests = subtests
+	c.subLock.Unlock()
+}
+
 // Context returns the context for the current test.
 // The context is cancelled when the test finishes.
 // A goroutine started during a test can wait for the
@@ -238,6 +265,14 @@ func (c *H) setRan() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ran = true
+}
+
+func (c *H) GetNonExclusiveTestStarted() bool {
+	return c.nonExclusiveTestsStarted
+}
+
+func (c *H) NonExclusiveTestStarted() {
+	c.nonExclusiveTestsStarted = true
 }
 
 // Fail marks the function as having failed but continues execution.
@@ -479,7 +514,7 @@ func tRunner(t *H, fn func(t *H)) {
 		if len(t.sub) > 0 {
 			// Run parallel subtests.
 			// Decrease the running count for this test.
-			t.suite.release()
+			t.Release()
 			// Release the parallel subtests.
 			close(t.barrier)
 			// Wait for subtests to complete.
@@ -493,7 +528,7 @@ func tRunner(t *H, fn func(t *H)) {
 		} else if t.isParallel {
 			// Only release the count for this test if it was run as a parallel
 			// test. See comment in Run method.
-			t.suite.release()
+			t.Release()
 		}
 		t.report() // Report after all subtests have finished.
 
@@ -517,6 +552,7 @@ func tRunner(t *H, fn func(t *H)) {
 func (t *H) RunTimeout(name string, f func(t *H), timeout time.Duration) bool {
 	t.subLock.Lock()
 	t.hasSub = true
+	t.subtests = append(t.subtests, name)
 	t.subLock.Unlock()
 	testName, ok := t.suite.match.fullName(t, name)
 	if !ok {
@@ -589,7 +625,10 @@ func (t *H) report() {
 	// could also write verbosely to the 'reporter sink'.  I'm fine with
 	// this being a TODO if you don't want to tackle it in this initial
 	// PR.
-	t.reporters.ReportTest(t.name, status, t.duration, t.output.Bytes())
+	t.subLock.Lock()
+	subtests := t.subtests
+	t.subLock.Unlock()
+	t.reporters.ReportTest(t.name, subtests, status, t.duration, t.output.Bytes())
 }
 
 // CleanOutputDir creates/empties an output directory and returns the cleaned path.

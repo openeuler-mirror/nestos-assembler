@@ -158,8 +158,8 @@ azure, esx, ibmcloud and packet) within the latest SDK image. Ore mimics the und
 api for each cloud provider closely, so the interface for each cloud provider
 is different. See each providers `help` command for the available actions.
 
-Note, when uploading to some cloud providers (e.g. gce) the image may need to be packaged
-with a different --format (e.g. --format=gce) when running `image_to_vm.sh`
+Note, when uploading to cloud platforms, be sure to use the image built for
+that particular platform (with `cosa buildextend-...`).
 
 ### plume
 Plume is the Container Linux release utility. Releases are done in two stages,
@@ -313,12 +313,9 @@ The JSON file exported to the variable `AZURE_AUTH_LOCATION` should be generated
 ```
 
 ### gce
-`gce` uses the `~/.boto` file. When the `gce` platform is first used, it will print
-a link that can be used to log into your account with gce and get a verification code
-you can paste in. This will populate the `.boto` file.
-
-See [Google Cloud Platform's Documentation](https://cloud.google.com/storage/docs/boto-gsutil)
-for more information about the `.boto` file.
+`gce` uses `~/.config/gce.json`, which contains a JSON-formatted service
+account key. This can be downloaded from the Google Cloud console under
+IAM > Service Accounts > [account] > Keys.
 
 ### openstack
 `openstack` uses `~/.config/openstack.json`. This can be configured manually:

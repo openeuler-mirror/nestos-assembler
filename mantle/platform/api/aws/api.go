@@ -87,8 +87,6 @@ func New(opts *Options) (*API, error) {
 		return nil, err
 	}
 
-	opts.AMI = resolveAMI(opts.AMI, opts.Region)
-
 	api := &API{
 		session: sess,
 		ec2:     ec2.New(sess),
@@ -115,14 +113,18 @@ func (a *API) PreflightCheck() error {
 	return err
 }
 
-func tagSpecCreatedByMantle(resourceType string) []*ec2.TagSpecification {
+func tagSpecCreatedByMantle(name, resourceType string) []*ec2.TagSpecification {
 	return []*ec2.TagSpecification{
 		{
 			ResourceType: aws.String(resourceType),
 			Tags: []*ec2.Tag{
-				&ec2.Tag{
+				{
 					Key:   aws.String("CreatedBy"),
 					Value: aws.String("mantle"),
+				},
+				{
+					Key:   aws.String("Name"),
+					Value: aws.String(name),
 				},
 			},
 		},
