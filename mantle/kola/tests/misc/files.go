@@ -78,7 +78,6 @@ func StickyDirs(c cluster.TestCluster) {
 		"/tmp",
 		"/var/tmp",
 		"/run/user/1000/libpod",
-		"/run/ephemeral/var/tmp",
 	}
 
 	output := c.MustSSH(m, fmt.Sprintf("sudo find / -ignore_readdir_race -path %s -prune -o -type d -perm /1000 -print", strings.Join(ignore, " -prune -o -path ")))
