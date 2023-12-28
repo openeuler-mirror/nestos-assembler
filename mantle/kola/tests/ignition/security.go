@@ -62,7 +62,7 @@ func init() {
 		},
 		Tags: []string{"ignition"},
 		// QEMU unprivileged doesn't support multiple VMs communicating with each other.
-		ExcludePlatforms: []string{"qemu"},
+		ExcludePlatforms: []string{"qemu","qemu-iso"},
 		Timeout:          20 * time.Minute,
 	})
 }

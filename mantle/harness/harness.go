@@ -35,7 +35,7 @@ import (
 )
 
 const DefaultTimeoutFlag = 0
-const defaultTimeout = 10 * time.Minute
+const defaultTimeout = 3 * time.Minute
 
 // H is a type passed to Test functions to manage test state and support formatted test logs.
 // Logs are accumulated during execution and dumped to standard output when done.

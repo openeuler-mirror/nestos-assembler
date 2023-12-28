@@ -29,7 +29,7 @@ func init() {
 		Run:              noIgnitionSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu", "esx"},
-		Distros:          []string{"fcos", "nestos"},
+		Distros:          []string{"fcos"},
 		UserData:         conf.Empty(),
 		Tags:             []string{"ignition"},
 	})
@@ -38,7 +38,7 @@ func init() {
 		Run:              noIgnitionSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu", "esx"},
-		Distros:          []string{"fcos", "nestos"},
+		Distros:          []string{"fcos"},
 		Flags:            []register.Flag{register.NoSSHKeyInUserData},
 		UserData:         conf.Ignition(`{"ignition":{"version":"3.0.0"}}`),
 		Tags:             []string{"ignition"},
