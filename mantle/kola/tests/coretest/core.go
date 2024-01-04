@@ -321,7 +321,7 @@ func TestRHCOSGrowfs() error {
 // and check that filesystem size has been grown to at least 7 GB.
 func TestFCOSGrowfs() error {
 	// check that filesystem size is >= 7 GB
-	return testGrowfs(5 * 1024 * 1024 * 1024)
+	return testGrowfs(7 * 1024 * 1024 * 1024)
 }
 
 func checkService(unit string) error {

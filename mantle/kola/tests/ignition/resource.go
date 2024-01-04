@@ -72,7 +72,7 @@ func init() {
 			"Serve": register.CreateNativeFuncWrap(Serve),
 		},
 		Tags:             []string{"ignition"},
-		ExcludePlatforms: []string{"qemu","qemu-iso"},
+		ExcludePlatforms: []string{"qemu-unpriv"},
 		Timeout:          20 * time.Minute,
 	})
 }
