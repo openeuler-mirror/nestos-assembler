@@ -55,5 +55,5 @@ func runsOnce(c cluster.TestCluster) {
 	}
 
 	// make sure file hasn't been recreated
-	c.RunCmdSync(m, "sudo test ! -e /etc/ignition-ran")
+	c.RunCmdSync(m, "test ! -e /etc/ignition-ran")
 }
