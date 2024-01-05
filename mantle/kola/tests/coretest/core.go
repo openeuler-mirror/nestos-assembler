@@ -101,27 +101,27 @@ func TestPortSsh() error {
 
 func TestDockerEcho() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "busybox", "echo")
+	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.nju.edu.cn/library/busybox", "echo")
 }
 
 func TestDockerPing() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "busybox", "ping", "-c4", "coreos.com")
+	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.nju.edu.cn/library/busybox", "ping", "-c4", "coreos.com")
 }
 
 func TestPodmanEcho() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "busybox", "echo")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "echo")
 }
 
 func TestPodmanPing() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "busybox", "ping", "-c4", "coreos.com")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "ping", "-c4", "coreos.com")
 }
 
 func TestPodmanWgetHead() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "busybox", "wget", "--spider", "http://fedoraproject.org/static/hotspot.txt")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "wget", "--spider", "http://fedoraproject.org/static/hotspot.txt")
 }
 
 // This execs gdbus, because we need to change uses to test perms.
