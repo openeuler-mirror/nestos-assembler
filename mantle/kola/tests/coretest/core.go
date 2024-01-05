@@ -121,7 +121,7 @@ func TestPodmanPing() error {
 
 func TestPodmanWgetHead() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "wget", "--spider", "http://fedoraproject.org/static/hotspot.txt")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
 }
 
 // This execs gdbus, because we need to change uses to test perms.
