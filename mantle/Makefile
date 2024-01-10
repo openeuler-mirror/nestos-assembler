@@ -2,7 +2,8 @@ PREFIX ?= /usr
 DESTDIR ?=
 
 MANTLE_BINARIES := ore kola plume
-KOLET_ARCHES := aarch64 ppc64le s390x x86_64
+#KOLET_ARCHES := aarch64 ppc64le s390x x86_64
+KOLET_ARCHES := aarch64 x86_64
 
 .PHONY: build
 build: $(MANTLE_BINARIES) kolet

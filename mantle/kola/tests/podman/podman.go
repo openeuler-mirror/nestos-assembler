@@ -126,7 +126,8 @@ func podmanWorkflow(c cluster.TestCluster) {
 	m := c.Machines()[0]
 
 	// Test: Verify container can run with volume mount and port forwarding
-	image := "docker.io/library/nginx"
+	image := "docker.nju.edu.cn/library/nginx"
+	container_name := "nginx"
 	wwwRoot := "/usr/share/nginx/html"
 	var id string
 
@@ -135,7 +136,7 @@ func podmanWorkflow(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("echo TEST PAGE > %s/index.html", string(dir))
 		c.RunCmdSync(m, cmd)
 
-		cmd = fmt.Sprintf("sudo podman run -d -p 80:80 -v %s/index.html:%s/index.html:z %s", string(dir), wwwRoot, image)
+		cmd = fmt.Sprintf("sudo podman run --name %s -d -p 80:80 -v %s/index.html:%s/index.html:z %s", container_name, string(dir), wwwRoot, image)
 		out := c.MustSSH(m, cmd)
 		id = string(out)[0:64]
 
@@ -187,7 +188,8 @@ func podmanWorkflow(c cluster.TestCluster) {
 
 	// Test: Save tar
 	c.Run("save", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo podman save -o local_nginx2.tar docker.io/library/nginx")
+		cmd := fmt.Sprintf("sudo podman save -o local_nginx2.tar %s", image)
+		_, err := c.SSH(m, cmd)
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -195,8 +197,8 @@ func podmanWorkflow(c cluster.TestCluster) {
 
 	// Test: Load tar
 	c.Run("load", func(c cluster.TestCluster) {
-		// _, err := c.SSH(m, "sudo chmod +rw local_nginx.tar && sudo podman load --input local_nginx.tar && sudo podman images | grep local_nginx")
-		_, err := c.SSH(m, "sudo podman load --input local_nginx2.tar && sudo podman images | grep local_nginx2")
+		cmd := fmt.Sprintf("sudo podman load --input local_nginx2.tar && sudo podman images | grep %s", image)
+		_, err := c.SSH(m, cmd)
 		if err != nil {
 			c.Fatal(err)
 		}
