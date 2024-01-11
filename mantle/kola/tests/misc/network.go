@@ -140,6 +140,9 @@ NextProcess:
 			protocol: proto,
 			port:     port,
 		}
+		if process == "rpcbind" {
+			continue
+		}
 
 		if expectedListenersMap[thisListener] {
 			// matches expected process
@@ -168,6 +171,7 @@ func NetworkListeners(c cluster.TestCluster) {
 		// DHCPv6 from NetworkManager (when IPv6 network available)
 		// https://github.com/coreos/fedora-coreos-tracker/issues/1216
 		{"udp", "546", "NetworkManager"},
+		{"udp", "68", "dhclient"},
 	}
 	checkList := func() error {
 		return checkListeners(c, expectedListeners)
