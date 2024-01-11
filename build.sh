@@ -25,48 +25,23 @@ configure_yum_repos() {
     # Add continuous tag for latest build tools and mark as required so we
     # can depend on those latest tools being available in all container
     # builds.
-    #echo -e "[${version_id}-nestos]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://10.1.110.88/nestos-assembler/\ngpgcheck=0\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos.repo
     rm -rf /etc/yum.repos.d/*
-    # openeuler 22.03-LTS
-    echo -e "[${version_id}]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS/everything/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-LTS.repo
-    echo -e "[${version_id}-Next]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS/EPOL/main/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-EPOL.repo
 
-    echo -e "[${version_id}-SP1]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS-SP1/everything/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-SP1.repo
-    echo -e "[${version_id}-SP1-epol]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://mirrors.nju.edu.cn/openeuler/openEuler-22.03-LTS-SP1/EPOL/main/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-sp1-epol.repo
+    # openeuler 22.03-LTS-SP3
+    echo -e "[${version_id}-SP3-extra]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://nestos.org.cn/NestOS-22.03-LTS-SP3/NestOS-for-Container/20231231/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-sp3.repo
+    echo -e "[${version_id}-SP3-multiversion-20231231]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP3/EPOL/multi_version/NestOS/For-Container/20231231/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
+    echo -e "[${version_id}-SP3-everything]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP3/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
+    echo -e "[${version_id}-SP3-EPOL]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP3/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
 }
 
 install_rpms() {
     local builddeps
     local frozendeps
 
-    # freeze kernel due to https://github.com/coreos/nestos-assembler/issues/2707
-    #frozendeps=$(echo kernel-5.10.0-60.41.0.73.oe2203)
-
-    yum install -y qemu-img qemu-block-iscsi qemu-block-curl qemu-hw-usb-host qemu-system-x86_64 qemu liburing-devel glib2-devel
-    arch=$(uname -m)
-
-    case $arch in
-    "x86_64")  yum install -y virglrenderer;;
-    *)         echo "Only x86_64 need to install virglrenderer additionally"
-    esac
-
-    case $arch in
-    "x86_64")  rpm -iUh qemu-*.x86_64.rpm;;
-    "aarch64")  rpm -iUh qemu-*.aarch64.rpm;;
-    *)         fatal "Architecture ${arch} not supported"
-    esac
-
-    yum install -y libsolv rpm-devel grubby initscripts iptables nftables python3-setuptools linux-firmware bubblewrap json-c ostree json-glib polkit-libs ostree-devel dnf-plugins-core container-selinux oci-runtime
-    case $arch in
-    "x86_64")  rpm -iUh libsolv-0.7.22-1.x86_64.rpm libsolv-devel-0.7.22-1.x86_64.rpm kernel-5.10.0-60.41.0.73.oe2203.x86_64.rpm kernel-headers-5.10.0-60.41.0.73.oe2203.x86_64.rpm buildah-1.26.1-1.x86_64.rpm butane-0.14.0-1.oe2203.x86_64.rpm dumb-init-1.2.5-4.oe2203.x86_64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.x86_64.rpm rpm-ostree-2022.16-3.oe2203sp2.x86_64.rpm rpm-ostree-devel-2022.16-3.oe2203sp2.x86_64.rpm supermin-5.3.2-1.x86_64.rpm;;
-    "aarch64")  rpm -iUh libsolv-0.7.22-1.aarch64.rpm libsolv-devel-0.7.22-1.aarch64.rpm kernel-5.10.0-118.0.0.64.oe2203.aarch64.rpm kernel-headers-5.10.0-118.0.0.64.oe2203.aarch64.rpm buildah-1.26.1-1.oe2203.aarch64.rpm butane-0.14.0-2.oe2203.aarch64.rpm dumb-init-1.2.5-1.oe2203.aarch64.rpm python3-semver-2.10.2-2.oe2203.noarch.rpm containers-common-1-1.oe2203.noarch.rpm netavark-1.0.2-1.oe2203.aarch64.rpm rpm-ostree-2022.16-3.oe2203sp2.aarch64.rpm rpm-ostree-devel-2022.16-3.oe2203sp2.aarch64.rpm supermin-5.3.2-1.oe2203.aarch64.rpm;;
-    *)         fatal "Architecture ${arch} not supported"
-    esac
-    
     # First, a general update; this is best practice.  We also hit an issue recently
     # where qemu implicitly depended on an updated libusbx but didn't have a versioned
     # requires https://bugzilla.redhat.com/show_bug.cgi?id=1625641
-    #yum -y distro-sync
+    yum -y distro-sync
 
     # xargs is part of findutils, which may not be installed
     yum -y install /usr/bin/xargs
@@ -84,7 +59,7 @@ install_rpms() {
 
     # Add fast-tracked packages here.  We don't want to wait on bodhi for rpm-ostree
     # as we want to enable fast iteration there.
-    #yum --enablerepo=updates-testing upgrade rpm-ostree
+    #yum -y --enablerepo=updates-testing upgrade rpm-ostree
 
     # Allow Kerberos Auth to work from a keytab. The keyring is not
     # available in a Container.
@@ -102,7 +77,10 @@ install_rpms() {
 }
 
 make_and_makeinstall() {
-    make && make install
+    make
+    make install
+    # Remove go build cache
+    # https://github.com/coreos/coreos-assembler/issues/2872
     rm -rf /root/.cache/go-build
 }
 
@@ -129,16 +107,16 @@ configure_user(){
     echo '%wheel ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/wheel-nopasswd
     # Contents of /etc/sudoers.d need not to be world writable
     chmod 600 /etc/sudoers.d/wheel-nopasswd
+    # Allow the builder user to run rootless podman
+    # Referenced at: https://github.com/containers/podman/issues/4056#issuecomment-1245715492
+    # Lifted from: https://github.com/containers/podman/blob/6e382d9ec2e6eb79a72537544341e496368b6c63/contrib/podmanimage/stable/Containerfile#L25-L26
+    echo -e "builder:1:999\nbuilder:1001:64535" > /etc/subuid
+    echo -e "builder:1:999\nbuilder:1001:64535" > /etc/subgid
 }
 
 write_archive_info() {
-    cp -f ./packages /usr/lib64/guestfs/supermin.d/packages
-    #head -n -1 /etc/bashrc > ./bashrc
-    
-    #mv -f ./bashrc /etc/bashrc
     head -n -1 /etc/bashrc
     echo "TMOUT=32400" >> /etc/bashrc
-    #source /etc/bashrc
     # shellcheck source=src/cmdlib.sh
     . "${srcdir}/src/cmdlib.sh"
     mkdir -p /cosa /lib/coreos-assembler
@@ -150,7 +128,9 @@ if [ $# -ne 0 ]; then
   # Run the function specified by the calling script
   ${1}
 else
-  # Otherwise, just run all the steps
+  # Otherwise, just run all the steps.  NOTE: This is presently not actually
+  # used in `Dockerfile`, so if you add a stage you'll need to do it both
+  # here and there.
   configure_yum_repos
   install_rpms
   write_archive_info
