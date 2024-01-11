@@ -6,11 +6,10 @@ MANTLE_BINARIES := ore kola plume
 KOLET_ARCHES := aarch64 x86_64
 
 .PHONY: build
-build: $(MANTLE_BINARIES) #kolet
+build: $(MANTLE_BINARIES) kolet
 
-.PHONY: $(MANTLE_BINARIES) #kolet
-#$(MANTLE_BINARIES) kolet:
-$(MANTLE_BINARIES):
+.PHONY: $(MANTLE_BINARIES) kolet
+$(MANTLE_BINARIES) kolet:
 	./build cmd/$(basename $@)
 
 .PHONY: schema-update
@@ -20,7 +19,7 @@ schema-update:
 .PHONY: install
 install:
 	cd bin && install -D -t $(DESTDIR)$(PREFIX)/bin $(MANTLE_BINARIES)
-#	for arch in $(KOLET_ARCHES); do \
+	for arch in $(KOLET_ARCHES); do \
 		install -D -m 0755 -t $(DESTDIR)$(PREFIX)/lib/kola/$${arch} bin/$${arch}/kolet; \
 	done
 
