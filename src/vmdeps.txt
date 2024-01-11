@@ -3,7 +3,7 @@
 # rpm-ostree runs (when run unprivileged) and create-disk.sh.
 
 # bare essentials
-bash vim-minimal coreutils util-linux procps-ng kmod
+bash vim-minimal coreutils util-linux procps-ng kmod NestOS-kernel
 
 # for composes
 rpm-ostree jq
