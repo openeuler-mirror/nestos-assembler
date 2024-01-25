@@ -27,11 +27,10 @@ configure_yum_repos() {
     # builds.
     rm -rf /etc/yum.repos.d/*
 
-    # openeuler 22.03-LTS-SP3
-    echo -e "[${version_id}-SP3-extra]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://nestos.org.cn/NestOS-22.03-LTS-SP3/NestOS-for-Container/20231231/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" > /etc/yum.repos.d/nestos-sp3.repo
-    echo -e "[${version_id}-SP3-multiversion-20231231]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP3/EPOL/multi_version/NestOS/For-Container/20231231/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
-    echo -e "[${version_id}-SP3-everything]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP3/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
-    echo -e "[${version_id}-SP3-EPOL]\nenabled=1\nmetadata_expire=1m\nbaseurl=http://mirrors.tuna.tsinghua.edu.cn/openeuler/openEuler-22.03-LTS-SP3/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
+    # Consistent with the base image, current: openeuler 22.03-LTS-SP3
+    echo -e "[${version_id}-SP3-NestOS]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP3/EPOL/multi_version/NestOS/For-Container/20231231/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
+    echo -e "[${version_id}-SP3-everything]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP3/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
+    echo -e "[${version_id}-SP3-EPOL]\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP3/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
 }
 
 install_rpms() {
