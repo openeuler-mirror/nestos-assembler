@@ -1,4 +1,4 @@
-FROM docker.nju.edu.cn/openeuler/openeuler:22.03-lts-sp3 
+FROM openeuler/openeuler:22.03-lts-sp3
 WORKDIR /root/containerbuild
 
 # Keep this Dockerfile idempotent for local development rebuild use cases.
