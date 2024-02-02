@@ -139,7 +139,7 @@ pick_yaml_or_else_json() {
 
 # Given a YAML file at first path, write it as JSON to file at second path
 yaml2json() {
-    python3 -c 'import sys, json, yaml; json.dump(yaml.safe_load(sys.stdin), sys.stdout)' < "$1" > "$2"
+    python3 -c 'import sys, json, yaml; json.dump(yaml.safe_load(sys.stdin), sys.stdout, sort_keys=True)' < "$1" > "$2"
 }
 
 prepare_build() {
@@ -169,15 +169,14 @@ prepare_build() {
     manifest_lock_arch_overrides=$(pick_yaml_or_else_json "${configdir}/manifest-lock.overrides.${basearch}")
     fetch_stamp="${workdir}"/cache/fetched-stamp
 
-    image_yaml="${workdir}/tmp/image.yaml"
-    flatten_image_yaml_to_file "${configdir}/image.yaml" "${image_yaml}"
-    # Convert the image.yaml to JSON so that it can be more easily parsed
-    # by the shell script in create_disk.sh.
-    image_json="${workdir}/tmp/image.json"
-    yaml2json "${image_yaml}" "${image_json}"
+    export image_json="${workdir}/tmp/image.json"
+    write_image_json "${image}" "${image_json}"
+    # These need to be absolute paths right now for rpm-ostree
+    composejson="$(readlink -f "${workdir}"/tmp/compose.json)"
+    export composejson
 
     export workdir configdir manifest manifest_lock manifest_lock_overrides manifest_lock_arch_overrides
-    export fetch_stamp image_json
+    export fetch_stamp
 
     if ! [ -f "${manifest}" ]; then
         fatal "Failed to find ${manifest}"
@@ -343,6 +342,16 @@ EOF
             echo "  - ${layer}" >> "${override_manifest}"
         done
     fi
+
+    # Store the fully rendered disk image config (image.json) inside
+    # the ostree commit, so it can later be extracted by disk image
+    # builds.
+    local imagejsondir="${tmp_overridesdir}/imagejson"
+    export ostree_image_json="/usr/share/coreos-assembler/image.json"
+    mkdir -p "${imagejsondir}/usr/share/coreos-assembler/"
+    cp "${image_json}" "${imagejsondir}${ostree_image_json}"
+    commit_overlay cosa-image-json "${imagejsondir}"
+    layers="${layers} overlay/cosa-image-json"
 
     local_overrides_lockfile="${tmp_overridesdir}/local-overrides.json"
     if [ -n "${with_cosa_overrides}" ] && [[ -n $(ls "${overridesdir}/rpm/"*.rpm 2> /dev/null) ]]; then
@@ -801,17 +810,20 @@ builds.bump_timestamp()
 print('Build ${buildid} was inserted ${arch:+for $arch}')")
 }
 
-flatten_image_yaml_to_file() {
+# Prepare the image.json as part of an ostree image build
+write_image_json() {
     local srcfile=$1; shift
     local outfile=$1; shift
     (python3 -c "
 import sys
 sys.path.insert(0, '${DIR}')
 from cosalib import cmdlib
-cmdlib.flatten_image_yaml_to_file('${srcfile}', '${outfile}')")
+cmdlib.write_image_json('${srcfile}', '${outfile}')")
 }
 
-# Shell wrapper for the Python import_ostree_commit
+# API to prepare image builds.
+# Ensures that the tmp/repo ostree repo is initialized,
+# and also writes tmp/image.json if arg2 is unset or set to 1
 import_ostree_commit_for_build() {
     local buildid=$1; shift
     (python3 -c "
@@ -819,9 +831,10 @@ import sys
 sys.path.insert(0, '${DIR}')
 from cosalib import cmdlib
 from cosalib.builds import Builds
-builds = Builds('${workdir:-$(pwd)}')
+workdir = '${workdir:-$(pwd)}'
+builds = Builds(workdir)
 builddir = builds.get_build_dir('${buildid}')
 buildmeta = builds.get_build_meta('${buildid}')
-cmdlib.import_ostree_commit('${workdir:-$(pwd)}/tmp/repo', builddir, buildmeta)
+cmdlib.import_ostree_commit(workdir, builddir, buildmeta)
 ")
 }

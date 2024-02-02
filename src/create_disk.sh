@@ -390,8 +390,17 @@ EOF
 install_grub_cfg() {
     # 0700 to match the RPM permissions which I think are mainly in case someone has
     # manually set a grub password
-    mkdir -p -m 0700 $rootfs/boot/grub2
-    cp -v $grub_script $rootfs/boot/grub2/grub.cfg
+    mkdir -p $rootfs/boot/grub2
+    chmod 0700 $rootfs/boot/grub2
+    printf "%s\n" "$grub_script" | \
+        sed -E 's@(^# CONSOLE-SETTINGS-START$)@\1'"${platform_grub_cmds:+\\n${platform_grub_cmds}}"'@' \
+        > $rootfs/boot/grub2/grub.cfg
+    # Copy platforms table if it's non-empty for this arch
+    # shellcheck disable=SC2031
+    if jq -e ".$arch" < "$platforms_json" > /dev/null; then
+        mkdir -p "$rootfs/boot/nestos"
+        jq ".$arch" < "$platforms_json" > "$rootfs/boot/nestos/platforms.json"
+    fi
 }
 
 # Other arch-specific bootloader changes

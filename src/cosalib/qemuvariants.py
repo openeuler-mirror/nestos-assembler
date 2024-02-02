@@ -19,10 +19,10 @@ from cosalib.build import (
 from cosalib.cmdlib import (
     get_basearch,
     image_info,
-    run_verbose,
-    sha256sum_file
+    runcmd,
+    sha256sum_file,
+    import_ostree_commit
 )
-
 
 # BASEARCH is the current machine architecture
 BASEARCH = get_basearch()
@@ -211,7 +211,7 @@ class QemuVariantImage(_Build):
             return None
 
     def set_platform(self):
-        run_verbose(['/usr/lib/coreos-assembler/gf-platformid',
+        runcmd(['/usr/lib/coreos-assembler/gf-platformid',
                      self.image_qemu, self.tmp_image, self.platform])
 
     def mutate_image(self):
@@ -226,6 +226,10 @@ class QemuVariantImage(_Build):
         :param callback: callback function for extra processing image
         :type callback: function
         """
+
+        # Disk image builds may require an unpacked ostree repo and tmp/image.json in general.
+        import_ostree_commit(self._workdir, self.build_dir, self.meta)
+
         work_img = os.path.join(self._tmpdir,
                                 f"{self.image_name_base}.{self.image_format}")
         final_img = os.path.join(os.path.abspath(self.build_dir),

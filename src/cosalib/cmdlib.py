@@ -233,6 +233,30 @@ def rm_allow_noent(path):
         pass
 
 
+def extract_image_json(workdir, commit):
+    with Lock(os.path.join(workdir, 'tmp/image.json.lock'),
+              lifetime=LOCK_DEFAULT_LIFETIME):
+        repo = os.path.join(workdir, 'tmp/repo')
+        path = os.path.join(workdir, 'tmp/image.json')
+        tmppath = path + '.tmp'
+        with open(tmppath, 'w') as f:
+            rc = subprocess.call(['ostree', f'--repo={repo}', 'cat', commit, '/usr/share/coreos-assembler/image.json'], stdout=f)
+            if rc == 0:
+                # Happy path, we have image.json in the ostree commit, rename it into place and we're done.
+                os.rename(tmppath, path)
+                return
+        # Otherwise, we are operating on a legacy build; clean up our tempfile.
+        os.remove(tmppath)
+        if not os.path.isfile(path):
+            # In the current build system flow, image builds will have already
+            # regenerated tmp/image.json from src/config.  If that doesn't already
+            # exist, then something went wrong.
+            raise Exception("Failed to extract image.json")
+        else:
+            # Warn about this case; but it's not fatal.
+            print("Warning: Legacy operating on ostree image that does not contain image.json")
+
+
 # In coreos-assembler, we are strongly oriented towards the concept of a single
 # versioned "build" object that has artifacts.  But rpm-ostree (among other things)
 # really natively wants to operate on unpacked ostree repositories.  So, we maintain
@@ -241,7 +265,8 @@ def rm_allow_noent(path):
 # a metal image, we may not have preserved that cache.
 #
 # Call this function to ensure that the ostree commit for a given build is in tmp/repo.
-def import_ostree_commit(repo, buildpath, buildmeta, force=False):
+def import_ostree_commit(workdir, buildpath, buildmeta, force=False):
+	repo = os.path.join(tmpdir, 'repo')
     commit = buildmeta['ostree-commit']
     tarfile = os.path.join(buildpath, buildmeta['images']['ostree']['path'])
     # create repo in case e.g. tmp/ was cleared out; idempotent
@@ -255,6 +280,7 @@ def import_ostree_commit(repo, buildpath, buildmeta, force=False):
                         stderr=subprocess.DEVNULL) == 0
             and not os.path.isfile(commitpartial)
             and not force):
+    	extract_image_json(workdir, commit)
         return
 
     print(f"Extracting {commit}")
@@ -278,6 +304,8 @@ def import_ostree_commit(repo, buildpath, buildmeta, force=False):
                                    '--write-ref', buildmeta['buildid'],
                                    'ostree-unverified-image:oci-archive:' + tarfile])
             subprocess.check_call(['ostree', f'--repo={repo}', 'pull-local', tmpd, buildmeta['buildid']])
+        # Also extract image.json since it's commonly needed by image builds
+        extract_image_json(workdir, commit)
 
 
 def get_basearch():
@@ -350,10 +378,20 @@ def cmdlib_sh(script):
     '''])
 
 
-def flatten_image_yaml_to_file(srcfile, outfile):
-    flattened = flatten_image_yaml(srcfile)
+def generate_image_json(srcfile):
+    r = yaml.safe_load(open("/usr/lib/coreos-assembler/image-default.yaml"))
+    for k, v in flatten_image_yaml(srcfile).items():
+        r[k] = v
+    # Serialize our default GRUB config
+    with open("/usr/lib/coreos-assembler/grub.cfg") as f:
+        r['grub-script'] = f.read()
+    return r
+
+
+def write_image_json(srcfile, outfile):
+    r = generate_image_json(srcfile)
     with open(outfile, 'w') as f:
-        yaml.dump(flattened, f)
+        json.dump(r, f, sort_keys=True)
 
 
 def merge_lists(x, y, k):

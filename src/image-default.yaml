@@ -1,8 +1,15 @@
 # This file contains defaults for image.yaml that is used by create_disk.sh
 bootfs: "ext4"
 rootfs: "xfs"
-grub-script: "/usr/lib/coreos-assembler/grub.cfg"
+
+# Additional default kernel arguments injected into disk images
+extra-kargs: []
+
 # True if we should use `ostree container image deploy`
 deploy-via-container: false
 # Set this to a target container reference, e.g. ostree-unverified-registry:quay.io/example/os:latest
 # container-imgref: ""
+
+# Format used when generating a squashfs image.  Can also be e.g. gzip or lz4
+squashfs-compression: zstd
+
