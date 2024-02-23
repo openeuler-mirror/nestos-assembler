@@ -5,6 +5,7 @@
 import logging as log
 import os.path
 import sys
+import json
 
 cosa_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, f"{cosa_dir}/cosalib")
@@ -63,14 +64,17 @@ class OVA(QemuVariantImage):
         # Ensure that coreos.ovf is included in the tar
         self.ovf_path = os.path.join(self._tmpdir, "coreos.ovf")
 
-    def generate_ovf_parameters(self, vmdk, cpu=2,
-                                memory=4096, system_type="vmx-13",
-                                os_type="rhel7_64Guest", scsi="VirtualSCSI",
-                                network="VmxNet3"):
+    def generate_ovf_parameters(self, vmdk, cpu=2, memory=4096):
         """
         Returns a dictionary with the parameters needed to create an OVF file
-        based on the qemu, vmdk, and info from the build metadata
+        based on the qemu, vmdk, image.yaml, and info from the build metadata
         """
+        with open(os.path.join(self._workdir, 'tmp/image.json')) as f:
+            image_json = json.load(f)
+
+        secure_boot = 'true' if image_json['vmware-secure-boot'] else 'false'
+        system_type = 'vmx-{}'.format(image_json['vmware-hw-version'])
+        os_type = image_json['vmware-os-type']
         disk_info = image_info(vmdk)
         vmdk_size = os.stat(vmdk).st_size
         image = self.summary
