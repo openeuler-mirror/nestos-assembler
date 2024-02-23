@@ -18,6 +18,7 @@ uninitialized_gpt_uuid="00000000-0000-4000-a000-000000000001"
 # https://github.com/coreos/fedora-coreos-tracker/issues/465
 bootfs_uuid="96d15588-3596-4b3c-adca-a2ff7279ea63"
 rootfs_uuid="910678ff-f77e-4a7d-8d53-86f2ac47a823"
+deploy_root=
 
 usage() {
     cat <<EOC
@@ -30,6 +31,7 @@ Options:
     --help: show this help
     --kargs: kernel CLI args
     --no-x86-bios-bootloader: don't install BIOS bootloader on x86_64
+    --with-secure-execution:  enable IBM SecureExecution
 
 You probably don't want to run this script by hand. This script is
 run as part of 'coreos-assembler build'.
@@ -38,6 +40,7 @@ EOC
 
 config=
 disk=
+secure_execution=0
 x86_bios_bootloader=1
 extrakargs=""
 
@@ -50,6 +53,7 @@ do
         --help)                  usage; exit;;
         --kargs)                 extrakargs="${extrakargs} ${1}"; shift;;
         --no-x86-bios-bootloader) x86_bios_bootloader=0;;
+        --with-secure-execution)    secure_execution=1;;
          *) echo "${flag} is not understood."; usage; exit 10;;
      esac;
 done
@@ -112,13 +116,18 @@ set -x
 # Partition and create fs's. The 0...4...a...1 uuid is a sentinal used by coreos-gpt-setup
 # in ignition-dracut. It signals that the disk needs to have it's uuid randomized and the
 # backup header moved to the end of the disk.
-# Pin /boot and / to the partition number 3 and 4 respectively. Also insert reserved
+# Pin /se, /boot and / to the partition number 1, 3 and 4 respectively. Also insert reserved
 # partitions on aarch64/ppc64le to keep the 1,2,3,4 partition numbers aligned across
 # x86_64/aarch64/ppc64le. We decided not to try to achieve partition parity on s390x
 # because a bare metal install onto an s390x DASD translates the GPT to DASD partitions
 # and we only get three of those. https://github.com/coreos/fedora-coreos-tracker/issues/855
 BOOTPN=3
 ROOTPN=4
+if [[ ${secure_execution} -eq 1 ]]; then
+    SDPART=1
+    BOOTVERITYHASHPN=5
+    ROOTVERITYHASHPN=6
+fi
 # Make the size relative
 if [ "${rootfs_size}" != "0" ]; then
     rootfs_size="+${rootfs_size}"
@@ -146,15 +155,24 @@ case "$arch" in
         sgdisk -p "$disk"
         ;;
     s390x)
+        sgdisk_args=()
+        if [[ ${secure_execution} -eq 1 ]]; then
+            # shellcheck disable=SC2206
+            sgdisk_args+=(-n ${SDPART}:0:+200M -c ${SDPART}:se -t ${SDPART}:0FC63DAF-8483-4772-8E79-3D69D8477DE4)
+        fi
+        # shellcheck disable=SC2206
+        sgdisk_args+=(-n ${BOOTPN}:0:+384M -c ${BOOTPN}:boot \
+                      -n ${ROOTPN}:0:"${rootfs_size}" -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4)
+        if [[ ${secure_execution} -eq 1 ]]; then
+            # shellcheck disable=SC2206
+            sgdisk_args+=(-n ${BOOTVERITYHASHPN}:0:+128M -c ${BOOTVERITYHASHPN}:boothash \
+                          -n ${ROOTVERITYHASHPN}:0:+256M -c ${ROOTVERITYHASHPN}:roothash)
+        fi
         # NB: in the bare metal case when targeting ECKD DASD disks, this
         # partition table is not what actually gets written to disk in the end:
         # nestos-installer has code which transforms it into a DASD-compatible
         # partition table and copies each partition individually bitwise.
-        sgdisk -Z $disk \
-        -U "${uninitialized_gpt_uuid}" \
-        -n ${BOOTPN}:0:+384M -c ${BOOTPN}:boot \
-        -n ${ROOTPN}:0:${rootfs_size} -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
-        sgdisk -p "$disk"
+        sgdisk -Z "$disk" -U "${uninitialized_gpt_uuid}" "${sgdisk_args[@]}"
         ;;
     ppc64le)
         PREPPN=1
@@ -172,6 +190,7 @@ esac
 
 udevtrig
 
+boot_dev="${disk}${BOOTPN}"
 root_dev="${disk}${ROOTPN}"
 
 bootargs=
@@ -192,7 +211,15 @@ case "${bootfs}" in
     ext4) ;;
     *) echo "Unhandled bootfs: ${bootfs}" 1>&2; exit 1 ;;
 esac
-mkfs.ext4 ${bootargs} "${disk}${BOOTPN}" -L boot -U "${bootfs_uuid}"
+
+if [[ ${secure_execution} -eq 1 ]]; then
+    # Unencrypted partition for sd-boot
+    # shellcheck disable=SC2086
+    mkfs.ext4 ${bootargs} "${disk}${SDPART}" -L se -U random
+fi
+
+# shellcheck disable=SC2086
+mkfs.ext4 ${bootargs} "${boot_dev}" -L boot -U "${bootfs_uuid}"
 udevtrig
 
 if [ ${EFIPN:+x} ]; then
@@ -237,13 +264,17 @@ mount -o discard "${root_dev}" ${rootfs}
 chcon $(matchpathcon -n /) ${rootfs}
 mkdir ${rootfs}/boot
 chcon $(matchpathcon -n /boot) $rootfs/boot
-mount "${disk}${BOOTPN}" $rootfs/boot
+mount "${boot_dev}" $rootfs/boot
 chcon $(matchpathcon -n /boot) $rootfs/boot
 # FAT doesn't support SELinux labeling, it uses "genfscon", so we
 # don't need to give it a label manually.
 if [ ${EFIPN:+x} ]; then
     mkdir $rootfs/boot/efi
     mount "${disk}${EFIPN}" $rootfs/boot/efi
+fi
+if [[ ${secure_execution} -eq 1 ]]; then
+    mkdir ${rootfs}/se
+    chcon "$(matchpathcon -n /boot)" $rootfs/se
 fi
 
 # Now that we have the basic disk layout, initialize the basic
@@ -389,31 +420,14 @@ ppc64le)
     ;;
 s390x)
     bootloader_backend=zipl
-    # current zipl expects 'title' to be first line, and no blank lines in BLS file
-    # see https://github.com/ibm-s390-tools/s390-tools/issues/64
-    blsfile=$(find $rootfs/boot/loader/entries/*.conf)
-    tmpfile=$(mktemp)
-    for f in title version linux initrd options; do
-        echo $(grep $f $blsfile) >> $tmpfile
-    done
-    cat $tmpfile > $blsfile
-    # we force firstboot in building base image on s390x, ignition-dracut hook will remove
-    # this and update zipl for second boot
-    # this is only a temporary solution until we are able to do firstboot check at bootloader
-    # stage on s390x, either through zipl->grub2-emu or zipl standalone.
-    # See https://github.com/coreos/ignition-dracut/issues/84
-    # A similar hack is present in https://github.com/coreos/coreos-assembler/blob/main/src/gf-platformid#L55
-    echo "$(grep options $blsfile | cut -d' ' -f2-) ignition.firstboot" > $tmpfile
-
-    # ideally we want to invoke zipl with bls and zipl.conf but we might need
-    # to chroot to $rootfs/ to do so. We would also do that when FCOS boot on its own.
-    # without chroot we can use --target option in zipl but it requires kernel + initramfs
-    # pair instead
-    zipl --verbose \
-        --target $rootfs/boot \
-        --image $rootfs/boot/"$(grep linux $blsfile | cut -d' ' -f2)" \
-        --ramdisk $rootfs/boot/"$(grep initrd $blsfile | cut -d' ' -f2)" \
-        --parmfile $tmpfile
+    rdcore_zipl_args=("--boot-mount=$rootfs/boot" "--append-karg=ignition.firstboot")
+    # in the secex case, we run zipl at the end; in the non-secex case, we need
+    # to run it now because zipl wants rw access to the bootfs
+    if [[ ${secure_execution} -ne 1 ]]; then
+        # in case builder itself runs with SecureExecution
+        rdcore_zipl_args+=("--secex-mode=disable")
+        chroot_run /usr/lib/dracut/modules.d/50rdcore/rdcore zipl "${rdcore_zipl_args[@]}"
+    fi
     ;;
 esac
 
@@ -439,6 +453,91 @@ for fs in $rootfs/boot $rootfs; do
     mount -o remount,ro $fs
     xfs_freeze -f $fs
 done
+
 umount -R $rootfs
+
+create_dmverity() {
+    local partlabel=$1; shift
+    local mountpoint=$1; shift
+    local datapart="/dev/disk/by-partlabel/${partlabel}"
+    local hashpart="/dev/disk/by-partlabel/${partlabel}hash"
+    # We have to use 512 here to match the filesystem sector size. It's less
+    # efficient, but meh, it's for first boot only. Alternatively we could
+    # change the filesystem sector size higher up.
+    veritysetup format "${datapart}" "${hashpart}" \
+        --root-hash-file "/tmp/${partlabel}-roothash" \
+        --data-block-size 512
+    veritysetup open "${datapart}" "${partlabel}" "${hashpart}" \
+        --root-hash-file "/tmp/${partlabel}-roothash"
+    mount -o ro "/dev/mapper/${partlabel}" "${mountpoint}"
+}
+
+# Save genprotimg input for later and don't run zipl here
+rdcore_replacement() {
+    local se_kargs_append se_initrd se_kernel se_parmfile
+    local blsfile kernel initrd
+    local se_script_dir se_tmp_disk se_tmp_mount se_tmp_boot
+
+    se_kargs_append=("ignition.firstboot")
+    while [ $# -gt 0 ]; do
+        se_kargs_append+=("$1")
+        shift
+    done
+
+    se_script_dir="/usr/lib/coreos-assembler/secex-genprotimgvm-scripts"
+    se_tmp_disk=$(realpath /dev/disk/by-id/virtio-genprotimg)
+    se_tmp_mount=$(mktemp -d /tmp/genprotimg-XXXXXX)
+    se_tmp_boot="${se_tmp_mount}/genprotimg"
+    mount "${se_tmp_disk}" "${se_tmp_mount}"
+    mkdir "${se_tmp_boot}"
+
+    se_initrd="${se_tmp_boot}/initrd.img"
+    se_kernel="${se_tmp_boot}/vmlinuz"
+    se_parmfile="${se_tmp_boot}/parmfile"
+
+    # Ignition GPG private key
+    mkdir -p "${se_tmp_boot}/usr/lib/coreos"
+    generate_gpgkeys "${se_tmp_boot}/usr/lib/coreos/ignition.asc"
+
+    blsfile=$(find "${rootfs}"/boot/loader/entries/*.conf)
+    echo "$(grep options "${blsfile}" | cut -d' ' -f2-)" "${se_kargs_append[@]}" > "${se_parmfile}"
+    kernel="${rootfs}/boot/$(grep linux "${blsfile}" | cut -d' ' -f2)"
+    initrd="${rootfs}/boot/$(grep initrd "${blsfile}" | cut -d' ' -f2)"
+    cp "${kernel}" "${se_kernel}"
+    cp "${initrd}" "${se_initrd}"
+
+    # genprotimg and zipl will be done outside this script
+    # copy scripts for that step to the tmp disk
+    cp "${se_script_dir}/genprotimg-script.sh" "${se_script_dir}/post-script.sh" "${se_tmp_mount}/"
+
+    umount "${se_tmp_mount}"
+    rmdir "${se_tmp_mount}"
+}
+
+if [[ ${secure_execution} -eq 1 ]]; then
+    # set up dm-verity for the rootfs and bootfs
+    create_dmverity root $rootfs
+    create_dmverity boot $rootfs/boot
+    # We need to run the genprotimg step in a separate step for rhcos release images
+    if [ ! -e /dev/disk/by-id/virtio-genprotimg ]; then
+        echo "Building local Secure Execution Image, running zipl and genprotimg"
+        generate_gpgkeys "/tmp/ignition.asc"
+        mount --rbind "/tmp/ignition.asc" "${deploy_root}/usr/lib/coreos/ignition.asc"
+        # run zipl with root hashes as kargs
+        rdcore_zipl_args+=("--secex-mode=enforce" "--hostkey=/dev/disk/by-id/virtio-hostkey")
+        rdcore_zipl_args+=("--append-karg=rootfs.roothash=$(cat /tmp/root-roothash)")
+        rdcore_zipl_args+=("--append-karg=bootfs.roothash=$(cat /tmp/boot-roothash)")
+        rdcore_zipl_args+=("--append-file=/usr/lib/coreos/ignition.asc")
+        chroot_run /usr/lib/dracut/modules.d/50rdcore/rdcore zipl "${rdcore_zipl_args[@]}"
+    else
+        echo "Building release Secure Execution Image, zipl and genprotimg will be run later"
+        rdcore_replacement "rootfs.roothash=$(cat /tmp/root-roothash)" "bootfs.roothash=$(cat /tmp/boot-roothash)"
+    fi
+
+    # unmount and close everything
+    umount -R $rootfs
+    veritysetup close boot
+    veritysetup close root
+fi
 
 rmdir $rootfs

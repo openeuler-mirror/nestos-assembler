@@ -5,6 +5,10 @@ dn=$(dirname "$0")
 # shellcheck source=src/cmdlib.sh
 . "${dn}"/cmdlib.sh
 
+# IBM SecureExecution
+secure_execution=
+image_suffix=
+
 # This script is used for creating both the bare metal and the canonical VM
 # image (qemu). `buildextend-qemu` is a symlink to `buildextend-metal`.
 case "$(basename "$0")" in
@@ -12,6 +16,11 @@ case "$(basename "$0")" in
     "cmd-buildextend-metal4k") image_type=metal4k;;
     "cmd-buildextend-dasd") image_type=dasd;;
     "cmd-buildextend-qemu") image_type=qemu;;
+    "cmd-buildextend-secex")
+        secure_execution=1
+        image_type=qemu
+        image_suffix=-secex
+        ;;
     *) fatal "called as unexpected name $0";;
 esac
 
@@ -25,9 +34,12 @@ EOF
 }
 
 # Parse options
+hostkey=
+genprotimgvm=/data.secex/genprotimgvm.qcow2
 rc=0
 build=
-options=$(getopt --options h --longoptions help,build: -- "$@") || rc=$?
+force=
+options=$(getopt --options h --longoptions help,force,build:,hostkey:,genprotimgvm: -- "$@") || rc=$?
 [ $rc -eq 0 ] || {
     print_help
     exit 1
@@ -39,8 +51,19 @@ while true; do
             print_help
             exit 0
             ;;
+        --force)
+            force=1
+            ;;
         --build)
             build=$2
+            shift
+            ;;
+        --hostkey)
+            hostkey=$(realpath "$2")
+            shift
+            ;;
+        --genprotimgvm)
+            genprotimgvm="$2"
             shift
             ;;
         --)
@@ -98,11 +121,13 @@ touch "${build_semaphore}"
 trap 'rm -rf ${build_semaphore}' EXIT
 
 # check if the image already exists in the meta.json
-meta_img=$(meta_key "images.${image_type}.path")
-if [ "${meta_img}" != "None" ]; then
-    echo "${image_type} image already exists:"
-    echo "$meta_img"
-    exit 0
+if [ -z "${force}" ]; then
+    meta_img=$(meta_key "images.${image_type}${image_suffix}.path")
+    if [ "${meta_img}" != "None" ]; then
+        echo "${image_type}${image_suffix} image already exists:"
+        echo "$meta_img"
+        exit 0
+    fi
 fi
 
 # reread these values from the build itself rather than rely on the ones loaded
@@ -123,10 +148,11 @@ if [[ $image_type == qemu ]]; then
     image_format=qcow2
 fi
 
-img=${name}-${build}-${image_type}.${basearch}.${image_format}
+img=${name}-${build}-${image_type}${image_suffix}.${basearch}.${image_format}
 path=${PWD}/${img}
 
 ignition_platform_id="${image_type}"
+
 # dasd and metal4k are different disk formats, but they're still metal
 if [ "${image_type}" = dasd ] || [ "${image_type}" = metal4k ]; then
     ignition_platform_id=metal
@@ -152,6 +178,27 @@ if [ "${rootfs_type}" = "ext4verity" ]; then
     BLKSIZE="$(getconf PAGE_SIZE)"
 fi
 
+disk_args=()
+qemu_args=()
+# SecureExecution extra stuff
+if [[ $secure_execution -eq "1" ]]; then
+    ignition_pubkey=$(mktemp -p "${tmp_builddir}")
+    disk_args+=("--with-secure-execution" "--write-ignition-pubkey-to" "${ignition_pubkey}")
+    if [ -z "${hostkey}" ]; then
+        if [ ! -f "${genprotimgvm}" ]; then
+            fatal "No genprotimgvm provided at ${genprotimgvm}"
+        fi
+        genprotimg_img="${PWD}/secex-genprotimg.img"
+        qemu-img create -f raw "${genprotimg_img}" 512M
+        mkfs.ext4 "${genprotimg_img}"
+        qemu_args+=("-drive" "if=none,id=genprotimg,format=raw,file=${genprotimg_img}" \
+                            "-device" "virtio-blk,serial=genprotimg,drive=genprotimg")
+    else
+        qemu_args+=("-drive" "if=none,id=hostkey,format=raw,file=$hostkey,readonly=on" \
+                            "-device" "virtio-blk,serial=hostkey,drive=hostkey")
+    fi
+fi
+
 echo "Estimating disk size..."
 # The additional 35% here is obviously a hack, but we can't easily completely fill the filesystem,
 # and doing so has apparently negative performance implications.
@@ -160,8 +207,6 @@ rootfs_size="$(jq '."estimate-mb".final' "$PWD/tmp/ostree-size.json")"
 # extra size is the non-ostree partitions, see create_disk.sh
 image_size="$(( rootfs_size + 513 ))M"
 echo "Disk size estimated to ${image_size}"
-
-disk_args=()
 
 # For bare metal and dasd images, we use the estimated image size. For IaaS/virt, we get it from
 # image.yaml because we want a "default" disk size that has some free space.
@@ -200,7 +245,7 @@ extra_target_device_opts=""
 if [[ $image_type == dasd || $image_type == metal4k ]]; then
   extra_target_device_opts=",physical_block_size=4096,logical_block_size=4096"
 fi
-target_drive=("-drive" "if=none,id=target,format=${image_format},file=${path}.tmp,cache=unsafe" \
+qemu_args+=("-drive" "if=none,id=target,format=${image_format},file=${path}.tmp,cache=unsafe" \
               "-device" "virtio-blk,serial=target,drive=target${extra_target_device_opts}")
 
 # Generate the JSON describing the disk we want to build
@@ -218,18 +263,24 @@ cat >image-dynamic.json << EOF
 }
 EOF
 cat image-configured.json image-dynamic.json | jq -s add > image.json
-runvm "${target_drive[@]}" -- \
+    runvm "${qemu_args[@]}" -- \
         /usr/lib/coreos-assembler/create_disk.sh \
             --config "$(pwd)"/image.json \
             --kargs "\"${kargs}\"" \
             "${disk_args[@]}"
+
+if [[ $secure_execution -eq "1" && -z "${hostkey}" ]]; then
+    /usr/lib/coreos-assembler/secex-genprotimgvm-scripts/runvm.sh \
+        --genprotimgvm "${genprotimgvm}" -- "${qemu_args[@]}"
+fi
+
 /usr/lib/coreos-assembler/finalize-artifact "${path}.tmp" "${path}"
 
 sha256=$(sha256sum_str < "${img}")
 cosa meta --workdir "${workdir}" --build "${build}" --dump | python3 -c "
 import sys, json
 j = json.load(sys.stdin)
-j['images']['${image_type}'] = {
+j['images']['${image_type}${image_suffix}'] = {
     'path': '${img}',
     'sha256': '${sha256}',
     'size': $(stat -c '%s' "${img}")
