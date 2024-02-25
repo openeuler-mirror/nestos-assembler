@@ -14,7 +14,7 @@ import (
 // commands we'd expect to use in the local dev path
 var buildCommands = []string{"init", "fetch", "build", "run", "prune", "clean", "list"}
 var advancedBuildCommands = []string{"buildfetch", "buildupload", "oc-adm-release", "push-container", "upload-oscontainer"}
-var buildextendCommands = []string{"aliyun", "aws", "azure", "digitalocean", "exoscale", "gcp", "ibmcloud", "kubevirt", "live", "metal", "metal4k", "nutanix", "openstack", "qemu", "secex", "virtualbox", "vmware", "vultr"}
+var buildextendCommands = []string{"aliyun", "aws", "azure", "digitalocean", "exoscale", "gcp", "ibmcloud", "kubevirt", "legacy-oscontainer", "live", "metal", "metal4k", "nutanix", "openstack", "qemu", "secex", "virtualbox", "vmware", "vultr"}
 var utilityCommands = []string{"aws-replicate", "build-extensions-container", "compress", "generate-hashlist", "koji-upload", "kola", "remote-build-container", "remote-prune", "remote-session", "sign", "tag", "update-variant"}
 var otherCommands = []string{"shell", "meta"}
 
