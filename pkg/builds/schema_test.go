@@ -1,11 +1,10 @@
-package cosa
+package builds
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,11 +42,7 @@ func TestSchema(t *testing.T) {
 
 // Test that we can write a file
 func TestWriteMeta(t *testing.T) {
-	tmpd, err := ioutil.TempDir("", "test-writemeta-*****")
-	if err != nil {
-		t.Errorf("failed to create tmpdir: %v", err)
-	}
-	defer os.RemoveAll(tmpd)
+	tmpd := t.TempDir()
 
 	for _, df := range testMeta {
 		b, err := ParseBuild(df)
@@ -152,11 +147,7 @@ func TestMergeMeta(t *testing.T) {
 	b.CosaDelayedMetaMerge = true
 
 	// Create a fake build structure
-	tmpd, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatal("unable to create a tmpdir")
-	}
-	defer os.RemoveAll(tmpd) //nolint
+	tmpd := t.TempDir()
 
 	// Create a fake build dir
 	fakeBuildID := "999.1"
@@ -175,7 +166,7 @@ func TestMergeMeta(t *testing.T) {
 	if err := os.MkdirAll(fakeBuildDir, 0777); err != nil {
 		t.Fatalf("failed to create test meta structure")
 	}
-	if err := ioutil.WriteFile(filepath.Join(tmpd, "builds", "builds.json"), bjson, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpd, "builds", "builds.json"), bjson, 0644); err != nil {
 		t.Fatalf("error creating builds.json")
 	}
 	if err := b.WriteMeta(filepath.Join(fakeBuildDir, "meta.json"), false); err != nil {

@@ -1,10 +1,9 @@
-package cosa
+package builds
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -41,7 +40,7 @@ func SetSchemaFromFile(r io.Reader) error {
 	if r == nil {
 		return errors.New("schema input is invalid")
 	}
-	in, err := ioutil.ReadAll(r)
+	in, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

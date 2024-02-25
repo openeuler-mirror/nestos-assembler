@@ -12,22 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cosa
+package builds
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 
+	coreosarch "github.com/coreos/stream-metadata-go/arch"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -51,6 +50,11 @@ const (
 	CosaMetaJSON = "meta.json"
 )
 
+type objectInfo struct {
+	info os.FileInfo
+	name string
+}
+
 // SetArch overrides the build arch
 func SetArch(a string) {
 	forceArch = a
@@ -62,11 +66,26 @@ func BuilderArch() string {
 	if forceArch != "" {
 		return forceArch
 	}
-	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "x86_64"
-	}
-	return arch
+	return coreosarch.CurrentRpmArch()
+}
+
+// defaultWalkFunc walks over a directory and returns a channel of os.FileInfo
+func walkFn(p string) <-chan *objectInfo {
+	ret := make(chan *objectInfo)
+	go func() {
+		defer close(ret) //nolint
+		_ = filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			ret <- &objectInfo{
+				name: filepath.Join(p, info.Name()),
+				info: info,
+			}
+			return nil
+		})
+	}()
+	return ret
 }
 
 // ReadBuild returns a build upon finding a meta.json. Returns a Build, the path string
@@ -93,7 +112,7 @@ func ReadBuild(dir, buildID, arch string) (*Build, string, error) {
 	}
 
 	p := filepath.Join(dir, buildID, arch)
-	f, err := Open(filepath.Join(p, CosaMetaJSON))
+	f, err := os.Open(filepath.Join(p, CosaMetaJSON))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to open %s to read meta.json: %w", p, err)
 	}
@@ -113,14 +132,14 @@ func ReadBuild(dir, buildID, arch string) (*Build, string, error) {
 			if !ok {
 				break
 			}
-			if fi == nil || fi.IsDir() || fi.Name() == CosaMetaJSON {
+			if fi == nil || fi.info.IsDir() || fi.info.Name() == CosaMetaJSON {
 				continue
 			}
-			if !IsMetaJSON(fi.Name()) {
+			if !IsMetaJSON(fi.info.Name()) {
 				continue
 			}
-			log.WithField("extra meta.json", fi.Name()).Info("found meta")
-			f, err := Open(filepath.Join(p, fi.Name()))
+			log.WithField("extra meta.json", fi.name).Info("found meta")
+			f, err := os.Open(filepath.Join(p, fi.info.Name()))
 			if err != nil {
 				return b, p, err
 			}
@@ -146,7 +165,7 @@ func buildParser(r io.Reader) (*Build, error) {
 
 // ParseBuild parses the meta.json and reutrns a build
 func ParseBuild(path string) (*Build, error) {
-	f, err := Open(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open %s", path)
 	}
@@ -169,7 +188,7 @@ func (build *Build) WriteMeta(path string, validate bool) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(path, out, 0644)
+	return os.WriteFile(path, out, 0644)
 }
 
 // GetArtifact returns an artifact by JSON tag
@@ -178,7 +197,7 @@ func (build *Build) GetArtifact(artifact string) (*Artifact, error) {
 	if ok && r.Path != "" {
 		return r, nil
 	}
-	return nil, errors.New("artifact not defined")
+	return nil, errors.New("artifact " + artifact + " not defined")
 }
 
 // IsArtifact takes a path and returns the artifact type and a bool if
@@ -305,6 +324,10 @@ func FetchAndParseBuild(url string) (*Build, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf(
+			"Received a %d error in http response for: %s", res.StatusCode, url)
+	}
 	return buildParser(res.Body)
 }
 
