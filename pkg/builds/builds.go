@@ -1,9 +1,10 @@
-package cosa
+package builds
 
 import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/pkg/errors"
@@ -35,7 +36,7 @@ type buildsJSON struct {
 
 func getBuilds(dir string) (*buildsJSON, error) {
 	path := filepath.Join(dir, CosaBuildsJSON)
-	f, err := Open(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, ErrNoBuildsFound
 	}

@@ -11,6 +11,7 @@ import (
 func runClean(argv []string) error {
 	const cleanUsage = `Usage: coreos-assembler clean --help
 coreos-assembler clean [--all]
+
 Delete all build artifacts.  Use --all to also clean the cache/ directory.
 `
 
@@ -33,7 +34,8 @@ Delete all build artifacts.  Use --all to also clean the cache/ directory.
 	if err != nil {
 		return err
 	}
-	if _, err := sh.PrepareBuild(); err != nil {
+	// XXX: why do we need to prepare_build here?
+	if _, err := sh.PrepareBuild(""); err != nil {
 		return err
 	}
 
@@ -46,7 +48,9 @@ Delete all build artifacts.  Use --all to also clean the cache/ directory.
 		if priv {
 			cmd = fmt.Sprintf("sudo %s", cmd)
 		}
-		bashexec.Run("cleanup cache", cmd)
+		if err := bashexec.Run("cleanup cache", cmd); err != nil {
+			return err
+		}
 	} else {
 		fmt.Println("Note: retaining cache/")
 	}
