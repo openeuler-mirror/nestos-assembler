@@ -101,6 +101,11 @@ func (qc *Cluster) NewMachineWithQemuOptions(userdata *conf.UserData, options pl
 	builder.ConfigFile = confPath
 	defer builder.Close()
 	builder.UUID = qm.id
+	if qc.flight.opts.Arch != "" {
+		if err := builder.SetArchitecture(qc.flight.opts.Arch); err != nil {
+			return nil, err
+		}
+	}
 	if qc.flight.opts.Firmware != "" {
 		builder.Firmware = qc.flight.opts.Firmware
 	}

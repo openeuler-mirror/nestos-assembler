@@ -47,6 +47,8 @@ var (
 	usernet      bool
 	cpuCountHost bool
 
+	architecture string
+
 	hostname       string
 	ignition       string
 	butane         string
