@@ -56,7 +56,7 @@ func init() {
 		},
 	})
 	// TODO: Enable DockerPing/DockerEcho once fixed
-	// TODO: Only enable PodmanPing on non qemu-unpriv. Needs:
+	// TODO: Only enable PodmanPing on non qemu. Needs:
 	// https://github.com/coreos/mantle/issues/1132
 	register.RegisterTest(&register.Test{
 		Name:        "fcos.internet",

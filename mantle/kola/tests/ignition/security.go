@@ -54,14 +54,15 @@ var (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "nestos.ignition.security.tls",
+		Name:        "coreos.ignition.security.tls",
+		Description: "Verify that we can fetch ignition with https.",
 		Run:         securityTLS,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"TLSServe": register.CreateNativeFuncWrap(TLSServe),
 		},
 		Tags: []string{"ignition"},
-		// QEMU unprivileged doesn't support multiple VMs communicating with each other.
+		// QEMU doesn't support multiple VMs communicating with each other.
 		ExcludePlatforms: []string{"qemu"},
 		Timeout:          20 * time.Minute,
 	})

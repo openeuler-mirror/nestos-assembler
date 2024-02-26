@@ -26,7 +26,7 @@ import (
 	"github.com/coreos/coreos-assembler/mantle/kola/register"
 	"github.com/coreos/coreos-assembler/mantle/platform"
 	"github.com/coreos/coreos-assembler/mantle/platform/conf"
-	"github.com/coreos/coreos-assembler/mantle/platform/machine/unprivqemu"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
 	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
@@ -34,7 +34,8 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         NetworkListeners,
 		ClusterSize: 1,
-		Name:        "nestos.network.listeners",
+		Name:        "fcos.network.listeners",
+		Description: "Verify the nework listeners are expected.",
 		Distros:     []string{"fcos", "nestos"},
 		// be sure to notice listeners in the docker stack
 		UserData: conf.EmptyIgnition(),
@@ -44,17 +45,18 @@ func init() {
 		Run:            NetworkInitramfsSecondBoot,
 		ClusterSize:    1,
 		Name:           "coreos.network.initramfs.second-boot",
+		Description:    "Verify that networking is not started in the initramfs on the second boot.",
 		ExcludeDistros: []string{"fcos", "rhcos", "nestos"},
 	})
 	// This test follows the same network configuration used on https://github.com/RHsyseng/rhcos-slb
-	// with a slight change, where the MCO script is run from ignition: https://github.com/RHsyseng/rhcos-slb/blob/main/setup-ovs.sh.
 	register.RegisterTest(&register.Test{
 		Run:         NetworkAdditionalNics,
 		ClusterSize: 0,
 		Name:        "rhcos.network.multiple-nics",
+		Description: "Verify configuring networking with multiple NICs work.",
 		Timeout:     20 * time.Minute,
 		Distros:     []string{"rhcos"},
-		Platforms:   []string{"qemu-unpriv"},
+		Platforms:   []string{"qemu"},
 	})
 	// This test follows the same network configuration used on https://github.com/RHsyseng/rhcos-slb
 	// with a slight change, where the MCO script is run from ignition: https://github.com/RHsyseng/rhcos-slb/blob/main/setup-ovs.sh.
@@ -65,7 +67,7 @@ func init() {
 		Name:        "rhcos.network.bond-with-dhcp",
 		Timeout:     20 * time.Minute,
 		Distros:     []string{"rhcos"},
-		Platforms:   []string{"qemu-unpriv"},
+		Platforms:   []string{"qemu"},
 	})
 	// This test follows the same network configuration used on https://github.com/RHsyseng/rhcos-slb
 	// with a slight change, where the MCO script is run from ignition: https://github.com/RHsyseng/rhcos-slb/blob/main/setup-ovs.sh.
@@ -76,7 +78,7 @@ func init() {
 		Name:        "rhcos.network.bond-with-restart",
 		Timeout:     20 * time.Minute,
 		Distros:     []string{"rhcos"},
-		Platforms:   []string{"qemu-unpriv"},
+		Platforms:   []string{"qemu"},
 	})
 }
 
@@ -721,7 +723,7 @@ func setupMultipleNetworkTest(c cluster.TestCluster, primaryMac, secondaryMac st
 	// the golang compiler no longer checks that the individual types in the case have the
 	// NewMachineWithQemuOptions function, but rather whether platform.Cluster
 	// does which fails
-	case *unprivqemu.Cluster:
+	case *qemu.Cluster:
 		m, err = pc.NewMachineWithQemuOptions(userdata, options)
 	default:
 		panic("unreachable")

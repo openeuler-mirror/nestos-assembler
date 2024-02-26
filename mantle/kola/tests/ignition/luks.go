@@ -12,7 +12,7 @@ import (
 	ut "github.com/coreos/coreos-assembler/mantle/kola/tests/util"
 	"github.com/coreos/coreos-assembler/mantle/platform"
 	"github.com/coreos/coreos-assembler/mantle/platform/conf"
-	"github.com/coreos/coreos-assembler/mantle/platform/machine/unprivqemu"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
 	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
@@ -23,6 +23,7 @@ func init() {
 		Run:         luksTangTest,
 		ClusterSize: 0,
 		Name:        `luks.tang`,
+		Description: "Verify that the rootfs is encrypted with Tang.",
 		Flags:       []register.Flag{},
 		Distros:     []string{"rhcos"},
 		Tags:        []string{"luks", "tang", kola.NeedsInternetTag, "reprovision"},
@@ -31,9 +32,10 @@ func init() {
 		Run:                  luksSSST1Test,
 		ClusterSize:          0,
 		Name:                 `luks.sss.t1`,
+		Description:          "Verify that the rootfs is encrypted with SSS with t=1.",
 		Flags:                []register.Flag{},
 		Distros:              []string{"rhcos"},
-		Platforms:            []string{"qemu-unpriv"},
+		Platforms:            []string{"qemu"},
 		ExcludeArchitectures: []string{"s390x"}, // no TPM backend support for s390x
 		Tags:                 []string{"luks", "tpm", "tang", "sss", kola.NeedsInternetTag, "reprovision"},
 	})
@@ -41,9 +43,10 @@ func init() {
 		Run:                  luksSSST2Test,
 		ClusterSize:          0,
 		Name:                 `luks.sss.t2`,
+		Description:          "Verify that the rootfs is encrypted with SSS with t=2.",
 		Flags:                []register.Flag{},
 		Distros:              []string{"rhcos"},
-		Platforms:            []string{"qemu-unpriv"},
+		Platforms:            []string{"qemu"},
 		ExcludeArchitectures: []string{"s390x"}, // no TPM backend support for s390x
 		Tags:                 []string{"luks", "tpm", "tang", "sss", kola.NeedsInternetTag, "reprovision"},
 	})
@@ -73,7 +76,7 @@ func setupTangMachine(c cluster.TestCluster) ut.TangServer {
 	// the golang compiler no longer checks that the individual types in the case have the
 	// NewMachineWithQemuOptions function, but rather whether platform.Cluster
 	// does which fails
-	case *unprivqemu.Cluster:
+	case *qemu.Cluster:
 		m, err = pc.NewMachineWithQemuOptions(ignition, options)
 		for _, hfp := range options.HostForwardPorts {
 			if hfp.Service == "tang" {
