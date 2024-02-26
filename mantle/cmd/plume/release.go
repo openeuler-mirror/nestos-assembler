@@ -164,7 +164,7 @@ func modifyReleaseMetadataIndex() {
 	}
 	defer releaseFile.Close()
 
-	releaseData, err := ioutil.ReadAll(releaseFile)
+	releaseData, err := io.ReadAll(releaseFile)
 	if err != nil {
 		plog.Fatalf("reading release metadata: %v", err)
 	}

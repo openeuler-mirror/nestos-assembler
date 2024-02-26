@@ -26,7 +26,7 @@ import (
 	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
 	"github.com/coreos/coreos-assembler/mantle/platform"
 	"github.com/coreos/coreos-assembler/mantle/platform/conf"
-	"github.com/coreos/coreos-assembler/mantle/platform/machine/unprivqemu"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
 	ut "github.com/coreos/coreos-assembler/mantle/util"
 )
 
@@ -57,10 +57,11 @@ boot_device:
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Run:            runBootMirrorTest,
-		ClusterSize:    0,
-		Name:           `coreos.boot-mirror`,
-		Platforms:      []string{"qemu-unpriv"},
+		Run:         runBootMirrorTest,
+		ClusterSize: 0,
+		Name:        `coreos.boot-mirror`,
+		Description: "Verify the boot-mirror RAID1 flow works properly in both BIOS and UEFI mode.",
+		Platforms:   []string{"qemu"},
 		ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x
 		ExcludeArchitectures: []string{"s390x"},
@@ -72,10 +73,11 @@ func init() {
 		Timeout:          15 * time.Minute,
 	})
 	register.RegisterTest(&register.Test{
-		Run:            runBootMirrorLUKSTest,
-		ClusterSize:    0,
-		Name:           `coreos.boot-mirror.luks`,
-		Platforms:      []string{"qemu-unpriv"},
+		Run:         runBootMirrorLUKSTest,
+		ClusterSize: 0,
+		Name:        `coreos.boot-mirror.luks`,
+		Description: "Verify the boot-mirror+LUKS RAID1 flow works properly in both BIOS and UEFI modes.",
+		Platforms:   []string{"qemu"},
 		ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x, and qemu s390x doesn't
 		// support TPM
@@ -103,7 +105,7 @@ func runBootMirrorTest(c cluster.TestCluster) {
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
 	userdata := bootmirror.Subst("LAYOUT", coreosarch.CurrentRpmArch())
-	m, err = c.Cluster.(*unprivqemu.Cluster).NewMachineWithQemuOptions(userdata, options)
+	m, err = c.Cluster.(*qemu.Cluster).NewMachineWithQemuOptions(userdata, options)
 	if err != nil {
 		c.Fatal(err)
 	}
@@ -150,7 +152,7 @@ func runBootMirrorLUKSTest(c cluster.TestCluster) {
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
 	userdata := bootmirrorluks.Subst("LAYOUT", coreosarch.CurrentRpmArch())
-	m, err = c.Cluster.(*unprivqemu.Cluster).NewMachineWithQemuOptions(userdata, options)
+	m, err = c.Cluster.(*qemu.Cluster).NewMachineWithQemuOptions(userdata, options)
 	if err != nil {
 		c.Fatal(err)
 	}

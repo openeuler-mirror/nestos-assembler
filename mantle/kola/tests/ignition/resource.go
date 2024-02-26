@@ -65,14 +65,15 @@ var (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "nestos.ignition.resource.local",
+		Name:        "coreos.ignition.resource.local",
+		Description: "Verify that we can fetch Ignition files through local, http and tftp.",
 		Run:         resourceLocal,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"Serve": register.CreateNativeFuncWrap(Serve),
 		},
 		Tags:             []string{"ignition"},
-		ExcludePlatforms: []string{"qemu-unpriv"},
+		ExcludePlatforms: []string{"qemu"},
 		Timeout:          20 * time.Minute,
 	})
 }

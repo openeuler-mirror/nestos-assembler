@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -53,8 +52,8 @@ import (
 	"github.com/coreos/coreos-assembler/mantle/platform/machine/gcloud"
 	"github.com/coreos/coreos-assembler/mantle/platform/machine/openstack"
 	"github.com/coreos/coreos-assembler/mantle/platform/machine/packet"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
 	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemuiso"
-	"github.com/coreos/coreos-assembler/mantle/platform/machine/unprivqemu"
 	"github.com/coreos/coreos-assembler/mantle/system"
 	"github.com/coreos/coreos-assembler/mantle/util"
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
@@ -104,7 +103,7 @@ var (
 	GCEOptions       = gcloudapi.Options{Options: &Options}    // glue to set platform options from main
 	OpenStackOptions = openstackapi.Options{Options: &Options} // glue to set platform options from main
 	PacketOptions    = packetapi.Options{Options: &Options}    // glue to set platform options from main
-	QEMUOptions      = unprivqemu.Options{Options: &Options}   // glue to set platform options from main
+	QEMUOptions      = qemu.Options{Options: &Options}         // glue to set platform options from main
 	QEMUIsoOptions   = qemuiso.Options{Options: &Options}      // glue to set platform options from main
 
 	CosaBuild *util.LocalBuild // this is a parsed cosa build
@@ -269,8 +268,8 @@ func NewFlight(pltfrm string) (flight platform.Flight, err error) {
 		flight, err = openstack.NewFlight(&OpenStackOptions)
 	case "packet":
 		flight, err = packet.NewFlight(&PacketOptions)
-	case "qemu-unpriv":
-		flight, err = unprivqemu.NewFlight(&QEMUOptions)
+	case "qemu":
+		flight, err = qemu.NewFlight(&QEMUOptions)
 	case "qemu-iso":
 		flight, err = qemuiso.NewFlight(&QEMUIsoOptions)
 	default:
@@ -353,7 +352,7 @@ func parseDenyListYaml(pltfrm string) error {
 
 	// Parse kola-denylist into structs
 	pathToDenyList := filepath.Join(Options.CosaWorkdir, "src/config/kola-denylist.yaml")
-	denyListFile, err := ioutil.ReadFile(pathToDenyList)
+	denyListFile, err := os.ReadFile(pathToDenyList)
 	if os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
@@ -372,7 +371,7 @@ func parseDenyListYaml(pltfrm string) error {
 	var manifest ManifestData
 	var pathToManifest string
 	pathToInitConfig := filepath.Join(Options.CosaWorkdir, "src/config.json")
-	initConfigFile, err := ioutil.ReadFile(pathToInitConfig)
+	initConfigFile, err := os.ReadFile(pathToInitConfig)
 	if os.IsNotExist(err) {
 		// No variant config found. Let's read the default manifest
 		pathToManifest = filepath.Join(Options.CosaWorkdir, "src/config/manifest.yaml")
@@ -388,7 +387,7 @@ func parseDenyListYaml(pltfrm string) error {
 		}
 		pathToManifest = filepath.Join(Options.CosaWorkdir, fmt.Sprintf("src/config/manifest-%s.yaml", initConfig.ConfigVariant))
 	}
-	manifestFile, err := ioutil.ReadFile(pathToManifest)
+	manifestFile, err := os.ReadFile(pathToManifest)
 	if err != nil {
 		return err
 	}
@@ -452,11 +451,6 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 	r := make(map[string]*register.Test)
 
 	checkPlatforms := []string{pltfrm}
-
-	// qemu-unpriv has the same restrictions as QEMU but might also want additional restrictions due to the lack of a Local cluster
-	if pltfrm == "qemu-unpriv" {
-		checkPlatforms = append(checkPlatforms, "qemu")
-	}
 
 	// sort tags into include/exclude
 	positiveTags := []string{}
@@ -611,7 +605,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 		if allowed, excluded := isAllowed(Options.Distribution, t.Distros, t.ExcludeDistros); !allowed || excluded {
 			continue
 		}
-		if pltfrm == "qemu-unpriv" {
+		if pltfrm == "qemu" {
 			if allowed, excluded := isAllowed(QEMUOptions.Firmware, t.Firmwares, t.ExcludeFirmwares); !allowed || excluded {
 				continue
 			}
@@ -1163,7 +1157,7 @@ func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
 		if isreg && (c.Mode().Perm()&0001) > 0 {
 			executables = append(executables, filepath.Join(dir, c.Name()))
 		} else if isreg && c.Name() == "config.ign" {
-			v, err := ioutil.ReadFile(filepath.Join(dir, c.Name()))
+			v, err := os.ReadFile(filepath.Join(dir, c.Name()))
 			if err != nil {
 				return errors.Wrapf(err, "reading %s", c.Name())
 			}
@@ -1171,7 +1165,7 @@ func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
 		} else if isreg && c.Name() == "config.fcc" {
 			return errors.Wrapf(err, "%s is not supported anymore; rename it to config.bu", c.Name())
 		} else if isreg && (c.Name() == "config.bu") {
-			v, err := ioutil.ReadFile(filepath.Join(dir, c.Name()))
+			v, err := os.ReadFile(filepath.Join(dir, c.Name()))
 			if err != nil {
 				return errors.Wrapf(err, "reading %s", c.Name())
 			}
@@ -1197,7 +1191,7 @@ func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
 			dependencydir = target
 		} else if c.IsDir() {
 			subdir := filepath.Join(dir, c.Name())
-			subchildren, err := ioutil.ReadDir(subdir)
+			subchildren, err := os.ReadDir(subdir)
 			if err != nil {
 				return err
 			}
@@ -1244,7 +1238,7 @@ func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
 
 func RegisterExternalTestsWithPrefix(dir, prefix string) error {
 	testsdir := filepath.Join(dir, "tests/kola")
-	children, err := ioutil.ReadDir(testsdir)
+	children, err := os.ReadDir(testsdir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// The directory doesn't exist.. Skip registering tests
