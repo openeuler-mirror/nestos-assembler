@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/url"
 	"path/filepath"
 	"time"
@@ -136,7 +136,7 @@ func modifyReleaseMetadataIndex() {
 			return []byte{}, fmt.Errorf("downloading release metadata index: %v", err)
 		}
 		defer f.Close()
-		d, err := ioutil.ReadAll(f)
+		d, err := io.ReadAll(f)
 		if err != nil {
 			return []byte{}, fmt.Errorf("reading release metadata index: %v", err)
 		}

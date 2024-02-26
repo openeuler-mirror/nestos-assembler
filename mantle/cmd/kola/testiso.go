@@ -24,7 +24,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -524,7 +523,7 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 				if errBuf != "" {
 					plog.Info("entered emergency.target in initramfs")
 					path := filepath.Join(outdir, "ignition-virtio-dump.txt")
-					if err := ioutil.WriteFile(path, []byte(errBuf), 0644); err != nil {
+					if err := os.WriteFile(path, []byte(errBuf), 0644); err != nil {
 						plog.Errorf("Failed to write journal: %v", err)
 					}
 					err = platform.ErrInitramfsEmergency
@@ -613,7 +612,7 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 	if addNmKeyfile {
 		return 0, errors.New("--add-nm-keyfile not yet supported for PXE")
 	}
-	tmpd, err := ioutil.TempDir("", "kola-testiso")
+	tmpd, err := os.MkdirTemp("", "kola-testiso")
 	if err != nil {
 		return 0, err
 	}
@@ -666,7 +665,7 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 }
 
 func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offline, minimal bool) (time.Duration, error) {
-	tmpd, err := ioutil.TempDir("", "kola-testiso")
+	tmpd, err := os.MkdirTemp("", "kola-testiso")
 	if err != nil {
 		return 0, err
 	}
