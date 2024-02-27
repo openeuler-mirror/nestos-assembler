@@ -16,6 +16,7 @@ package gcloud
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"golang.org/x/net/context"
@@ -32,11 +33,12 @@ const (
 )
 
 type ImageSpec struct {
-	SourceImage string
-	Family      string
-	Name        string
-	Description string
-	Licenses    []string // short names
+	Architecture string
+	SourceImage  string
+	Family       string
+	Name         string
+	Description  string
+	Licenses     []string // short names
 }
 
 const endpointPrefix = "https://www.googleapis.com/compute/v1/"
@@ -65,7 +67,7 @@ func getImageAPIEndpoint(image, project string) (string, error) {
 		" begin with 'projects/', or use the short name")
 }
 
-// CreateImage creates an image on GCE and returns operation details and
+// CreateImage creates an image on GCP and returns operation details and
 // a Pending. If overwrite is true, an existing image will be overwritten
 // if it exists.
 func (a *API) CreateImage(spec *ImageSpec, overwrite bool) (*compute.Operation, *Pending, error) {
@@ -78,10 +80,22 @@ func (a *API) CreateImage(spec *ImageSpec, overwrite bool) (*compute.Operation, 
 			// If not in URI format then query GCP for that info
 			license, err := a.compute.Licenses.Get(a.options.Project, l).Do()
 			if err != nil {
-				return nil, nil, fmt.Errorf("Invalid GCE license %s: %v", l, err)
+				return nil, nil, fmt.Errorf("Invalid GCP license %s: %v", l, err)
 			}
 			licenses[i] = license.SelfLink
 		}
+	}
+
+	if spec.Architecture == "" {
+		spec.Architecture = runtime.GOARCH
+	}
+	switch spec.Architecture {
+	case "amd64", "x86_64":
+		spec.Architecture = "X86_64"
+	case "arm64", "aarch64":
+		spec.Architecture = "ARM64"
+	default:
+		return nil, nil, fmt.Errorf("unsupported gcp architecture %q", spec.Architecture)
 	}
 
 	if overwrite {
@@ -107,12 +121,25 @@ func (a *API) CreateImage(spec *ImageSpec, overwrite bool) (*compute.Operation, 
 		{
 			Type: "VIRTIO_SCSI_MULTIQUEUE",
 		},
+		// RHEL supports this since 8.4; TODO share logic here with
+		// https://github.com/osbuild/osbuild-composer/blob/c6570f6c94149b47f2f8e2f82d7467d6b96755bb/internal/cloud/gcp/compute.go#L16
+		{
+			Type: "SEV_CAPABLE",
+		},
+		{
+			Type: "GVNIC",
+		},
 		{
 			Type: "UEFI_COMPATIBLE",
+		},
+		// https://cloud.google.com/blog/products/identity-security/rsa-snp-vm-more-confidential
+		{
+			Type: "SEV_SNP_CAPABLE",
 		},
 	}
 
 	image := &compute.Image{
+		Architecture:    spec.Architecture,
 		Family:          spec.Family,
 		Name:            spec.Name,
 		Description:     spec.Description,
@@ -148,7 +175,7 @@ func (a *API) ListImages(ctx context.Context, prefix string, family string) ([]*
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Listing GCE images failed: %v", err)
+		return nil, fmt.Errorf("Listing GCP images failed: %v", err)
 	}
 	return images, nil
 }

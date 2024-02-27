@@ -31,7 +31,9 @@ type Options struct {
 	DiskImage string
 	// DiskSize if non-empty will expand the disk
 	DiskSize string
-	Board    string
+	// DriveOpts is arbitrary comma-separated list of options
+	DriveOpts string
+	// Firmware will be passed to qemu
 	Firmware string
 	Memory   string
 	Arch     string
@@ -43,6 +45,11 @@ type Options struct {
 
 	//Option to create a temporary software TPM - true by default
 	Swtpm bool
+
+	//IBM Secure Execution
+	SecureExecution               bool
+	SecureExecutionIgnitionPubKey string
+	SecureExecutionHostKey        string
 
 	*platform.Options
 }
