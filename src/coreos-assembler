@@ -17,14 +17,14 @@ export USER="${USER:-$(id -nu)}"
 # for uid" errors if there is no entry for our UID in /etc/passwd.
 # This was taken from 'Support Arbitrary User IDs' section of:
 #   https://docs.openshift.com/container-platform/3.10/creating_images/guidelines.html
-if ! whoami &> /dev/null; then
-  # We need to make sure we set $HOME in the /etc/passwd file because
-  # if we don't libvirt will try to use `/` and we will get permission
-  # issues
-  export HOME="/var/tmp/${USER_NAME:-default}" && mkdir -p "$HOME"
-  if [ -w /etc/passwd ]; then
-      echo "${USER_NAME:-default}:x:$(id -u):0:${USER_NAME:-default} user:${HOME}:/sbin/nologin" >> /etc/passwd
-  fi
+if ! whoami &>/dev/null; then
+    # We need to make sure we set $HOME in the /etc/passwd file because
+    # if we don't libvirt will try to use `/` and we will get permission
+    # issues
+    export HOME="/var/tmp/${USER_NAME:-default}" && mkdir -p "$HOME"
+    if [ -w /etc/passwd ]; then
+        echo "${USER_NAME:-default}:x:$(id -u):0:${USER_NAME:-default} user:${HOME}:/sbin/nologin" >>/etc/passwd
+    fi
 fi
 
 # Ensure we've unshared our mount namespace so
@@ -43,10 +43,15 @@ cmd=${1:-}
 # commands we'd expect to use in the local dev path
 build_commands="init fetch build run prune clean list"
 # commands more likely to be used in a prod pipeline only
-advanced_build_commands="buildfetch buildupload oc-adm-release push-container upload-oscontainer"
-buildextend_commands="aliyun aws azure digitalocean exoscale gcp ibmcloud live metal metal4k nutanix openstack qemu vmware vultr"
-utility_commands="aws-replicate compress generate-hashlist koji-upload kola remote-prune sign tag"
+advanced_build_commands="build-fast push-container"
+buildextend_commands="live metal metal4k openstack qemu"
+utility_commands="basearch compress kola kola-run runc tag virt-install"
 other_commands="shell meta"
+
+nestos_unsupport_advanced_build_commands="buildfetch buildupload buildinitramfs-fast oc-adm-release upload-oscontainer"
+nestos_unsupport_buildextend_commands="aliyun aws azure azurestack dasd digitalocean exoscale gcp ibmcloud nutanix powervs vmware vultr"
+nestos_unsupport_utility_commands="aws-replicate aliyun-replicate koji-upload generate-hashlist remote-prune sign"
+
 if [ -z "${cmd}" ]; then
     echo Usage: "coreos-assembler CMD ..."
     echo "Build commands:"
@@ -74,13 +79,20 @@ if [ -z "${cmd}" ]; then
 fi
 shift
 
+# Determine if the function is currently not supported by Nestos
+if [[ "${nestos_unsupport_advanced_build_commands}" =~ (^| )"${cmd}"($| ) ]] || \
+[[ "${nestos_unsupport_utility_commands}" =~ (^| )"${cmd}"($| ) ]] || \
+[[ "${cmd}" =~ ^buildextend-.* && "${nestos_unsupport_buildextend_commands}" =~ (^| )"${cmd#buildextend-}"($| ) ]]; then
+    echo "Command ${cmd} is not applicable to NestOS"
+    exit 1
+fi
+
 COSA_META_SCHEMA="${COSA_META_SCHEMA:-/usr/lib/coreos-assembler/v1.json}"
 schema_override="${PWD}/src/config/schema.json"
 if [ -e "${schema_override}" ]; then
     COSA_META_SCHEMA=$(realpath "${schema_override}")
 fi
 export COSA_META_SCHEMA
-
 
 target=/usr/lib/coreos-assembler/cmd-${cmd}
 if test -x "${target}"; then

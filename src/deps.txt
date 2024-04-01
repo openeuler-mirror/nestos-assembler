@@ -38,7 +38,8 @@ rsync
 python3-gobject-base
 
 # To support recursive containerization and manipulating images
-podman buildah skopeo
+# podman buildah skopeo
+podman skopeo
 
 # Miscellaneous tools
 jq
@@ -65,7 +66,7 @@ python3-libvirt
 openssl
 
 # Support for Koji uploads.
-#krb5-libs krb5-workstation
+# krb5-libs krb5-workstation
 
 # LUKS support
 cryptsetup
@@ -85,14 +86,15 @@ nestos-installer
 butane
 
 # Support for meta.json file locking
-#python3-flufl-lock
+# python3-flufl-lock
+python3-flufl.lock
 
 # entrypoint uses bsdtar for automatic compression detection
 bsdtar
 
 # For pulling from the prod OSTree repo, e.g. during release jobs
-#fedora-repos-ostree
+# fedora-repos-ostree
 
-python3-flufl.lock python3-pyyaml
+python3-pyyaml
 
-#guestfs-tools
+# guestfs-tools
