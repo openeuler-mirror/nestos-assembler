@@ -16,8 +16,8 @@ VARIANT=""
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler init --help
-       coreos-assembler init [--force] [--transient] [--branch BRANCH] 
+Usage: nestos-assembler init --help
+       nestos-assembler init [--force] [--transient] [--branch BRANCH] 
                              [--commit COMMIT] [-V/--variant VARIANT]
                              [--yumrepos GITREPO] [--yumrepos-branch BRANCH]
 			     GITCONFIG [SUBDIR]

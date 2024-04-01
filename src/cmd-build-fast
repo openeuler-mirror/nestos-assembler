@@ -19,7 +19,7 @@ dn=$(dirname "$0")
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler build-fast [--undeploy]
+Usage: nestos-assembler build-fast [--undeploy]
 EOF
 }
 
@@ -63,7 +63,7 @@ if test -e .git; then
         # shellcheck disable=SC2016
         fatal 'This command requires inheriting from a previous full OS build.
 Use e.g. `export COSA_DIR=/path/to/fcos` that has a previous
-run of `cosa build`.'
+run of `nosa build`.'
     fi
     projectdir=$(pwd)
     cd "${COSA_DIR}"

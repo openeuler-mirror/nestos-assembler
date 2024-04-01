@@ -53,12 +53,16 @@ func printCommands(title string, cmds []string) {
 }
 
 func printUsage() {
-	fmt.Println("Usage: coreos-assembler CMD ...")
+	fmt.Println("Usage: nestos-assembler CMD ...")
 	printCommands("Build commands", buildCommands)
 	printCommands("Advanced build commands", advancedBuildCommands)
 	printCommands("Platform builds", buildextendCommands)
 	printCommands("Utility commands", utilityCommands)
 	printCommands("Other commands", otherCommands)
+
+	fmt.Printf("\nNotice:\n")
+	fmt.Printf(" For bug reports, please submit an issue at [nestos-assembler](https://gitee.com/openeuler/nestos-assembler).")
+	fmt.Printf(" This software is a fork of [coreos-assembler](https://github.com/coreos/coreos-assembler), licensed under the [Apache-2.0 License](https://www.apache.org/licenses/LICENSE-2.0).\n")
 }
 
 func contains(slice []string, str string) bool {

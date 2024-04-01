@@ -21,7 +21,7 @@ from cosalib.builds import Builds, get_local_builds
 DEFAULT_KEEP_LAST_N = 3
 
 
-parser = argparse.ArgumentParser(prog="coreos-assembler prune")
+parser = argparse.ArgumentParser(prog="nestos-assembler prune")
 parser.add_argument("--workdir", default='.', help="Path to workdir")
 parser.add_argument("--dry-run", help="Don't actually delete anything",
                     action='store_true')
