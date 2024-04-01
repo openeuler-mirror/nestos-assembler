@@ -19,8 +19,8 @@ fi
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler fetch --help
-       coreos-assembler fetch [--update-lockfile] [--write-lockfile-to=file] [--with-cosa-overrides] [--strict]
+Usage: nestos-assembler fetch --help
+       nestos-assembler fetch [--update-lockfile] [--write-lockfile-to=file] [--with-cosa-overrides] [--strict]
 
   Fetch and import the latest packages.
 EOF

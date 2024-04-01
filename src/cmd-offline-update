@@ -21,8 +21,8 @@ dn=$(dirname "$0")
 
 print_help() {
     cat 1>&2 <<EOF
-Usage: coreos-assembler offline-update --help
-       coreos-assembler offline-update [--build ID] [--commit COMMIT] DISK
+Usage: nestos-assembler offline-update --help
+       nestos-assembler offline-update [--build ID] [--commit COMMIT] DISK
 
   In-place update DISK to the OSTree commit from the provided build.
 EOF

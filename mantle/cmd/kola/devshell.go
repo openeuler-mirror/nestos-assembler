@@ -39,7 +39,7 @@ import (
 	"golang.org/x/term"
 )
 
-const devshellHostname = "cosa-devsh"
+const devshellHostname = "nosa-devsh"
 
 func stripControlCharacters(s string) string {
 	s = strings.ToValidUTF8(s, "")

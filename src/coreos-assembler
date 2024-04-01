@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Usage: coreos-assembler <cmd> ...
+# Usage: nestos-assembler <cmd> ...
 # Currently this just wraps the two binaries we have today
 # under a global entrypoint with subcommands.
 
@@ -53,7 +53,7 @@ nestos_unsupport_buildextend_commands="aliyun aws azure azurestack dasd digitalo
 nestos_unsupport_utility_commands="aws-replicate aliyun-replicate koji-upload generate-hashlist remote-prune sign"
 
 if [ -z "${cmd}" ]; then
-    echo Usage: "coreos-assembler CMD ..."
+    echo Usage: "nestos-assembler CMD ..."
     echo "Build commands:"
     for bin in ${build_commands}; do
         echo "  ${bin}"
@@ -75,14 +75,18 @@ if [ -z "${cmd}" ]; then
     for bin in ${other_commands}; do
         echo "  ${bin}"
     done | sort
+
+    echo -e "\nNotice:\n"
+    echo -e " For bug reports, please submit an issue at [nestos-assembler](https://gitee.com/openeuler/nestos-assembler)."
+    echo -e " This software is a fork of [coreos-assembler](https://github.com/coreos/coreos-assembler), licensed under the [Apache-2.0 License](https://www.apache.org/licenses/LICENSE-2.0).\n"
     exit 1
 fi
 shift
 
 # Determine if the function is currently not supported by Nestos
 if [[ "${nestos_unsupport_advanced_build_commands}" =~ (^| )"${cmd}"($| ) ]] || \
-[[ "${nestos_unsupport_utility_commands}" =~ (^| )"${cmd}"($| ) ]] || \
-[[ "${cmd}" =~ ^buildextend-.* && "${nestos_unsupport_buildextend_commands}" =~ (^| )"${cmd#buildextend-}"($| ) ]]; then
+    [[ "${nestos_unsupport_utility_commands}" =~ (^| )"${cmd}"($| ) ]] || \
+    [[ "${cmd}" =~ ^buildextend-.* && "${nestos_unsupport_buildextend_commands}" =~ (^| )"${cmd#buildextend-}"($| ) ]]; then
     echo "Command ${cmd} is not applicable to NestOS"
     exit 1
 fi

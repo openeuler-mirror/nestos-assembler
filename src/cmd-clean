@@ -7,8 +7,8 @@ dn=$(dirname "$0")
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler clean --help
-       coreos-assembler clean [--all]
+Usage: nestos-assembler clean --help
+       nestos-assembler clean [--all]
 
   Delete all build artifacts.  Use --all to also clean the cache/ directory.
 EOF
