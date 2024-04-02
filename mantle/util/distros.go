@@ -29,6 +29,9 @@ func TargetDistroFromName(artifact string) string {
 	if strings.HasPrefix(basename, "rhcos-") {
 		return "rhcos"
 	}
+	if strings.HasPrefix(basename, "nestos-") {
+		return "nestos"
+	}
 	// For now, just assume fcos
 	return "fcos"
 }
@@ -42,6 +45,8 @@ func TargetDistro(build *builds.Build) (string, error) {
 		return "rhcos", nil
 	case "fedora-coreos":
 		return "fcos", nil
+	case "nestos":
+		return "nestos", nil
 	default:
 		return "", fmt.Errorf("Unknown distribution: %s", build.Name)
 	}

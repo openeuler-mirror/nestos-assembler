@@ -12,8 +12,8 @@ COMMIT=""
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler init --help
-       coreos-assembler init [--force] [--branch BRANCH] 
+Usage: nestos-assembler init --help
+       nestos-assembler init [--force] [--branch BRANCH] 
                              [--commit COMMIT] GITCONFIG [SUBDIR]
 
   For example, you can use https://github.com/coreos/fedora-coreos-config
