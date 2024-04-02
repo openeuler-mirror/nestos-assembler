@@ -18,8 +18,9 @@ from cosalib import cmdlib
 parser = argparse.ArgumentParser()
 parser.add_argument("--authfile", help="Authentication file",
                     action='store')
+parser.add_argument("--insecure", help="Ignoring SSL/TLS verification, allow insecure registry",
+                    action='store_true')
 parser.add_argument("name", help="destination image reference")
-parser.add_argument("source", help="source depository,e.g.(docker,local-harbor,oepkg)")
 
 args = parser.parse_args()
 
@@ -45,14 +46,10 @@ container_name = args.name
 if ":" not in container_name:
     container_name = f"{container_name}:{latest_build}-{arch}"
 
-if args.source == "docker":
-    skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://{container_name}"])
-if args.source == "local-harbor":
-    skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://local-harbor.wyl-40/{container_name}"])
+if args.insecure:
     skopeoargs.extend(["--insecure-policy"])
     skopeoargs.extend(["--dest-tls-verify=false"])
-if args.source == "oepkg":
-    skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://hub.oepkgs.net/{container_name}"])
 
+skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://{container_name}"])
 print(subprocess.list2cmdline(skopeoargs))
 os.execvp('skopeo', skopeoargs)
