@@ -43,7 +43,7 @@ func init() {
 		Run:         fcosUpgradeBasic,
 		ClusterSize: 1,
 		// if renaming this, also rename the command in kolet-httpd.service below
-		Name:     "fcos.upgrade.basic",
+		Name:     "nestos.upgrade.basic",
 		FailFast: true,
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"httpd": register.CreateNativeFuncWrap(httpd),
@@ -82,7 +82,7 @@ func init() {
       },
       {
         "name": "kolet-httpd.service",
-        "contents": "[Service]\nExecStart=/var/home/nest/kolet run fcos.upgrade.basic httpd -v\n[Install]\nWantedBy=multi-user.target"
+        "contents": "[Service]\nExecStart=/var/home/nest/kolet run nestos.upgrade.basic httpd -v\n[Install]\nWantedBy=multi-user.target"
       }
     ]
   },

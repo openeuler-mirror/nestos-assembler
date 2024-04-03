@@ -99,36 +99,36 @@ Description=TestISO Signal Live ISO Completion
 Requires=dev-virtio\\x2dports-testisocompletion.device
 OnFailure=emergency.target
 OnFailureJobMode=isolate
-Before=coreos-installer.service
+Before=nestos-installer.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c '/usr/bin/echo %s >/dev/virtio-ports/testisocompletion'
 [Install]
 # for install scenarios
-RequiredBy=coreos-installer.target
+RequiredBy=nestos-installer.target
 # for iso-as-disk
 RequiredBy=multi-user.target
 `, liveOKSignal)
 
 var downloadCheck = `[Unit]
 Description=TestISO Verify CoreOS Installer Download
-After=coreos-installer.service
-Before=coreos-installer.target
+After=nestos-installer.service
+Before=nestos-installer.target
 [Service]
 Type=oneshot
 StandardOutput=kmsg+console
 StandardError=kmsg+console
-ExecStart=/bin/sh -c "journalctl -t coreos-installer-service | /usr/bin/awk '/[Dd]ownload/ {exit 1}'"
+ExecStart=/bin/sh -c "journalctl -t nestos-installer-service | /usr/bin/awk '/[Dd]ownload/ {exit 1}'"
 ExecStart=/bin/sh -c "/usr/bin/udevadm settle"
 ExecStart=/bin/sh -c "/usr/bin/mount /dev/disk/by-label/root /mnt"
 ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"build\"] == \"%s\"' /mnt/.coreos-aleph-version.json"
 ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"ostree-commit\"] == \"%s\"' /mnt/.coreos-aleph-version.json"
 [Install]
-RequiredBy=coreos-installer.target
+RequiredBy=nestos-installer.target
 `
 
-var signalCompleteString = "coreos-installer-test-OK"
+var signalCompleteString = "nestos-installer-test-OK"
 var signalCompletionUnit = fmt.Sprintf(`[Unit]
 Description=TestISO Signal Completion
 Requires=dev-virtio\\x2dports-testisocompletion.device
@@ -142,7 +142,7 @@ ExecStart=/bin/sh -c '/usr/bin/echo %s >/dev/virtio-ports/testisocompletion && s
 RequiredBy=multi-user.target
 `, signalCompleteString)
 
-var signalEmergencyString = "coreos-installer-test-entered-emergency-target"
+var signalEmergencyString = "nestos-installer-test-entered-emergency-target"
 var signalFailureUnit = fmt.Sprintf(`[Unit]
 Description=TestISO Signal Failure
 Requires=dev-virtio\\x2dports-testisocompletion.device
@@ -159,8 +159,8 @@ var checkNoIgnition = `[Unit]
 Description=TestISO Verify No Ignition Config
 OnFailure=emergency.target
 OnFailureJobMode=isolate
-Before=coreos-test-installer.service
-After=coreos-ignition-firstboot-complete.service
+Before=nestos-test-installer.service
+After=nestos-ignition-firstboot-complete.service
 RequiresMountsFor=/boot
 [Service]
 Type=oneshot
@@ -173,7 +173,7 @@ var multipathedRoot = `[Unit]
 Description=TestISO Verify Multipathed Root
 OnFailure=emergency.target
 OnFailureJobMode=isolate
-Before=coreos-test-installer.service
+Before=nestos-test-installer.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
@@ -193,12 +193,12 @@ RemainAfterExit=yes
 ExecStart=/bin/sh -c '! efibootmgr -v | grep -E "(HD|CDROM)\("'
 [Install]
 # for install scenarios
-RequiredBy=coreos-installer.target
+RequiredBy=nestos-installer.target
 # for iso-as-disk
 RequiredBy=multi-user.target`
 
-var nmConnectionId = "CoreOS DHCP"
-var nmConnectionFile = "coreos-dhcp.nmconnection"
+var nmConnectionId = "nestos DHCP"
+var nmConnectionFile = "nestos-dhcp.nmconnection"
 var nmConnection = fmt.Sprintf(`[connection]
 id=%s
 type=ethernet
@@ -219,7 +219,7 @@ OnFailureJobMode=isolate
 Wants=network-online.target
 After=network-online.target
 Before=live-signal-ok.service
-Before=coreos-test-installer.service
+Before=nestos-test-installer.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
@@ -228,7 +228,7 @@ ExecStart=/usr/bin/journalctl -u NetworkManager --no-pager --grep "policy: set '
 ExecStart=/usr/bin/grep "%[1]s" /etc/NetworkManager/system-connections/%[2]s
 [Install]
 # for live system
-RequiredBy=coreos-installer.target
+RequiredBy=nestos-installer.target
 # for target system
 RequiredBy=multi-user.target`, nmConnectionId, nmConnectionFile)
 
@@ -564,6 +564,7 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 				return
 			}
 			line := strings.TrimSpace(l)
+			fmt.Println("Virtio-port Recv:", line) // 打印收到的内容到标准输出
 			if line != exp {
 				errchan <- fmt.Errorf("Unexpected string from completion channel: %s expected: %s", line, exp)
 				return
@@ -640,17 +641,17 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 
 	liveConfig := *virtioJournalConfig
 	liveConfig.AddSystemdUnit("live-signal-ok.service", liveSignalOKUnit, conf.Enable)
-	liveConfig.AddSystemdUnit("coreos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
+	liveConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
 
 	if offline {
 		contents := fmt.Sprintf(downloadCheck, kola.CosaBuild.Meta.BuildID, kola.CosaBuild.Meta.OstreeCommit)
-		liveConfig.AddSystemdUnit("coreos-installer-offline-check.service", contents, conf.Enable)
+		liveConfig.AddSystemdUnit("nestos-installer-offline-check.service", contents, conf.Enable)
 	}
 
 	targetConfig := *virtioJournalConfig
-	targetConfig.AddSystemdUnit("coreos-test-installer.service", signalCompletionUnit, conf.Enable)
-	targetConfig.AddSystemdUnit("coreos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
-	targetConfig.AddSystemdUnit("coreos-test-installer-no-ignition.service", checkNoIgnition, conf.Enable)
+	targetConfig.AddSystemdUnit("nestos-test-installer.service", signalCompletionUnit, conf.Enable)
+	targetConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
+	targetConfig.AddSystemdUnit("nestos-test-installer-no-ignition.service", checkNoIgnition, conf.Enable)
 
 	mach, err := inst.PXE(pxeKernelArgs, liveConfig, targetConfig, offline)
 	if err != nil {
@@ -694,19 +695,19 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offl
 	liveConfig := *virtioJournalConfig
 	liveConfig.AddSystemdUnit("live-signal-ok.service", liveSignalOKUnit, conf.Enable)
 	liveConfig.AddSystemdUnit("verify-no-efi-boot-entry.service", verifyNoEFIBootEntry, conf.Enable)
-	liveConfig.AddSystemdUnit("coreos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
+	liveConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
 
 	targetConfig := *virtioJournalConfig
-	targetConfig.AddSystemdUnit("coreos-test-installer.service", signalCompletionUnit, conf.Enable)
-	targetConfig.AddSystemdUnit("coreos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
-	targetConfig.AddSystemdUnit("coreos-test-installer-no-ignition.service", checkNoIgnition, conf.Enable)
+	targetConfig.AddSystemdUnit("nestos-test-installer.service", signalCompletionUnit, conf.Enable)
+	targetConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
+	targetConfig.AddSystemdUnit("nestos-test-installer-no-ignition.service", checkNoIgnition, conf.Enable)
 	if inst.MultiPathDisk {
-		targetConfig.AddSystemdUnit("coreos-test-installer-multipathed.service", multipathedRoot, conf.Enable)
+		targetConfig.AddSystemdUnit("nestos-test-installer-multipathed.service", multipathedRoot, conf.Enable)
 	}
 
 	if addNmKeyfile {
-		liveConfig.AddSystemdUnit("coreos-test-nm-keyfile.service", verifyNmKeyfile, conf.Enable)
-		targetConfig.AddSystemdUnit("coreos-test-nm-keyfile.service", verifyNmKeyfile, conf.Enable)
+		liveConfig.AddSystemdUnit("nestos-test-nm-keyfile.service", verifyNmKeyfile, conf.Enable)
+		targetConfig.AddSystemdUnit("nestos-test-nm-keyfile.service", verifyNmKeyfile, conf.Enable)
 		inst.NmKeyfiles[nmConnectionFile] = nmConnection
 	}
 
@@ -736,7 +737,7 @@ func testLiveLogin(ctx context.Context, outdir string) (time.Duration, error) {
 		return 0, err
 	}
 
-	completionChannel, err := builder.VirtioChannelRead("coreos.liveiso-success")
+	completionChannel, err := builder.VirtioChannelRead("nestos.liveiso-success")
 	if err != nil {
 		return 0, err
 	}
@@ -750,7 +751,7 @@ func testLiveLogin(ctx context.Context, outdir string) (time.Duration, error) {
 	}
 	defer mach.Destroy()
 
-	return awaitCompletion(ctx, mach, outdir, completionChannel, nil, []string{"coreos-liveiso-success"})
+	return awaitCompletion(ctx, mach, outdir, completionChannel, nil, []string{"nestos-liveiso-success"})
 }
 
 func testAsDisk(ctx context.Context, outdir string) (time.Duration, error) {

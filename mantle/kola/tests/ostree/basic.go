@@ -34,7 +34,7 @@ func init() {
 		Run:         ostreeBasicTest,
 		ClusterSize: 1,
 		Name:        "ostree.basic",
-		Distros:     []string{"rhcos"},
+		Distros:     []string{"rhcos", "nestos"},
 		FailFast:    true,
 		Tags:        []string{"ostree"},
 	})

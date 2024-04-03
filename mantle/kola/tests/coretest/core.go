@@ -59,7 +59,7 @@ func init() {
 	// TODO: Only enable PodmanPing on non qemu-unpriv. Needs:
 	// https://github.com/coreos/mantle/issues/1132
 	register.RegisterTest(&register.Test{
-		Name:        "fcos.internet",
+		Name:        "nestos.internet",
 		Run:         InternetTests,
 		ClusterSize: 1,
 		Flags:       []register.Flag{register.RequiresInternetAccess},
@@ -77,16 +77,16 @@ func init() {
 			"RandomUUID": register.CreateNativeFuncWrap(TestFsRandomUUID),
 		},
 		// FIXME run on RHCOS once it has https://github.com/coreos/ignition-dracut/pull/93
-		Distros: []string{"fcos"},
+		Distros: []string{"fcos", "nestos"},
 	})
 	register.RegisterTest(&register.Test{
-		Name:        "rhcos.services-disabled",
+		Name:        "nestos.services-disabled",
 		Run:         LocalTests,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"ServicesDisabled": register.CreateNativeFuncWrap(TestServicesDisabledRHCOS),
 		},
-		Distros: []string{"rhcos"},
+		Distros: []string{"rhcos", "nestos"},
 	})
 }
 
@@ -101,27 +101,27 @@ func TestPortSsh() error {
 
 func TestDockerEcho() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.nju.edu.cn/library/busybox", "echo")
+	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.io/busybox", "echo")
 }
 
 func TestDockerPing() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.nju.edu.cn/library/busybox", "ping", "-c4", "coreos.com")
+	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.io/busybox", "ping", "-c4", "baidu.com")
 }
 
 func TestPodmanEcho() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "echo")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.io/busybox", "echo")
 }
 
 func TestPodmanPing() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "ping", "-c4", "coreos.com")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.io/busybox", "ping", "-c4", "baidu.com")
 }
 
 func TestPodmanWgetHead() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.nju.edu.cn/library/busybox", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.io/busybox", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
 }
 
 // This execs gdbus, because we need to change uses to test perms.

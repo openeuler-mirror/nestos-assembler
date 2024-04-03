@@ -357,7 +357,7 @@ RequiredBy=multi-user.target
 					Contents: util.StrToPtr(discardServiceUnit),
 				},
 				{
-					Name:     "coreos-installer.service",
+					Name:     "nestos-installer.service",
 					Enabled:  util.BoolToPtr(true),
 					Contents: util.StrToPtr(installUnit),
 				},

@@ -57,11 +57,11 @@ boot_device:
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Run:            runBootMirrorTest,
-		ClusterSize:    0,
-		Name:           `coreos.boot-mirror`,
-		Platforms:      []string{"qemu-unpriv"},
-		ExcludeDistros: []string{"nestos"},
+		Run:         runBootMirrorTest,
+		ClusterSize: 0,
+		Name:        `nestos.boot-mirror`,
+		Platforms:   []string{"qemu-unpriv"},
+		//ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x
 		ExcludeArchitectures: []string{"s390x"},
 		// skipping this test on UEFI until https://github.com/coreos/coreos-assembler/issues/2039
@@ -72,11 +72,11 @@ func init() {
 		Timeout:          15 * time.Minute,
 	})
 	register.RegisterTest(&register.Test{
-		Run:            runBootMirrorLUKSTest,
-		ClusterSize:    0,
-		Name:           `coreos.boot-mirror.luks`,
-		Platforms:      []string{"qemu-unpriv"},
-		ExcludeDistros: []string{"nestos"},
+		Run:         runBootMirrorLUKSTest,
+		ClusterSize: 0,
+		Name:        `nestos.boot-mirror.luks`,
+		Platforms:   []string{"qemu-unpriv"},
+		//ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x, and qemu s390x doesn't
 		// support TPM
 		ExcludeArchitectures: []string{"s390x"},
