@@ -64,7 +64,7 @@ var (
 	RemainAfterExit=yes
 	ExecStart=/bin/sh -c '/usr/bin/echo %s >/dev/virtio-ports/bootstarted'
 	[Install]
-	RequiredBy=coreos-installer.target
+	RequiredBy=nestos-installer.target
 	`, bootStartedSignal)
 )
 
@@ -274,7 +274,7 @@ func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
 		if builder.Firmware == "uefi" {
 			pxe.boottype = "grub"
 			pxe.bootfile = "/boot/grub2/grubx64.efi"
-			pxe.pxeimagepath = "/boot/efi/EFI/fedora/grubx64.efi"
+			pxe.pxeimagepath = "/boot/efi/EFI/openEuler/grubx64.efi"
 			// Choose bootindex=2. First boot the hard drive won't
 			// have an OS and will fall through to bootindex 2 (net)
 			pxe.bootindex = "2"
@@ -286,7 +286,7 @@ func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
 		pxe.boottype = "grub"
 		pxe.networkdevice = "virtio-net-pci"
 		pxe.bootfile = "/boot/grub2/grubaa64.efi"
-		pxe.pxeimagepath = "/boot/efi/EFI/fedora/grubaa64.efi"
+		pxe.pxeimagepath = "/boot/efi/EFI/openEuler/grubaa64.efi"
 		pxe.bootindex = "1"
 	case "ppc64le":
 		pxe.boottype = "grub"
@@ -338,14 +338,14 @@ func renderBaseKargs() []string {
 }
 
 func renderInstallKargs(t *installerRun, offline bool) []string {
-	args := []string{"coreos.inst.install_dev=/dev/vda",
-		fmt.Sprintf("coreos.inst.ignition_url=%s/config.ign", t.baseurl)}
+	args := []string{"nestos.inst.install_dev=/dev/vda",
+		fmt.Sprintf("nestos.inst.ignition_url=%s/config.ign", t.baseurl)}
 	if !offline {
-		args = append(args, fmt.Sprintf("coreos.inst.image_url=%s/%s", t.baseurl, t.metalname))
+		args = append(args, fmt.Sprintf("nestos.inst.image_url=%s/%s", t.baseurl, t.metalname))
 	}
 	// FIXME - ship signatures by default too
 	if t.inst.Insecure {
-		args = append(args, "coreos.inst.insecure")
+		args = append(args, "nestos.inst.insecure")
 	}
 	return args
 }
@@ -747,11 +747,11 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 
 	inst.liveIgnition.AddSystemdUnit("boot-started.service", bootStartedUnit, conf.Enable)
 	inst.liveIgnition.AddFile(installerConfig.IgnitionFile, serializedTargetConfig, mode)
-	inst.liveIgnition.AddFile("/etc/coreos/installer.d/mantle.yaml", string(installerConfigData), mode)
+	inst.liveIgnition.AddFile("/etc/nestos/installer.d/mantle.yaml", string(installerConfigData), mode)
 	inst.liveIgnition.AddAutoLogin()
 
 	if inst.MultiPathDisk {
-		inst.liveIgnition.AddSystemdUnit("coreos-installer-multipath.service", `[Unit]
+		inst.liveIgnition.AddSystemdUnit("nestos-installer-multipath.service", `[Unit]
 Description=TestISO Enable Multipath
 Before=multipathd.service
 DefaultDependencies=no
@@ -760,8 +760,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/mpathconf --enable
 [Install]
-WantedBy=coreos-installer.target`, conf.Enable)
-		inst.liveIgnition.AddSystemdUnitDropin("coreos-installer.service", "wait-for-mpath-target.conf", `[Unit]
+WantedBy=nestos-installer.target`, conf.Enable)
+		inst.liveIgnition.AddSystemdUnitDropin("nestos-installer.service", "wait-for-mpath-target.conf", `[Unit]
 Requires=dev-mapper-mpatha.device
 After=dev-mapper-mpatha.device`)
 	}

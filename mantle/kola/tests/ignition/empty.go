@@ -25,7 +25,7 @@ import (
 // where the cloud provider metadata system is not available have been excluded.
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:             "fcos.ignition.misc.empty",
+		Name:             "nestos.ignition.misc.empty",
 		Run:              noIgnitionSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu", "esx"},
@@ -34,7 +34,7 @@ func init() {
 		Tags:             []string{"ignition"},
 	})
 	register.RegisterTest(&register.Test{
-		Name:             "fcos.ignition.v3.noop",
+		Name:             "nestos.ignition.v3.noop",
 		Run:              noIgnitionSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu", "esx"},
