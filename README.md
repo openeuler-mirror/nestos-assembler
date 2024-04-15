@@ -87,4 +87,4 @@ nestos-assembler 为 [coreos-assembler](https://github.com/coreos/coreos-assembl
 
 ### 与coreos-assembler主要差异
 
-参见 [对比上游项目主要改动](./docs/changelog-compared-to-upstream.md)。
+参见 [对比上游项目主要改动](./docs/changelog-compared-with-upstream.md)。
