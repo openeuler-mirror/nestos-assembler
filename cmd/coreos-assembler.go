@@ -13,9 +13,9 @@ import (
 
 // commands we'd expect to use in the local dev path
 var buildCommands = []string{"init", "fetch", "build", "run", "prune", "clean", "list"}
-var advancedBuildCommands = []string{"buildfetch", "buildupload", "oc-adm-release", "push-container", "upload-oscontainer"}
-var buildextendCommands = []string{"aliyun", "aws", "azure", "digitalocean", "exoscale", "gcp", "ibmcloud", "kubevirt", "legacy-oscontainer", "live", "metal", "metal4k", "nutanix", "openstack", "qemu", "secex", "virtualbox", "vmware", "vultr"}
-var utilityCommands = []string{"aws-replicate", "build-extensions-container", "compress", "generate-hashlist", "koji-upload", "kola", "remote-build-container", "remote-prune", "remote-session", "sign", "tag", "update-variant"}
+var advancedBuildCommands = []string{"buildfetch", "buildupload", "oc-adm-release", "push-container", "upload-oscontainer", "buildextend-extensions"}
+var buildextendCommands = []string{"aliyun", "aws", "azure", "digitalocean", "exoscale", extensions-container, "gcp", "hashlist-experimental", "ibmcloud", "kubevirt", "legacy-oscontainer", "live", "metal", "metal4k", "nutanix", "openstack", "qemu", "secex", "virtualbox", "vmware", "vultr"}
+var utilityCommands = []string{"aws-replicate", "compress", "koji-upload", "kola", "remote-build-container", "remote-prune", "remote-session", "sign", "tag", "update-variant"}
 var otherCommands = []string{"shell", "meta"}
 
 func init() {
@@ -38,8 +38,12 @@ func wrapCommandErr(err error) error {
 
 func printCommands(title string, cmds []string) {
 	fmt.Printf("%s:\n", title)
+	var prefix string
+	if title == "Platform builds" {
+		prefix = "buildextend-"
+	}
 	for _, cmd := range cmds {
-		fmt.Printf("  %s\n", cmd)
+		fmt.Printf("  %s%s\n", prefix, cmd)
 	}
 }
 
@@ -63,7 +67,7 @@ func run(argv []string) error {
 		argv = argv[1:]
 	}
 
-	if cmd == "" {
+	if cmd == "" || cmd == "--help" {
 		printUsage()
 		os.Exit(1)
 	}
@@ -88,7 +92,8 @@ func run(argv []string) error {
 		return runUpdateVariant(argv)
 	case "remote-session":
 		return runRemoteSession(argv)
-	case "build-extensions-container":
+	case "build-extensions-container", // old alias
+		"buildextend-extensions-container":
 		return buildExtensionContainer()
 	}
 
@@ -106,7 +111,8 @@ func run(argv []string) error {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	if err := c.Run(); err != nil {
-		return fmt.Errorf("failed to execute cmd-%s: %w", cmd, err)
+		fmt.Fprintf(os.Stderr, "failed to execute cmd-%s: %v\n", cmd, err.Error())
+		return err
 	}
 	return nil
 }
@@ -187,7 +193,13 @@ func initializeGlobalState(argv []string) error {
 func main() {
 	err := run(os.Args[1:])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// In this case the command we ran gave a non-zero exit
+			// code. Let's also exit with that exit code.
+			os.Exit(exitErr.ExitCode())
+		} else {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
