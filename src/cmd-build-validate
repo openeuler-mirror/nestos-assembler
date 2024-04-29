@@ -47,7 +47,7 @@ def validate_build(builddir):
         # Otherwise, assume it's a mountable disk image we can fsck
         validate_image(builddir, img_format, data)
     if not found:
-        raise SystemExit("Failed to find image type: {args.image}")
+        raise SystemExit(f"Failed to find image type: {args.image}")
 
 
 def validate_image(builddir, imgtype, data):
