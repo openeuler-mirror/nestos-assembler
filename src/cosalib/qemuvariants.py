@@ -52,6 +52,12 @@ VARIANTS = {
         "image_format": "qcow2",
         "platform": "aliyun",
     },
+    "applehv": {
+        "image_format": "raw",
+        "image_suffix": "raw.gz",
+        "platform": "applehv",
+        "compression": "gzip"
+    },
     "azure": {
         "image_format": "vpc",
         "image_suffix": "vhd",
@@ -90,6 +96,18 @@ VARIANTS = {
             DEFAULT_TAR_FLAGS,
             "--format=oldgnu"
         ]
+    },
+    "hyperv": {
+        "image_format": "vhdx",
+        "image_suffix": "vhdx.zip",
+        "platform": "hyperv",
+        "compression": "zip"
+    },
+    "kubevirt": {
+        "image_format": "qcow2",
+        "platform": "kubevirt",
+        "image_suffix": "ociarchive",
+        "compression": "skip",
     },
     "openstack": {
         "image_format": "qcow2",
@@ -170,6 +188,7 @@ class QemuVariantImage(_Build):
         self.tar_flags = kwargs.pop("tar_flags", [DEFAULT_TAR_FLAGS])
         self.gzip = kwargs.pop("gzip", False)
         self.virtual_size = kwargs.pop("virtual_size", None)
+        self.mutate_callback_creates_final_image = False
 
         # this is used in case the image has a different disk
         # name than the platform
@@ -282,8 +301,7 @@ class QemuVariantImage(_Build):
             tar_cmd.extend(['-f', final_img])
             tar_cmd.extend(tarlist)
             run_verbose(tar_cmd)
-
-        else:
+        elif not self.mutate_callback_creates_final_image:
             log.info(f"Moving {work_img} to {final_img}")
             shutil.move(work_img, final_img)
 
