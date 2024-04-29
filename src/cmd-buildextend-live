@@ -137,7 +137,7 @@ def align_initrd_for_uncompressed_append(destf):
 def get_os_features():
     features = {}
 
-    f = run_verbose(['/usr/bin/ostree', 'cat', '--repo', repo,
+    f = runcmd(['/usr/bin/ostree', 'cat', '--repo', repo,
             buildmeta_commit, '/usr/libexec/nestos-installer-service'],
             capture_output=True).stdout.decode()
     # eventually we can assume nestos-installer >= 0.12.0, delete this check,
@@ -145,7 +145,7 @@ def get_os_features():
     if '--config-file' in f:
         features['installer-config'] = True
 
-    f = run_verbose(['/usr/bin/ostree', 'cat', '--repo', repo,
+    f = runcmd(['/usr/bin/ostree', 'cat', '--repo', repo,
             buildmeta_commit,
             '/usr/lib/dracut/modules.d/35nestos-network/nestos-copy-firstboot-network.sh'],
             capture_output=True).stdout.decode()
@@ -197,7 +197,7 @@ def cp_reflink(src, dest):
 
 
 # Make stream hash for `rdcore stream-hash`
-# https://github.com/coreos/nestos-installer/blob/a8d6f50dea6e/src/bin/rdcore/stream_hash.rs#L26-L41
+# https://github.com/coreos/coreos-installer/blob/a8d6f50dea6e/src/bin/rdcore/stream_hash.rs#L26-L41
 def make_stream_hash(src, dest):
     bufsize = 2 * 1024 * 1024
     with open(src, 'rb') as inf:
@@ -239,17 +239,17 @@ def generate_iso():
     # Find the directory under `/usr/lib/modules/<kver>` where the
     # kernel/initrd live. It will be the 2nd entity output by
     # `ostree ls <commit> /usr/lib/modules`
-    process = run_verbose(['/usr/bin/ostree', 'ls', '--repo', repo,
-                           '--nul-filenames-only', f"{buildmeta_commit}",
-                           '/usr/lib/modules'], capture_output=True)
+    process = runcmd(['/usr/bin/ostree', 'ls', '--repo', repo,
+                     '--nul-filenames-only', f"{buildmeta_commit}",
+                     '/usr/lib/modules'], capture_output=True)
     moduledir = process.stdout.decode().split('\0')[1]
 
     # copy those files out of the ostree into the iso root dir
     initramfs_img = 'initramfs.img'
     for file in [kernel_img, initramfs_img]:
-        run_verbose(['/usr/bin/ostree', 'checkout', '--force-copy', '--repo', repo,
-                     '--user-mode', '--subpath', os.path.join(moduledir, file),
-                     f"{buildmeta_commit}", tmpisoimagespxe])
+        runcmd(['/usr/bin/ostree', 'checkout', '--force-copy', '--repo', repo,
+                '--user-mode', '--subpath', os.path.join(moduledir, file),
+                f"{buildmeta_commit}", tmpisoimagespxe])
         # initramfs isn't world readable by default so let's open up perms
         os.chmod(os.path.join(tmpisoimagespxe, file), 0o644)
         if file == initramfs_img:
@@ -286,13 +286,13 @@ def generate_iso():
     # Add osmet files
     tmp_osmet = os.path.join(tmpinitrd_rootfs, img_metal_obj['path'] + '.osmet')
     print('Generating osmet file for 512b metal image')
-    run_verbose(['/usr/lib/coreos-assembler/osmet-pack',
+    runcmd(['/usr/lib/coreos-assembler/osmet-pack',
                  img_metal, '512', tmp_osmet, img_metal_checksum,
                  'fast' if args.fast else 'normal'])
     if img_metal4k_obj:
         tmp_osmet4k = os.path.join(tmpinitrd_rootfs, img_metal4k_obj['path'] + '.osmet')
         print('Generating osmet file for 4k metal image')
-        run_verbose(['/usr/lib/coreos-assembler/osmet-pack',
+        runcmd(['/usr/lib/coreos-assembler/osmet-pack',
                      img_metal4k, '4096', tmp_osmet4k, img_metal4k_checksum,
                      'fast' if args.fast else 'normal'])
 
@@ -301,8 +301,8 @@ def generate_iso():
     # Name must be exactly "root.squashfs" because the 20live dracut module
     # makes assumptions about the length of the name in sysroot.mount
     tmp_squashfs = os.path.join(tmpinitrd_rootfs, 'root.squashfs')
-    run_verbose(['/usr/lib/coreos-assembler/gf-mksquashfs',
-                img_metal, tmp_squashfs, squashfs_compression])
+    runcmd(['/usr/lib/coreos-assembler/gf-mksquashfs',
+           img_metal, tmp_squashfs, squashfs_compression])
 
     # Generate rootfs image
     iso_rootfs = os.path.join(tmpisoimagespxe, rootfs_img)
@@ -329,8 +329,8 @@ def generate_iso():
     cp_reflink(iso_initramfs, pxe_initramfs)
 
     # Read and filter kernel arguments for substituting into ISO bootloader
-    result = run_verbose(['/usr/lib/coreos-assembler/gf-get-kargs',
-            img_metal], stdout=subprocess.PIPE, text=True)
+    result = runcmd(['/usr/lib/coreos-assembler/gf-get-kargs',
+                    img_metal], stdout=subprocess.PIPE, text=True)
     kargs_array = [karg for karg in result.stdout.split()
             if karg.split('=')[0] not in live_exclude_kargs]
     kargs_array.append(f"nestos.liveiso={volid}")
@@ -383,7 +383,7 @@ def generate_iso():
             print(f'{srcfile} -> {dstfile}')
 
     if karg_embed_area_length > 0:
-        assert(karg_embed_area_length > len(cmdline))
+        assert (karg_embed_area_length > len(cmdline))
         kargs_json.update(
             size=karg_embed_area_length,
             default=cmdline.strip(),
@@ -434,7 +434,7 @@ def generate_iso():
 
         # safely remove things we don't need in the final ISO tree
         for d in ['EFI', 'isolinux', 'zipl.prm']:
-            run_verbose(['rm', '-rf', os.path.join(tmpisoroot, d)])
+            runcmd(['rm', '-rf', os.path.join(tmpisoroot, d)])
 
         # grub2-mkrescue is a wrapper around xorriso
         genisoargs = ['grub2-mkrescue', '-volid', volid]
@@ -461,7 +461,7 @@ def generate_iso():
         kernel_img = 'kernel.img'
 
         # combine kernel, initramfs and cmdline using the mk-s390image tool
-        run_verbose(['/usr/bin/mk-s390image',
+        runcmd(['/usr/bin/mk-s390image',
                      kernel_dest,
                      os.path.join(tmpisoimages, 'cdboot.img'),
                      '-r', iso_initramfs,
@@ -474,7 +474,7 @@ def generate_iso():
 
         # safely remove things we don't need in the final ISO tree
         for d in ['EFI', 'isolinux', 'zipl.prm']:
-            run_verbose(['rm', '-rf', os.path.join(tmpisoroot, d)])
+            runcmd(['rm', '-rf', os.path.join(tmpisoroot, d)])
 
         genisoargs = ['/usr/bin/xorrisofs', '-verbose',
                       '-volid', volid,
@@ -503,10 +503,10 @@ def generate_iso():
                 return tarinfo
 
             tmpimageefidir = os.path.join(tmpdir, "efi")
-            run_verbose(['/usr/bin/ostree', 'checkout', '--repo', repo,
-                         '--user-mode', '--subpath',
-                         "/usr/lib/bootupd/updates/EFI",
-                         buildmeta_commit, tmpimageefidir])
+            runcmd(['/usr/bin/ostree', 'checkout', '--repo', repo,
+                   '--user-mode', '--subpath',
+                   "/usr/lib/bootupd/updates/EFI",
+                   buildmeta_commit, tmpimageefidir])
 
             # Install binaries from boot partition
             # Manually construct the tarball to ensure proper permissions and ownership
@@ -525,8 +525,8 @@ def generate_iso():
             # so set EFI-SYSTEM for consistency with the metal image.
             # This should not be needed on Fedora or RHEL 9, but seems like
             # a good thing to do anyway.
-            run_verbose(['virt-make-fs', '--type=vfat', '--label=EFI-SYSTEM',
-                         efitarfile.name, efibootfile])
+            runcmd(['virt-make-fs', '--type=vfat', '--label=EFI-SYSTEM',
+                   efitarfile.name, efibootfile])
 
         genisoargs += ['-eltorito-alt-boot',
                        '-efi-boot', 'images/efiboot.img',
@@ -573,12 +573,12 @@ def generate_iso():
         for f in ensure_glob(os.path.join(tmpisoisolinux, '*.msg')):
             os.unlink(f)
 
-    run_verbose(genisoargs_final)
+    runcmd(genisoargs_final)
 
     # Add MBR, and GPT with ESP, for x86_64 BIOS/UEFI boot when ISO is
     # copied to a USB stick
     if basearch == "x86_64":
-        run_verbose(['/usr/bin/isohybrid', '--uefi', tmpisofile])
+        runcmd(['/usr/bin/isohybrid', '--uefi', tmpisofile])
 
     genisoargs_minimal = genisoargs + ['-o', f'{tmpisofile}.minimal', tmpisoroot]
     # The only difference with the miniso is that we drop these two files.
@@ -588,11 +588,11 @@ def generate_iso():
     # nestos-installer takes care of removing it.
     os.unlink(iso_rootfs)
     os.unlink(miniso_data)
-    run_verbose(genisoargs_minimal)
+    runcmd(genisoargs_minimal)
     if basearch == "x86_64":
-        run_verbose(['/usr/bin/isohybrid', '--uefi', f'{tmpisofile}.minimal'])
+        runcmd(['/usr/bin/isohybrid', '--uefi', f'{tmpisofile}.minimal'])
     # this consumes the minimal image
-    #run_verbose(['coreos-installer', 'iso', 'extract', 'minimal-iso',
+    #runcmd(['coreos-installer', 'iso', 'extract', 'minimal-iso',
     #             tmpisofile, f'{tmpisofile}.minimal', "--consume"])
 
     buildmeta['images'].update({
