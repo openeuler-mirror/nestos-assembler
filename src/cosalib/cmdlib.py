@@ -5,6 +5,7 @@ Houses helper code for python based coreos-assembler commands.
 import glob
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -29,6 +30,10 @@ from gi.repository import RpmOstree
 
 from datetime import datetime, timezone
 
+# Set up logging
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s - %(message)s")
+
 retry_stop = (stop_after_delay(10) | stop_after_attempt(5))
 retry_boto_exception = (retry_if_exception_type(ConnectionClosedError) |
                       retry_if_exception_type(ConnectTimeoutError) |
@@ -42,32 +47,33 @@ def retry_callback(retry_state):
     print(f"Retrying after {retry_state.outcome.exception()}")
 
 
-def run_verbose(args, **kwargs):
-    """
-    Prints out the command being executed before executing a subprocess call.
-
-    :param args: All non-keyword arguments
-    :type args: list
-    :param kwargs: All keyword arguments
-    :type kwargs: dict
-    :raises: CalledProcessError
-    """
-    print("+ {}".format(subprocess.list2cmdline(args)))
-
-    # default to throwing exception
-    if 'check' not in kwargs.keys():
-        kwargs['check'] = True
-    # capture_output is only on python 3.7+. Provide convenience here
-    # until 3.7 is a baseline:
-    if kwargs.pop('capture_output', False):
-        kwargs['stdout'] = subprocess.PIPE
-        kwargs['stderr'] = subprocess.PIPE
-
+def runcmd(cmd: list, quiet: bool = False, **kwargs: int) -> subprocess.CompletedProcess:
+    '''
+    Run the given command using subprocess.run and perform verification.
+    @param cmd: list that represents the command to be executed
+    @param kwargs: key value pairs that represent options to run()
+    '''
     try:
-        process = subprocess.run(args, **kwargs)
-    except subprocess.CalledProcessError:
-        fatal("Error running command " + args[0])
-    return process
+        # default to error on failed command
+        pargs = {"check": True}
+        pargs.update(kwargs)
+        # capture_output is only on python 3.7+. Provide convenience here
+        # until 3.7 is a baseline:
+        if pargs.pop('capture_output', False):
+            pargs['stdout'] = subprocess.PIPE
+            pargs['stderr'] = subprocess.PIPE
+        if not quiet:
+            logging.info(f"Running command: {cmd}")
+        cp = subprocess.run(cmd, **pargs)
+    except subprocess.CalledProcessError as e:
+        logging.error("Command returned bad exitcode")
+        logging.error(f"COMMAND: {cmd}")
+        if e.stdout:
+            logging.error(f" STDOUT: {e.stdout.decode()}")
+        if e.stderr:
+            logging.error(f" STDERR: {e.stderr.decode()}")
+        raise e
+    return cp  # subprocess.CompletedProcess
 
 
 def get_lock_path(path):
@@ -348,7 +354,7 @@ def get_timestamp(entry):
 
 def image_info(image):
     try:
-        out = json.loads(run_verbose(
+        out = json.loads(runcmd(
             ['qemu-img', 'info', '--output=json', image],
             capture_output=True).stdout
         )

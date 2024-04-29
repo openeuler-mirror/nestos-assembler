@@ -262,14 +262,14 @@ class QemuVariantImage(_Build):
         if self.virtual_size is not None:
             resize_cmd = ['qemu-img', 'resize',
                           self.tmp_image, self.virtual_size]
-            run_verbose(resize_cmd)
+            runcmd(resize_cmd)
 
         cmd = ['qemu-img', 'convert', '-f', 'raw', '-O',
                self.image_format, self.tmp_image]
         for k, v in self.convert_options.items():
             cmd.extend([k, v])
         cmd.extend([work_img])
-        run_verbose(cmd)
+        runcmd(cmd)
 
         img_info = image_info(work_img)
         if self.image_format != img_info.get("format"):
@@ -300,7 +300,7 @@ class QemuVariantImage(_Build):
             tar_cmd.extend(self.tar_flags)
             tar_cmd.extend(['-f', final_img])
             tar_cmd.extend(tarlist)
-            run_verbose(tar_cmd)
+            runcmd(tar_cmd)
         elif not self.mutate_callback_creates_final_image:
             log.info(f"Moving {work_img} to {final_img}")
             shutil.move(work_img, final_img)
@@ -310,7 +310,7 @@ class QemuVariantImage(_Build):
             size = os.stat(final_img).st_size
             temp_path = f"{final_img}.tmp"
             with open(temp_path, "wb") as fh:
-                run_verbose(['gzip', '-9c', final_img], stdout=fh)
+                runcmd(['gzip', '-9c', final_img], stdout=fh)
             shutil.move(temp_path, final_img)
             meta_patch.update({
                 'skip-compression': True,
