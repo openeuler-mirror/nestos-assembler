@@ -89,9 +89,13 @@ class IBMCloudImage(QemuVariantImage):
         """
         ovf_params = self.generate_ovf_parameters(image_name)
 
-        with open(OVA_TEMPLATE_FILE) as f:
-            template = f.read()
-        ovf_xml = template.format(**ovf_params)
+        try:
+            with open(OVA_TEMPLATE_FILE,'r') as f:
+                template = f.read()
+            ovf_xml = template.format(**ovf_params)
+        except IOError:
+            log.error(f"Failed to open the {OVA_TEMPLATE_FILE}")
+            raise "No file to read"
 
         with open(self.ovf_path, "w") as ovf:
             ovf.write(ovf_xml)
@@ -129,7 +133,7 @@ def ibmcloud_run_ore(build, args):
         '--region', f"{region}",
         '--cloud-object-storage', f"{cloud_object_storage}",
         '--bucket', f"{args.bucket}",
-        '--name', ibmcloud_object_name,
+        '--name', f"{ibmcloud_object_name}",
         '--file', f"{build.image_path}",
     ])
 
@@ -162,7 +166,7 @@ def ibmcloud_run_ore_replicate(build, args):
     else:
         ibmcloud_img_data = build.meta.get('ibmcloud', [])
     if len(ibmcloud_img_data) < 1:
-        raise SystemExit(("buildmeta doesn't contain source images. "
+        raise SystemExit(("Buildmeta doesn't contain source images. "
                         "Run buildextend-{platform} first"))
 
     # define regions - https://cloud.ibm.com/docs/power-iaas?topic=power-iaas-creating-power-virtual-server#creating-service
@@ -173,7 +177,7 @@ def ibmcloud_run_ore_replicate(build, args):
         log.info(("default: replicating to all regions. If this is not "
                  " desirable, use '--regions'"))
 
-    log.info("replicating to regions: %s", args.region)
+    log.info("Replicating to regions: %s", args.region)
 
     # only replicate to regions that don't already exist
     existing_regions = [item['region'] for item in ibmcloud_img_data]
@@ -183,7 +187,7 @@ def ibmcloud_run_ore_replicate(build, args):
                ", skipping listed region(s)..."))
     region_list = list(set(args.region) - set(duplicates))
     if len(region_list) == 0:
-        print("no new regions detected")
+        print("No new regions detected")
         sys.exit(0)
 
     source_object = ibmcloud_img_data[0]['object']
@@ -257,7 +261,7 @@ def get_ibmcloud_variant(variant, parser, kwargs={}):
     """
     Helper function to get the IBMCloudImage Build Obj
     """
-    log.debug(f"returning IBMCloudImage for {variant}")
+    log.debug(f"Returning IBMCloudImage for {variant}")
     return IBMCloudImage(
         buildroot=parser.buildroot,
         build=parser.build,
