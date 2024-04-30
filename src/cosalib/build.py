@@ -4,7 +4,6 @@ Provides a base abstration class for build reuse.
 
 import logging as log
 import os
-import os.path
 import shutil
 import time
 import tempfile
@@ -415,7 +414,7 @@ class _Build:
         self.unset_token()
         log.info("Finished building artifacts")
         if len(self._found_files.keys()) == 0:
-            log.warn("There were no files found after building")
+            log.warning("There were no files found after building")
 
     def _build_artifacts(self, *args, **kwargs):
         """
