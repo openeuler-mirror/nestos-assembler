@@ -433,8 +433,8 @@ type QemuBuilder struct {
 
 	// If set, use QEMU full emulation for the target architecture
 	architecture string
-	// Memory defaults to 1024 on most architectures, others it may be 2048
-	Memory int
+	// MemoryMiB defaults to 1024 on most architectures, others it may be 2048
+	MemoryMiB int
 	// Processors < 0 means to use host count, unset means 1, values > 1 are directly used
 	Processors int
 	UUID       string
@@ -1245,7 +1245,7 @@ func (builder *QemuBuilder) finalize() {
 	if builder.finalized {
 		return
 	}
-	if builder.Memory == 0 {
+	if builder.MemoryMiB == 0 {
 		// FIXME; Required memory should really be a property of the tests, and
 		// let's try to drop these arch-specific overrides.  ARM was bumped via
 		// commit 09391907c0b25726374004669fa6c2b161e3892f
@@ -1263,7 +1263,7 @@ func (builder *QemuBuilder) finalize() {
 		case "aarch64", "s390x", "ppc64le":
 			memory = 2048
 		}
-		builder.Memory = memory
+		builder.MemoryMiB = memory
 	}
 	builder.finalized = true
 }
@@ -1275,30 +1275,36 @@ func (builder *QemuBuilder) Append(args ...string) {
 
 // baseQemuArgs takes a board and returns the basic qemu
 // arguments needed for the current architecture.
-func baseQemuArgs(arch string) ([]string, error) {
-	accel := "accel=kvm"
+func baseQemuArgs(arch string, memoryMiB int) ([]string, error) {
+	// memoryDevice is the object identifier we use for the backing RAM
+	const memoryDevice = "mem"
+
 	kvm := true
 	hostArch := coreosarch.CurrentRpmArch()
+	// The machine argument needs to reference our memory device; see below
+	machineArg := "memory-backend=" + memoryDevice
+	accel := "accel=kvm"
 	if _, ok := os.LookupEnv("COSA_NO_KVM"); ok || hostArch != arch {
 		accel = "accel=tcg"
 		kvm = false
 	}
+	machineArg += "," + accel
 	var ret []string
 	switch arch {
 	case "x86_64":
 		ret = []string{
 			"qemu-system-x86_64",
-			"-machine", accel,
+			"-machine", machineArg,
 		}
 	case "aarch64":
 		ret = []string{
 			"qemu-system-aarch64",
-			"-machine", "virt,gic-version=max," + accel,
+			"-machine", "virt,gic-version=max," + machineArg,
 		}
 	case "s390x":
 		ret = []string{
 			"qemu-system-s390x",
-			"-machine", "s390-ccw-virtio," + accel,
+			"-machine", "s390-ccw-virtio," + machineArg,
 		}
 	case "ppc64le":
 		ret = []string{
@@ -1320,6 +1326,9 @@ func baseQemuArgs(arch string) ([]string, error) {
 			ret = append(ret, "-cpu", "Nehalem")
 		}
 	}
+	// And define memory using a memfd (in shared mode), which is needed for virtiofs
+	ret = append(ret, "-object", fmt.Sprintf("memory-backend-memfd,id=%s,size=%dM,share=on", memoryDevice, memoryMiB))
+	ret = append(ret, "-m", fmt.Sprintf("%d", memoryMiB))
 	return ret, nil
 }
 
@@ -1581,7 +1590,7 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 		}
 	}()
 
-	argv, err := baseQemuArgs(builder.architecture)
+	argv, err := baseQemuArgs(builder.architecture, builder.MemoryMiB)
 	if err != nil {
 		return nil, err
 	}
