@@ -36,6 +36,7 @@ EOF
 # Parse options
 hostkey=
 genprotimgvm=/data.secex/genprotimgvm.qcow2
+ignition_pubkey=
 rc=0
 build=
 force=
@@ -72,7 +73,6 @@ while true; do
             ;;
         -*)
             fatal "$0: unrecognized option: $1"
-            exit 1
             ;;
         *)
             break
@@ -163,18 +163,17 @@ if [ "${image_type}" = dasd ] || [ "${image_type}" = metal4k ]; then
     ignition_platform_id=metal
 fi
 
-yaml2json "/usr/lib/coreos-assembler/image-default.yaml" image-default.json
-# Combine with the defaults
-cat image-default.json "${image_json}" | jq -s add > image-configured.json
-
 # We do some extra handling of the rootfs here; it feeds into size estimation.
-rootfs_type=$(jq -re .rootfs < image-configured.json)
+rootfs_type=$(jq -re .rootfs < "${image_json}")
 
-deploy_container=
-container_imgref=$(jq -r '.["container-imgref"]//""' < image-configured.json)
-if test -n "${container_imgref}" || jq -re '.["deploy-via-container"]' < image-configured.json >/dev/null; then
-    deploy_container=ostree-unverified-image:oci-archive:$builddir/$(meta_key images.ostree.path)
+deploy_via_container=""
+if jq -re '.["deploy-via-container"]' < "${image_json}"; then
+    deploy_via_container="true"
 fi
+container_imgref=$(jq -r '.["container-imgref"]//""' < "${image_json}")
+# Nowadays we pull the container across virtiofs rather than accessing the repo, see
+# https://github.com/openshift/os/issues/594
+ostree_container=ostree-unverified-image:oci-archive:$builddir/$(meta_key images.ostree.path)
 
 # fs-verity requires block size = page size. We need to take that into account
 # in the disk size estimation due to higher fragmentation on larger blocks.
@@ -233,15 +232,7 @@ fi
 
 set -x
 kargs="$(python3 -c 'import sys, json; args = json.load(sys.stdin)["extra-kargs"]; print(" ".join(args))' < "${image_json}")"
-tty="console=tty0 console=${DEFAULT_TERMINAL},115200n8"
-# On each s390x hypervisor, a tty would be automatically detected by the kernel
-# and systemd, there is no need to specify one. However, we keep DEFAULT_TERMINAL
-# as ttysclp0, which is helpful for building/testing with KVM+virtio (cmd-run).
-# For aarch64, ttyAMA0 is used as the default console
-case "$basearch" in
-    "aarch64"|"s390x") tty= ;;
-esac
-kargs="$kargs $tty ignition.platform.id=$ignition_platform_id"
+kargs="$kargs ignition.platform.id=$ignition_platform_id"
 
 qemu-img create -f ${image_format} "${path}.tmp" "${image_size}"
 
@@ -260,18 +251,23 @@ cat >image-dynamic.json << EOF
     "osname": "${name}",
     "buildid": "${build}",
     "imgid": "${img}",
-    "deploy-container": "${deploy_container}",
+    "deploy-via-container": "${deploy_via_container}",
     "container-imgref": "${container_imgref}",
     "ostree-commit": "${commit}",
     "ostree-ref": "${ref}",
-    "ostree-repo": "${ostree_repo}"
+    "ostree-container": "${ostree_container}"
 }
 EOF
-cat image-configured.json image-dynamic.json | jq -s add > image.json
+cat "${image_json}" image-dynamic.json | jq -s add > image-for-disk.json
+platforms_json="${workdir}/tmp/platforms.json"
+yaml2json "${configdir}/platforms.yaml" "${platforms_json}"
+
     runvm "${qemu_args[@]}" -- \
         /usr/lib/coreos-assembler/create_disk.sh \
-            --config "$(pwd)"/image.json \
-            --kargs "\"${kargs}\"" \
+            --config "$(pwd)"/image-for-disk.json \
+            --kargs "${kargs}" \
+            --platform "${ignition_platform_id}" \
+            --platforms-json "${platforms_json}" \
             "${disk_args[@]}"
 
 if [[ $secure_execution -eq "1" && -z "${hostkey}" ]]; then
@@ -293,12 +289,30 @@ j['images']['${image_type}${image_suffix}'] = {
 json.dump(j, sys.stdout, indent=4)
 " | jq -s add > "meta.json.new"
 
+# one more artifact for Secure Execution
+if [[ -n "${ignition_pubkey}" ]]; then
+    gpg_key=${name}-${build}-ignition-secex-key.gpg.pub
+    python3 -c "
+import sys, json
+j = json.load(sys.stdin)
+j['images']['ignition-gpg-key'] = {
+    'path': '${gpg_key}',
+    'sha256': '$(sha256sum_str < "${ignition_pubkey}")',
+    'size': $(stat -c '%s' "${ignition_pubkey}"),
+    'skip-compression': True
+}
+json.dump(j, sys.stdout, indent=4)
+" < "meta.json.new" | jq -s add > "key.json"
+    mv key.json meta.json.new
+    /usr/lib/coreos-assembler/finalize-artifact "${ignition_pubkey}" "${builddir}/${gpg_key}"
+fi
+
 # and now the crucial bits
 cosa meta --workdir "${workdir}" --build "${build}" --artifact "${image_type}" --artifact-json "$(readlink -f meta.json.new)"
 /usr/lib/coreos-assembler/finalize-artifact "${img}" "${builddir}/${img}"
 
 # Quiet for the rest of this so the last thing we see is a success message
 set +x
-# clean up the tmpild
+# clean up the tmpbuild
 rm -rf "${tmp_builddir}"
 echo "Successfully generated: ${img}"
