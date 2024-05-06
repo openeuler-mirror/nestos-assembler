@@ -37,7 +37,7 @@ There are various public cloud options that provide either bare metal or nested
 virt, such as:
 
 - [Packet](https://www.packet.com/)
-- [GCE nested virt](https://cloud.google.com/compute/docs/instances/enable-nested-virtualization-vm-instances)
+- [GCP nested virt](https://cloud.google.com/compute/docs/instances/enable-nested-virtualization-vm-instances)
 - EC2 `i3.metal` instances
 - [IBM Bare Metal](https://www.ibm.com/cloud/bare-metal-servers)
 - etc.
@@ -96,12 +96,13 @@ cosa() {
        fi
    fi
    set -x
-   podman run --rm -ti --security-opt label=disable --privileged                                    \
-              --uidmap=1000:0:1 --uidmap=0:1:1000 --uidmap 1001:1001:64536                          \
-              -v ${PWD}:/srv/ --device /dev/kvm --device /dev/fuse                                  \
-              --tmpfs /tmp -v /var/tmp:/var/tmp --name cosa                                         \
-              ${COREOS_ASSEMBLER_CONFIG_GIT:+-v $COREOS_ASSEMBLER_CONFIG_GIT:/srv/src/config/:ro}   \
-              ${COREOS_ASSEMBLER_GIT:+-v $COREOS_ASSEMBLER_GIT/src/:/usr/lib/coreos-assembler/:ro}  \
+   podman run --rm -ti --security-opt=label=disable --privileged                                    \
+              --uidmap=1000:0:1 --uidmap=0:1:1000 --uidmap=1001:1001:64536                          \
+              -v=${PWD}:/srv/ --device=/dev/kvm --device=/dev/fuse                                  \
+              --tmpfs=/tmp -v=/var/tmp:/var/tmp --name=cosa                                         \
+              ${COREOS_ASSEMBLER_CONFIG_GIT:+-v=$COREOS_ASSEMBLER_CONFIG_GIT:/srv/src/config/:ro}   \
+              ${COREOS_ASSEMBLER_GIT:+-v=$COREOS_ASSEMBLER_GIT/src/:/usr/lib/coreos-assembler/:ro}  \
+              ${COREOS_ASSEMBLER_ADD_CERTS:+-v=/etc/pki/ca-trust:/etc/pki/ca-trust:ro}              \
               ${COREOS_ASSEMBLER_CONTAINER_RUNTIME_ARGS}                                            \
               ${COREOS_ASSEMBLER_CONTAINER:-$COREOS_ASSEMBLER_CONTAINER_LATEST} "$@"
    rc=$?; set +x; return $rc
@@ -135,6 +136,11 @@ The environment variables are special purpose:
 - `COREOS_ASSEMBLER_CONTAINER`: Allows for overriding the default assembler
   container which is currently
   `quay.io/coreos-assembler/coreos-assembler:latest`.
+- `COREOS_ASSEMBLER_ADD_CERTS`: Set this variable to mount in the CA bundle
+  from the host. This is necessary if cosa needs to fetch HTTPS resources
+  signed by an authority outside the default bundle already trusted by the
+  host. Alternatively, one can use `cosa shell` as described below to have a
+  persistent container in which you can set up the root CA once.
 
 See the [Working on CoreOS Assembler](devel.md) page for examples of how
 to use these variables.

@@ -11,7 +11,7 @@ nav_order: 1
 
 ## Quick Start
 
-1. Fork and clone the [`coreos-assembler` repository](https://github.com/coreos/coreos-aasembler/)
+1. Fork and clone the [`coreos-assembler` repository](https://github.com/coreos/coreos-assembler/)
 2. Move into `mantle/kola/tests/` and look for the package your test would best fit
 3. Edit the file and add your test(s), ensuring that you register your new test(s) in the packages `init()`
 4. Commit, push, and PR your result
@@ -49,6 +49,7 @@ func init() {
         ClusterSize: 1,
         Name:        `podman.noop`,
         Distros:     []string{"rhcos"},
+        Description: "Simple NOOP test for podman",
     })
 <snip/>
 $ popd
@@ -84,6 +85,7 @@ Continuing with the look at the `podman` package we can see that `podman.base` i
             ClusterSize: 1,
             Name:        `podman.base`,
             Distros:     []string{"rhcos"},
+            Description: "Verifies podman info and running with various options",
     })
 ```
 
@@ -161,6 +163,7 @@ func init() {
             Flags:       []register.Flag{}, // See: https://godoc.org/github.com/coreos/coreos-assembler/mantle/kola/register#Flag
             Distros:     []string{"rhcos"},
             FailFast:    true,
+            Description: "Example test group",
     })
 }
 

@@ -37,6 +37,9 @@ $ make
 $ sudo make install
 ```
 
+In the local developer case, you usually don't care about building kolet for
+other arches. You can skip building them using e.g. `make KOLET_ARCHES=x86_64`.
+
 From that point on, you only need to run `make && sudo make install` if you're
 hacking on cosa itself (unless there are new RPM requirements added).
 
@@ -50,9 +53,8 @@ Similarly, if you are only working on kola, ore or plume, you can build, test
 and use them directly with:
 
 ```
-$ cd mantle
-$ ./build kola ore plume
-$ ./test
+$ make kola ore plume
+$ make mantle-check
 $ ./bin/kola ...
 ```
 
@@ -115,10 +117,12 @@ rebuild.
 $ pip3 install --user -r test-requirements.txt
 ```
 
-2. Run `pytest` on the `tests` directory
+2. Run `make unittest`
 
 ```
-$ pytest tests/
+$ make unittest
+COSA_TEST_META_PATH=`pwd`/fixtures \
+	PYTHONPATH=`pwd`/src python3 -m pytest tests/
 ============================= test session starts ==============================
 platform linux -- Python 3.7.3, pytest-4.6.3, py-1.8.0, pluggy-0.12.0
 rootdir: /var/home/steve/Tech/GITHUB/coreos-assembler, inifile: pytest.ini

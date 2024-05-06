@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	plog = capnslog.NewPackageLogger("github.com/coreos/coreos-assembler/mantle", "ore/gce")
+	plog = capnslog.NewPackageLogger("github.com/coreos/coreos-assembler/mantle", "ore/gcp")
 
 	GCloud = &cobra.Command{
 		Use:   "gcloud [command]",
@@ -47,7 +47,7 @@ func init() {
 	sv(&opts.BaseName, "basename", "kola", "instance name prefix")
 	sv(&opts.Network, "network", "default", "network name")
 	sv(&opts.JSONKeyFile, "json-key", "", "use a service account's JSON key for authentication")
-	GCloud.PersistentFlags().BoolVar(&opts.ServiceAuth, "service-auth", false, "use non-interactive auth when running within GCE")
+	GCloud.PersistentFlags().BoolVar(&opts.ServiceAuth, "service-auth", false, "use non-interactive auth when running within GCP")
 
 	cli.WrapPreRun(GCloud, preauth)
 }
