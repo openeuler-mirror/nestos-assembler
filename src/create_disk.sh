@@ -30,6 +30,8 @@ Options:
     --disk: disk device to use
     --help: show this help
     --kargs: kernel CLI args
+    --platform: Ignition platform ID
+    --platforms-json: platforms.yaml in JSON format
     --no-x86-bios-bootloader: don't install BIOS bootloader on x86_64
     --with-secure-execution:  enable IBM SecureExecution
 
@@ -40,7 +42,10 @@ EOC
 
 config=
 disk=
+platform=metal
+platforms_json=
 secure_execution=0
+ignition_pubkey=
 x86_bios_bootloader=1
 extrakargs=""
 
@@ -48,12 +53,15 @@ while [ $# -gt 0 ];
 do
     flag="${1}"; shift;
     case "${flag}" in
-        --config)                config="${1}"; shift;;
+        --config)                   config="${1}"; shift;;
         --disk)                  disk="${1}"; shift;;
-        --help)                  usage; exit;;
-        --kargs)                 extrakargs="${extrakargs} ${1}"; shift;;
-        --no-x86-bios-bootloader) x86_bios_bootloader=0;;
+        --help)                     usage; exit;;
+        --kargs)                    extrakargs="${extrakargs} ${1}"; shift;;
+        --no-x86-bios-bootloader)   x86_bios_bootloader=0;;
+        --platform)                 platform="${1}"; shift;;
+        --platforms-json)           platforms_json="${1}"; shift;;
         --with-secure-execution)    secure_execution=1;;
+        --write-ignition-pubkey-to) ignition_pubkey="${1}"; shift;;
          *) echo "${flag} is not understood."; usage; exit 10;;
      esac;
 done
@@ -65,6 +73,19 @@ udevtrig() {
 
 export PATH=$PATH:/sbin:/usr/sbin
 arch="$(uname -m)"
+
+if [ -z "$platforms_json" ]; then
+    echo "Missing --platforms-json" >&2
+    exit 1
+fi
+# just copy it over to /tmp and work from there to minimize virtiofs I/O
+cp "${platforms_json}" /tmp/platforms.json
+platforms_json=/tmp/platforms.json
+platform_grub_cmds=$(jq -r ".${arch}.${platform}.grub_commands // [] | join(\"\\\\n\")" < "${platforms_json}")
+platform_kargs=$(jq -r ".${arch}.${platform}.kernel_arguments // [] | join(\" \")" < "${platforms_json}")
+if [ -n "${platform_kargs}" ]; then
+    extrakargs="${extrakargs} ${platform_kargs}"
+fi
 
 disk=$(realpath /dev/disk/by-id/virtio-target)
 
@@ -98,12 +119,12 @@ esac
 
 bootfs=$(getconfig "bootfs")
 grub_script=$(getconfig "grub-script")
-ostree=$(getconfig "ostree-repo")
+ostree_container=$(getconfig "ostree-container")
 commit=$(getconfig "ostree-commit")
 ref=$(getconfig "ostree-ref")
 # We support not setting a remote name (used by RHCOS)
 remote_name=$(getconfig_def "ostree-remote" "")
-deploy_container=$(getconfig "deploy-container" "")
+deploy_via_container=$(getconfig "deploy-via-container" "")
 container_imgref=$(getconfig "container-imgref" "")
 os_name=$(getconfig "osname")
 rootfs_size=$(getconfig "rootfs-size")
@@ -293,18 +314,18 @@ fi
 # *not* the shell here.  Hence the backslash escape.
 allkargs="$extrakargs \$ignition_firstboot"
 
-if test -n "${deploy_container}"; then
+if test -n "${deploy_via_container}"; then
     kargsargs=""
     for karg in $allkargs
     do
         kargsargs+="--karg=$karg "
     done
-    ostree container image deploy --imgref "${deploy_container}" \
+    ostree container image deploy --imgref "${ostree_container}" \
         ${container_imgref:+--target-imgref $container_imgref} \
         --stateroot "$os_name" --sysroot $rootfs $kargsargs
 else
-    # Pull the commit
-    time ostree pull-local --repo $rootfs/ostree/repo "$ostree" "$commit"
+    # Pull the container image...
+    time ostree container image pull $rootfs/ostree/repo "${ostree_container}"
     # Deploy it, using an optional remote prefix
     if test -n "${remote_name}"; then
         deploy_ref="${remote_name}:${ref}"
@@ -401,6 +422,17 @@ install_grub_cfg() {
         mkdir -p "$rootfs/boot/nestos"
         jq ".$arch" < "$platforms_json" > "$rootfs/boot/nestos/platforms.json"
     fi
+}
+
+generate_gpgkeys() {
+    local pkey
+    pkey="${1}"
+    local tmp_home
+    tmp_home=$(mktemp -d /tmp/gpg-XXXXXX)
+    gpg --homedir "${tmp_home}" --batch --passphrase '' --yes --quick-gen-key "Secure Execution (secex) $buildid" rsa4096 encr none
+    gpg --homedir "${tmp_home}" --armor --export secex > "${ignition_pubkey}"
+    gpg --homedir "${tmp_home}" --armor --export-secret-key secex > "${pkey}"
+    rm -rf "${tmp_home}"
 }
 
 # Other arch-specific bootloader changes
