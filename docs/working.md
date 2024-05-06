@@ -111,17 +111,42 @@ In the future, it's likely coreos-assembler will also support something
 like `overrides/src` which could be a directory of symlinks to local
 git repositories.
 
-## Using cosa run --bind-ro for even faster iteration
+## Using cosa build-fast
 
 If you're working on e.g. the kernel or Ignition (things that go into the initramfs),
 then you probably need a `cosa build` workflow (or `cosa buildinitramfs-fast`, see below).
-However, let's say you want to test a change to something much later in the boot process - e.g. `podman`.  Rather
+However, let's say you want to test a change to something that runs purely in the real root,
+such as e.g. `rpm-ostree`, `podman`, or `console-login-helper-messages`.  Rather
 than doing a full image build each time, a fast way to test out changes is to use
-something like this:
+`cosa build-fast`.
+
+This command assumes you have a previous local coreos-assembler build.  From
+the git checkout of the project you want to add:
+
+```
+$ export COSA_DIR=/srv/builds/fcos
+$ cosa build-fast
+$ cosa run
+```
+
+The `cosa build-fast` command will run `make` and inject the resulting binaries
+on a qcow2 overlay file, which will appear in your project working directory.
+The `cosa run` command similarly knows to look for these `qcow2` files.
+
+This will not affect the "real" cosa build in `/srv/builds/fcos`, but will
+use it as a data source.
+
+## Using cosa run --bind-ro for even faster iteration
+
+This workflow can be used alongside `cosa build-fast`, or separate from it.
+If you invoke e.g.
 
 ```
 $ cosa run --bind-ro ~/src/github/containers/podman,/run/workdir
 ```
+
+The target VM will have the source directory bound in `/run/workdir`; then you
+can directly copy binaries from your development environment into the VM.
 
 If you are running cosa in a container, you will have to change your current
 working directory to a parent directory common to both project directories and
@@ -138,9 +163,6 @@ Then in the booted VM, `/run/workdir` will point to the `libpod` directory on yo
 allowing you to directly execute binaries from there.  You can also use e.g.
 `rpm-ostree usroverlay` and then copy binaries from your host `/run/workdir` into
 the VM's rootfs.
-
-(This currently only works on Fedora CoreOS which ships `9p`, not RHCOS.  A future version
- will use https://virtio-fs.gitlab.io/ )
 
 ## Using host binaries
 
@@ -191,6 +213,29 @@ $ kola qemuexec --qemu-image tmp/fastbuild/fastbuildinitrd-fedora-coreos-qemu.qc
 You'll need to
 [manually configure autologin](https://docs.fedoraproject.org/en-US/fedora-coreos/tutorial-autologin/)
 in the Ignition config, since kola won't be able to do it for you.
+
+## Performing an in-place OS update manually
+
+The output of coreos-assembler is conceptually two things:
+
+- an ostree container image
+- disk images (ISO, AWS AMI, qemu .qcow2, etc)
+
+In many cases, rather than booting from a new disk image with the new OS, you will
+want to explicitly test in-place upgrades.  This uses an [ostree native container](https://fedoraproject.org/wiki/Changes/OstreeNativeContainer), which is in the form of an `.ociarchive` file generated
+by `cosa build container` (as well as the default `cosa build`, which *also* generates a `qemu` disk image).
+
+You will need to make the container image available to your targeted system (VM or physical).  One
+way to do this is to push the container to a public registry such as quay.io:
+
+`cosa push-container quay.io/exampleuser/fcos`
+
+Performing an in-place update from the `cosa build` output boils down to invoking a command of the form:
+
+```
+$ rpm-ostree rebase --experimental ostree-unverified-registry:quay.io/exampleuser/fcos
+$ systemctl reboot
+```
 
 ## Using different CA certificates
 

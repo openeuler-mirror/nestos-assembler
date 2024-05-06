@@ -13,25 +13,10 @@ Fedora CoreOS and Fedora Cloud release utility. Releases are done in two
 stages, each with their own command: pre-release and release. Both of these
 commands are idempotent.
 
-## plume pre-release
-
-The pre-release command does as much of the release process as possible without making anything public.
-This includes uploading images to cloud providers (except those like gce which don't allow us to upload
-images without making them public).
-
 ## plume release
 
-Publish a new CoreOS/Cloud release. This makes the images uploaded by pre-release public and uploads
-images that pre-release could not. It copies the release artifacts to public storage buckets and updates
-the directory index.
-
-## plume index
-
-Generate and upload index.html objects to turn a Google Cloud Storage
-bucket into a publicly browsable file tree. Useful if you want something
-like Apache's directory index for your software download repository.
-Plume release handles this as well, so it does not need to be run as part of
-the release process.
+Publish a new CoreOS release. This makes uploaded images public and updates
+indexes.
 
 ## Pre-flight
 
