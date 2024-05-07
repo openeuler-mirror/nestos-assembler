@@ -114,8 +114,9 @@ var (
 	// ForceRunPlatformIndependent will cause tests that claim platform-independence to run
 	ForceRunPlatformIndependent bool
 
-	DenylistedTests []string // tests which are on the denylist
-	Tags            []string // tags to be ran
+	DenylistedTests     []string // tests which are on the denylist
+	WarnOnErrorTests    []string // denylisted tests we are going to run and warn in case of error
+	Tags                []string // tags to be ran
 
 	extTestNum  = 1 // Assigns a unique number to each non-exclusive external test
 	testResults protectedTestResults
@@ -126,11 +127,13 @@ var (
 	consoleChecks = []struct {
 		desc     string
 		match    *regexp.Regexp
+		warnOnly bool
 		skipFlag *register.Flag
 	}{
 		{
 			desc:     "emergency shell",
 			match:    regexp.MustCompile("Press Enter for emergency shell|Starting Emergency Shell|You are in emergency mode"),
+			warnOnly:          false,
 			skipFlag: &[]register.Flag{register.NoEmergencyShellCheck}[0],
 		},
 		{
@@ -334,6 +337,7 @@ type DenyListObj struct {
 	Platforms  []string `yaml:"platforms"`
 	SnoozeDate string   `yaml:"snooze"`
 	OsVersion  []string `yaml:"osversion"`
+	Warn       bool     `yaml:"warn"`
 }
 
 type ManifestData struct {
@@ -347,7 +351,7 @@ type InitConfigData struct {
 	ConfigVariant string `json:"coreos-assembler.config-variant"`
 }
 
-func parseDenyListYaml(pltfrm string) error {
+func ParseDenyListYaml(pltfrm string) error {
 	var objs []DenyListObj
 
 	// Parse kola-denylist into structs
@@ -409,19 +413,19 @@ func parseDenyListYaml(pltfrm string) error {
 	// Accumulate patterns filtering by set policies
 	plog.Debug("Processing denial patterns from yaml...")
 	for _, obj := range objs {
-		if len(obj.Arches) > 0 && !hasString(arch, obj.Arches) {
+		if len(obj.Arches) > 0 && !HasString(arch, obj.Arches) {
 			continue
 		}
 
-		if len(obj.Platforms) > 0 && !hasString(pltfrm, obj.Platforms) {
+		if len(obj.Platforms) > 0 && !HasString(pltfrm, obj.Platforms) {
 			continue
 		}
 
-		if len(stream) > 0 && len(obj.Streams) > 0 && !hasString(stream, obj.Streams) {
+		if len(stream) > 0 && len(obj.Streams) > 0 && !HasString(stream, obj.Streams) {
 			continue
 		}
 
-		if len(osversion) > 0 && len(obj.OsVersion) > 0 && !hasString(osversion, obj.OsVersion) {
+		if len(osversion) > 0 && len(obj.OsVersion) > 0 && !HasString(osversion, obj.OsVersion) {
 			continue
 		}
 
@@ -1432,6 +1436,9 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 						// Collect the journal logs after execution is finished
 						defer collectLogsExternalTest(h, t, newTC)
 					}
+					if IsWarningOnFailure(t.Name) {
+						newTC.H.WarningOnFailure()
+					}
 
 					t.Run(newTC)
 				}
@@ -1490,15 +1497,24 @@ func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flig
 			plog.Debugf("Skipping base checks for %s", t.Name)
 			return
 		}
-		for id, output := range c.ConsoleOutput() {
-			for _, badness := range CheckConsole([]byte(output), t) {
-				h.Errorf("Found %s on machine %s console", badness, id)
+		handleConsoleChecks := func(logtype, id, output string) {
+			warnOnly, badlines := CheckConsole([]byte(output), t)
+			if SkipConsoleWarnings {
+				warnOnly = true
+			}
+			for _, badline := range badlines {
+				if warnOnly {
+					plog.Warningf("Found %s on machine %s %s", badline, id, logtype)
+				} else {
+					h.Errorf("Found %s on machine %s %s", badline, id, logtype)
+				}
 			}
 		}
+		for id, output := range c.ConsoleOutput() {
+			handleConsoleChecks("console", id, output)
+		}
 		for id, output := range c.JournalOutput() {
-			for _, badness := range CheckConsole([]byte(output), t) {
-				h.Errorf("Found %s on machine %s journal", badness, id)
-			}
+			handleConsoleChecks("journal", id, output)
 		}
 	}()
 
