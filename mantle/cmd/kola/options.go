@@ -1,3 +1,4 @@
+// Copyright 2023 Red Hat
 // Copyright 2015 CoreOS, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,7 +40,7 @@ var (
 	kolaPlatform      string
 	kolaParallelArg   string
 	kolaArchitectures = []string{"amd64"}
-	kolaPlatforms     = []string{"aws", "azure", "do", "esx", "gce", "openstack", "packet", "qemu", "qemu-iso"}
+	kolaPlatforms     = []string{"aws", "azure", "do", "esx", "gcp", "openstack", "packet", "qemu", "qemu-iso"}
 	kolaDistros       = []string{"fcos", "rhcos", "scos", "nestos"}
 )
 
@@ -86,8 +87,7 @@ func init() {
 	sv(&kola.AWSOptions.IAMInstanceProfile, "aws-iam-profile", "kola", "AWS IAM instance profile name")
 
 	// azure-specific options
-	sv(&kola.AzureOptions.AzureProfile, "azure-profile", "", "Azure profile (default \"~/"+auth.AzureProfilePath+"\")")
-	sv(&kola.AzureOptions.AzureAuthLocation, "azure-auth", "", "Azure auth location (default \"~/"+auth.AzureAuthPath+"\")")
+	sv(&kola.AzureOptions.AzureCredentials, "azure-credentials", "", "Azure credentials file location (default \"~/"+auth.AzureCredentialsPath+"\")")
 	sv(&kola.AzureOptions.DiskURI, "azure-disk-uri", "", "Azure disk uri (custom images)")
 	sv(&kola.AzureOptions.Publisher, "azure-publisher", "CoreOS", "Azure image publisher (default \"CoreOS\"")
 	sv(&kola.AzureOptions.Offer, "azure-offer", "CoreOS", "Azure image offer (default \"CoreOS\"")
@@ -110,16 +110,17 @@ func init() {
 	sv(&kola.ESXOptions.Profile, "esx-profile", "", "ESX profile (default \"default\")")
 	sv(&kola.ESXOptions.BaseVMName, "esx-base-vm", "", "ESX base VM name")
 
-	// gce-specific options
-	sv(&kola.GCEOptions.Image, "gce-image", "", "GCE image, full api endpoints names are accepted if resource is in a different project")
-	sv(&kola.GCEOptions.Project, "gce-project", "fedora-coreos-devel", "GCE project name")
-	sv(&kola.GCEOptions.Zone, "gce-zone", "us-central1-a", "GCE zone name")
-	sv(&kola.GCEOptions.MachineType, "gce-machinetype", "n1-standard-1", "GCE machine type")
-	sv(&kola.GCEOptions.DiskType, "gce-disktype", "pd-ssd", "GCE disk type")
-	sv(&kola.GCEOptions.Network, "gce-network", "default", "GCE network")
-	sv(&kola.GCEOptions.ServiceAcct, "gce-service-account", "", "GCE service account to attach to instance (default project default)")
-	bv(&kola.GCEOptions.ServiceAuth, "gce-service-auth", false, "for non-interactive auth when running within GCE")
-	sv(&kola.GCEOptions.JSONKeyFile, "gce-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCEConfigPath+"\")")
+	// gcp-specific options
+	sv(&kola.GCPOptions.Image, "gcp-image", "", "GCP image, full api endpoints names are accepted if resource is in a different project")
+	sv(&kola.GCPOptions.Project, "gcp-project", "fedora-coreos-devel", "GCP project name")
+	sv(&kola.GCPOptions.Zone, "gcp-zone", "us-central1-a", "GCP zone name")
+	sv(&kola.GCPOptions.MachineType, "gcp-machinetype", "", "GCP machine type")
+	sv(&kola.GCPOptions.DiskType, "gcp-disktype", "pd-ssd", "GCP disk type")
+	sv(&kola.GCPOptions.Network, "gcp-network", "default", "GCP network")
+	sv(&kola.GCPOptions.ServiceAcct, "gcp-service-account", "", "GCP service account to attach to instance (default project default)")
+	bv(&kola.GCPOptions.ServiceAuth, "gcp-service-auth", false, "for non-interactive auth when running within GCP")
+	sv(&kola.GCPOptions.JSONKeyFile, "gcp-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCPConfigPath+"\")")
+	bv(&kola.GCPOptions.Confidential, "gcp-confidential-vm", false, "create confidential instances")
 
 	// openstack-specific options
 	sv(&kola.OpenStackOptions.ConfigPath, "openstack-config-file", "", "Path to a clouds.yaml formatted OpenStack config file. The underlying library defaults to ./clouds.yaml")
@@ -233,6 +234,23 @@ func syncOptionsImpl(useCosa bool) error {
 			kola.AWSOptions.InstanceType = "c6g.xlarge"
 		}
 		fmt.Printf("Using %s instance type\n", kola.AWSOptions.InstanceType)
+	}
+
+	// Choose an appropriate GCP instance type for the target architecture
+	if kolaPlatform == "gcp" && kola.GCPOptions.MachineType == "" {
+		switch kola.Options.CosaBuildArch {
+		case "x86_64":
+			if kola.GCPOptions.Confidential {
+				// https://cloud.google.com/compute/confidential-vm/docs/locations
+				fmt.Print("Setting instance type for confidential computing")
+				kola.GCPOptions.MachineType = "n2d-standard-2"
+			} else {
+				kola.GCPOptions.MachineType = "n1-standard-1"
+			}
+		case "aarch64":
+			kola.GCPOptions.MachineType = "t2a-standard-1"
+		}
+		fmt.Printf("Using %s instance type\n", kola.GCPOptions.MachineType)
 	}
 
 	// if no external dirs were given, automatically add the working directory;
@@ -361,15 +379,15 @@ func syncCosaOptions() error {
 				}
 			}
 		}
-	case "gce":
+	case "gcp":
 		// Pick up the GCP image from the build metadata
-		if kola.GCEOptions.Image == "" && kola.CosaBuild.Meta.Gcp != nil {
-			kola.GCEOptions.Image =
+		if kola.GCPOptions.Image == "" && kola.CosaBuild.Meta.Gcp != nil {
+			kola.GCPOptions.Image =
 				fmt.Sprintf("projects/%s/global/images/%s",
 					kola.CosaBuild.Meta.Gcp.ImageProject,
 					kola.CosaBuild.Meta.Gcp.ImageName)
 
-			fmt.Printf("Using GCP image %s\n", kola.GCEOptions.Image)
+			fmt.Printf("Using GCP image %s\n", kola.GCPOptions.Image)
 		}
 	}
 
