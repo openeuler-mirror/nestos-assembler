@@ -475,7 +475,7 @@ meta_key() {
 }
 
 # runvm generates and runs a minimal VM which we use to "bootstrap" our build
-# process.  It mounts the workdir via 9p.  If you need to add new packages into
+# process.  It mounts the workdir via virtiofs.  If you need to add new packages into
 # the vm, update `vmdeps.txt`.
 # If you need to debug it, one trick is to change the `-serial file` below
 # into `-serial stdio`, drop the <&- and virtio-serial stuff and then e.g. add
