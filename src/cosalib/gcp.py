@@ -42,6 +42,8 @@ def gcp_run_ore(build, args):
         raise Exception(arg_exp_str.format("json-key", "GCP_JSON_AUTH"))
     if args.project is None:
         raise Exception(arg_exp_str.format("project", "GCP_PROJECT"))
+    if not args.create_image:
+        raise Exception("Invalid to call with --create-image=False")
 
     gcp_name = re.sub(r'[_\.]', '-', build.image_name_base)
     if not re.fullmatch(GCP_NAMING_RE, gcp_name):
@@ -61,18 +63,18 @@ def gcp_run_ore(build, args):
     ore_upload_cmd = ore_common_args + [
         'upload',
         '--basename', build.build_name,
+        '--arch', build.basearch,
         '--force',  # We want to support restarting the pipeline
         '--bucket', f'{args.bucket}',
         '--name', gcp_name,
         '--file', f"{build.image_path}",
         '--write-url', urltmp,
+        '--create-image=true',
     ]
     if args.description:
         ore_upload_cmd.extend(['--description', args.description])
     if args.public:
         ore_upload_cmd.extend(['--public'])
-    if not args.create_image:
-        ore_upload_cmd.extend(['--create-image=false'])
     for license in args.license or DEFAULT_LICENSES:
         ore_upload_cmd.extend(['--license', license])
     runcmd(ore_upload_cmd)
@@ -128,12 +130,6 @@ def gcp_cli(parser):
     parser.add_argument("--bucket",
                         help="Storage account to write image to",
                         default=os.environ.get("GCP_BUCKET"))
-    parser.add_argument("--gce",
-                        help="Use GCE as the platform ID instead of GCP",
-                        action="store_true",
-                        default=bool(
-                            os.environ.get("GCP_GCE_PLATFORM_ID", False))
-                        )
     parser.add_argument("--json-key",
                         help="GCP Service Account JSON Auth",
                         default=os.environ.get("GCP_JSON_AUTH"))
@@ -146,6 +142,7 @@ def gcp_cli(parser):
     parser.add_argument("--description",
                         help="The description that should be attached to the image",
                         default=None)
+    # Remove --create-image after some time in which callers can be updated
     parser.add_argument("--create-image",
                         type=boolean_string,
                         help="Whether or not to create an image in GCP after upload.",
