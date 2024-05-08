@@ -196,9 +196,62 @@ func (bc *BaseCluster) RenderUserData(userdata *platformConf.UserData, ignitionV
 		userdata = userdata.Subst(k, v)
 	}
 
-	conf, err := userdata.Render(bc.rconf.WarningsAction)
+	confSources := []*platformConf.Conf{}
+
+	// Gather the base config
+	baseConf, err := userdata.Render(bc.rconf.WarningsAction)
 	if err != nil {
 		return nil, err
+	}
+	// We may have multiple config sources; create an array now
+	// with that sole element.
+	confSources = append(confSources, baseConf)
+
+	// If butane is specified, parse and add that.
+	if bc.bf.baseopts.AppendButane != "" {
+		buf, err := os.ReadFile(bc.bf.baseopts.AppendButane)
+		if err != nil {
+			return nil, err
+		}
+		subData := platformConf.Butane(string(buf))
+		subConf, err := subData.Render(platformConf.ReportWarnings)
+		if err != nil {
+			return nil, err
+		}
+		confSources = append(confSources, subConf)
+	}
+
+	// If Ignition is specified, parse and add that.
+	if bc.bf.baseopts.AppendIgnition != "" {
+		buf, err := os.ReadFile(bc.bf.baseopts.AppendIgnition)
+		if err != nil {
+			return nil, err
+		}
+		subData := platformConf.Ignition(string(buf))
+		subConf, err := subData.Render(platformConf.ReportWarnings)
+		if err != nil {
+			return nil, err
+		}
+		confSources = append(confSources, subConf)
+	}
+
+	// Look at the array of configs we have so far; if there is exactly one,
+	// then we don't need to do any merging.
+	var conf *platformConf.Conf
+	if len(confSources) == 1 {
+		conf = confSources[0]
+	} else {
+		// There are multiple configs; we now default to merging
+		// them all into a new Ignition config.
+		userdata, err := platformConf.MergeAllConfigs(confSources)
+		if err != nil {
+			return nil, err
+		}
+
+		conf, err = userdata.Render(platformConf.ReportWarnings)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	for _, dropin := range bc.bf.baseopts.SystemdDropins {
