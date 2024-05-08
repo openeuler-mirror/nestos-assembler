@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/pkg/capnslog"
 	"github.com/spf13/cobra"
 
+	"github.com/coreos/coreos-assembler/mantle/kola"
 	"github.com/coreos/coreos-assembler/mantle/system/exec"
 	"github.com/coreos/coreos-assembler/mantle/version"
 )
@@ -65,7 +66,17 @@ func Execute(main *cobra.Command) {
 	})
 
 	if err := main.Execute(); err != nil {
-		plog.Fatal(err)
+		// If this isn't a warn:true test failure then go ahead and die
+		if err != kola.ErrWarnOnTestFail {
+			plog.Fatal(err)
+		}
+		// Now check if the user wants exit code 77 on warn:true test fail
+		// If they do then we'll exit 77. If they don't we'll do nothing
+		// and drop out to the os.Exit(0)
+		if kola.Options.UseWarnExitCode77 {
+			plog.Warning(err)
+			os.Exit(77)
+		}
 	}
 	os.Exit(0)
 }

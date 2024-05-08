@@ -66,6 +66,11 @@ var (
 	isOffline        bool
 	isISOFromRAM     bool
 
+	// These tests only run on RHCOS
+	tests_RHCOS_uefi = []string{
+		"iso-fips.uefi",
+	}
+
 	// The iso-as-disk tests are only supported in x86_64 because other
 	// architectures don't have the required hybrid partition table.
 	tests_x86_64 = []string{
@@ -133,9 +138,8 @@ var (
 )
 
 const (
-	installTimeout = 10 * time.Minute
+	installTimeoutMins = 10
 	// https://github.com/coreos/fedora-coreos-config/pull/2544
-	//liveISOFromRAMKarg = "coreos.liveiso.fromram"
 	liveISOFromRAMKarg = "nestos.liveiso.fromram"
 )
 
@@ -330,7 +334,7 @@ func liveArtifactExistsInBuild() error {
 	return nil
 }
 
-func getArchPatternsList() []string {
+func getAllTests(build *util.LocalBuild) []string {
 	arch := coreosarch.CurrentRpmArch()
 	var tests []string
 	switch arch {
@@ -342,6 +346,9 @@ func getArchPatternsList() []string {
 		tests = tests_s390x
 	case "aarch64":
 		tests = tests_aarch64
+	}
+	if kola.CosaBuild.Meta.Name == "rhcos" && arch != "s390x" && arch != "ppc64le" {
+		tests = append(tests, tests_RHCOS_uefi...)
 	}
 	return tests
 }
@@ -443,7 +450,10 @@ func filterTests(tests []string, patterns []string) ([]string, error) {
 
 func runTestIso(cmd *cobra.Command, args []string) error {
 	var err error
-	tests := getArchPatternsList()
+	if kola.CosaBuild == nil {
+		return fmt.Errorf("Must provide --build")
+	}
+	tests := getAllTests(kola.CosaBuild)
 	if len(args) != 0 {
 		if tests, err = filterTests(tests, args); err != nil {
 			return err
@@ -451,10 +461,7 @@ func runTestIso(cmd *cobra.Command, args []string) error {
 			return harness.SuiteEmpty
 		}
 	}
-	
-	if kola.CosaBuild == nil {
-		return fmt.Errorf("Must provide --build")
-	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -560,6 +567,8 @@ func runTestIso(cmd *cobra.Command, args []string) error {
 			duration, err = testAsDisk(ctx, filepath.Join(outputDir, test))
 		case "iso-live-login":
 			duration, err = testLiveLogin(ctx, filepath.Join(outputDir, test))
+		case "iso-fips":
+			duration, err = testLiveFIPS(ctx, filepath.Join(outputDir, test))
 		case "iso-install", "iso-offline-install", "iso-offline-install-fromram":
 			duration, err = testLiveIso(ctx, inst, filepath.Join(outputDir, test), false)
 		case "miniso-install":
@@ -583,8 +592,9 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 	start := time.Now()
 	errchan := make(chan error)
 	go func() {
-		time.Sleep(installTimeout)
-		errchan <- fmt.Errorf("timed out after %v", installTimeout)
+		timeout := (time.Duration(installTimeoutMins*(100+kola.Options.ExtendTimeoutPercent)) * time.Minute) / 100
+		time.Sleep(timeout)
+		errchan <- fmt.Errorf("timed out after %v", timeout)
 	}()
 	if !console {
 		go func() {
@@ -607,6 +617,7 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 	go func() {
 		err := inst.Wait()
 		// only one Wait() gets process data, so also manually check for signal
+		plog.Debugf("qemu exited err=%v", err)
 		if err == nil && inst.Signaled() {
 			err = errors.New("process killed")
 		}
@@ -637,7 +648,9 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 				errchan <- fmt.Errorf("Unexpected string from completion channel: %s expected: %s", line, exp)
 				return
 			}
+			plog.Debugf("Matched expected message %s", exp)
 		}
+		plog.Debugf("Matched all expected messages")
 		// OK!
 		errchan <- nil
 	}()
@@ -672,23 +685,23 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string) (time.Du
 	}
 	tmpd, err := os.MkdirTemp("", "kola-testiso")
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "creating tempdir")
 	}
 	defer os.RemoveAll(tmpd)
 
 	sshPubKeyBuf, _, err := util.CreateSSHAuthorizedKey(tmpd)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "creating SSH AuthorizedKey")
 	}
 
 	builder, virtioJournalConfig, err := newQemuBuilderWithDisk(outdir)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "creating QemuBuilder")
 	}
 	inst.Builder = builder
 	completionChannel, err := inst.Builder.VirtioChannelRead("testisocompletion")
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "setting up virtio-serial channel")
 	}
 
 	var keys []string
@@ -797,6 +810,66 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, mini
 	}()
 
 	return awaitCompletion(ctx, mach.QemuInst, outdir, completionChannel, mach.BootStartedErrorChannel, []string{liveOKSignal, signalCompleteString})
+}
+
+// testLiveFIPS verifies that adding fips=1 to the ISO results in a FIPS mode system
+func testLiveFIPS(ctx context.Context, outdir string) (time.Duration, error) {
+	tmpd, err := os.MkdirTemp("", "kola-testiso")
+	if err != nil {
+		return 0, err
+	}
+	defer os.RemoveAll(tmpd)
+
+	builddir := kola.CosaBuild.Dir
+	isopath := filepath.Join(builddir, kola.CosaBuild.Meta.BuildArtifacts.LiveIso.Path)
+	builder, config, err := newQemuBuilder(outdir)
+	if err != nil {
+		return 0, err
+	}
+	defer builder.Close()
+	if err := builder.AddIso(isopath, "", false); err != nil {
+		return 0, err
+	}
+
+	// This is the core change under test - adding the `fips=1` kernel argument via
+	// coreos-installer iso kargs modify should enter fips mode.
+	// Removing this line should cause this test to fail.
+	builder.AppendKernelArgs = "fips=1"
+
+	completionChannel, err := builder.VirtioChannelRead("testisocompletion")
+	if err != nil {
+		return 0, err
+	}
+
+	config.AddSystemdUnit("fips-verify.service", `
+[Unit]
+OnFailure=emergency.target
+OnFailureJobMode=isolate
+Before=fips-signal-ok.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=grep 1 /proc/sys/crypto/fips_enabled
+ExecStart=grep FIPS etc/crypto-policies/config
+
+[Install]
+RequiredBy=fips-signal-ok.service
+`, conf.Enable)
+	config.AddSystemdUnit("fips-signal-ok.service", liveSignalOKUnit, conf.Enable)
+	config.AddSystemdUnit("fips-emergency-target.service", signalFailureUnit, conf.Enable)
+
+	// Just for reliability, we'll run fully offline
+	builder.Append("-net", "none")
+
+	builder.SetConfig(config)
+	mach, err := builder.Exec()
+	if err != nil {
+		return 0, errors.Wrapf(err, "running iso")
+	}
+	defer mach.Destroy()
+
+	return awaitCompletion(ctx, mach, outdir, completionChannel, nil, []string{liveOKSignal})
 }
 
 func testLiveLogin(ctx context.Context, outdir string) (time.Duration, error) {

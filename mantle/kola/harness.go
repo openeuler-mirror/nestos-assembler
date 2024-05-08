@@ -18,10 +18,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +85,11 @@ const NeedsInternetTag = "needs-internet"
 // For more, see the doc in external-tests.md.
 const PlatformIndependentTag = "platform-independent"
 
+// The string for the tag that indicates a test has been marked as allowing rerun success.
+// In some cases the internal test framework will add this tag to a test to indicate if
+// the test passes a rerun to allow the run to succeed.
+const AllowRerunSuccessTag = "allow-rerun-success"
+
 // defaultPlatformIndependentPlatform is the platform where we run tests that claim platform independence
 const defaultPlatformIndependentPlatform = "qemu"
 
@@ -91,6 +98,10 @@ const SkipBaseChecksTag = "skip-base-checks"
 
 // Date format for snooze date specified in kola-denylist.yaml (YYYY-MM-DD)
 const snoozeFormat = "2006-01-02"
+
+// SkipConsoleWarningsTag will cause kola not to check console for kernel errors.
+// This overlaps with SkipBaseChecksTag above, but is really a special flag for kola-denylist.yaml.
+const SkipConsoleWarningsTag = "skip-console-warnings"
 
 var (
 	plog = capnslog.NewPackageLogger("github.com/coreos/coreos-assembler/mantle", "kola")
@@ -114,6 +125,8 @@ var (
 	// ForceRunPlatformIndependent will cause tests that claim platform-independence to run
 	ForceRunPlatformIndependent bool
 
+	// SkipConsoleWarnings is set via SkipConsoleWarningsTag in kola-denylist.yaml
+	SkipConsoleWarnings bool
 	DenylistedTests     []string // tests which are on the denylist
 	WarnOnErrorTests    []string // denylisted tests we are going to run and warn in case of error
 	Tags                []string // tags to be ran
@@ -125,16 +138,18 @@ var (
 	nonexclusiveWrapperMatch = regexp.MustCompile(`^non-exclusive-test-bucket-[0-9]$`)
 
 	consoleChecks = []struct {
-		desc     string
-		match    *regexp.Regexp
-		warnOnly bool
-		skipFlag *register.Flag
+		desc              string
+		match             *regexp.Regexp
+		warnOnly          bool
+		allowRerunSuccess bool
+		skipFlag          *register.Flag
 	}{
 		{
-			desc:     "emergency shell",
-			match:    regexp.MustCompile("Press Enter for emergency shell|Starting Emergency Shell|You are in emergency mode"),
+			desc:              "emergency shell",
+			match:             regexp.MustCompile("Press Enter for emergency shell|Starting Emergency Shell|You are in emergency mode"),
 			warnOnly:          false,
-			skipFlag: &[]register.Flag{register.NoEmergencyShellCheck}[0],
+			allowRerunSuccess: false,
+			skipFlag:          &[]register.Flag{register.NoEmergencyShellCheck}[0],
 		},
 		{
 			desc:  "dracut fatal",
@@ -147,6 +162,17 @@ var (
 		{
 			desc:  "kernel oops",
 			match: regexp.MustCompile("Oops:"),
+		},
+		{
+			// For this one we see it sometimes when I/O is really slow, which is often
+			// more of an indication of a problem with resources in our pipeline rather
+			// than a problem with the software we are testing. We'll mark it as warnOnly
+			// so it's non-fatal and also allow for a rerun of a test that goes on to
+			// fail that had this problem to ultimately result in success.
+			desc:              "kernel soft lockup",
+			match:             regexp.MustCompile("watchdog: BUG: soft lockup - CPU"),
+			warnOnly:          true,
+			allowRerunSuccess: true,
 		},
 		{
 			desc:  "kernel warning",
@@ -204,9 +230,11 @@ var (
 		{
 			// https://github.com/coreos/fedora-coreos-config/pull/1797
 			desc:  "systemd generator failure",
-			match: regexp.MustCompile(`systemd\[[0-9]+\]: (.*) failed with exit status`),
+			match: regexp.MustCompile(`(/.*/system-generators/.*) (failed with exit status|terminated by signal|failed due to unknown reason)`),
 		},
 	}
+
+	ErrWarnOnTestFail = errors.New("A test marked as warn:true failed.")
 )
 
 const (
@@ -281,8 +309,8 @@ func NewFlight(pltfrm string) (flight platform.Flight, err error) {
 	return
 }
 
-// matchesPatterns returns true if `s` matches one of the patterns in `patterns`.
-func matchesPatterns(s string, patterns []string) (bool, error) {
+// MatchesPatterns returns true if `s` matches one of the patterns in `patterns`.
+func MatchesPatterns(s string, patterns []string) (bool, error) {
 	for _, pattern := range patterns {
 		match, err := filepath.Match(pattern, s)
 		if err != nil {
@@ -295,8 +323,8 @@ func matchesPatterns(s string, patterns []string) (bool, error) {
 	return false, nil
 }
 
-// hasString returns true if `s` equals one of the strings in `slice`.
-func hasString(s string, slice []string) bool {
+// HasString returns true if `s` equals one of the strings in `slice`.
+func HasString(s string, slice []string) bool {
 	for _, e := range slice {
 		if e == s {
 			return true
@@ -306,27 +334,18 @@ func hasString(s string, slice []string) bool {
 }
 
 func testSkipBaseChecks(test *register.Test) bool {
-	for _, tag := range test.Tags {
-		if tag == SkipBaseChecksTag {
-			return true
-		}
-	}
-	return false
+	return HasString(SkipBaseChecksTag, test.Tags)
 }
 
 func testRequiresInternet(test *register.Test) bool {
-	for _, flag := range test.Flags {
-		if flag == register.RequiresInternetAccess {
-			return true
-		}
+	return HasString(NeedsInternetTag, test.Tags)
+}
+
+func markTestForRerunSuccess(test *register.Test, msg string) {
+	if !HasString(AllowRerunSuccessTag, test.Tags) {
+		plog.Warningf("%s Adding as candidate for rerun success: %s", msg, test.Name)
+		test.Tags = append(test.Tags, AllowRerunSuccessTag)
 	}
-	// Also parse the newer tag for this
-	for _, tag := range test.Tags {
-		if tag == NeedsInternetTag {
-			return true
-		}
-	}
-	return false
 }
 
 type DenyListObj struct {
@@ -429,23 +448,39 @@ func ParseDenyListYaml(pltfrm string) error {
 			continue
 		}
 
+		// Process "special" patterns which aren't test names, but influence overall behavior
+		if obj.Pattern == SkipConsoleWarningsTag {
+			SkipConsoleWarnings = true
+			continue
+		}
+
 		if obj.SnoozeDate != "" {
 			snoozeDate, err := time.Parse(snoozeFormat, obj.SnoozeDate)
 			if err != nil {
 				return err
-			} else if today.After(snoozeDate) {
-				continue
 			}
-
-			fmt.Printf("🕒 Snoozing kola test pattern \"%s\" until %s:\n", obj.Pattern, snoozeDate.Format("Jan 02 2006"))
+			if today.After(snoozeDate) {
+				fmt.Printf("⏰ Snooze for kola test pattern \"%s\" expired on %s\n", obj.Pattern, snoozeDate.Format("Jan 02 2006"))
+				if obj.Warn {
+					fmt.Printf("⚠️  Will warn on failure for kola test pattern \"%s\":\n", obj.Pattern)
+					WarnOnErrorTests = append(WarnOnErrorTests, obj.Pattern)
+				}
+			} else {
+				fmt.Printf("🕒  Snoozing kola test pattern \"%s\" until %s\n", obj.Pattern, snoozeDate.Format("Jan 02 2006"))
+				DenylistedTests = append(DenylistedTests, obj.Pattern)
+			}
 		} else {
-			fmt.Printf("⚠️  Skipping kola test pattern \"%s\":\n", obj.Pattern)
+			if obj.Warn {
+				fmt.Printf("⚠️  Will warn on failure for kola test pattern \"%s\":\n", obj.Pattern)
+				WarnOnErrorTests = append(WarnOnErrorTests, obj.Pattern)
+			} else {
+				fmt.Printf("⏭️  Skipping kola test pattern \"%s\":\n", obj.Pattern)
+				DenylistedTests = append(DenylistedTests, obj.Pattern)
+			}
 		}
-
 		if obj.Tracker != "" {
 			fmt.Printf("  👉 %s\n", obj.Tracker)
 		}
-		DenylistedTests = append(DenylistedTests, obj.Pattern)
 	}
 
 	return nil
@@ -470,59 +505,21 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 	// Higher-level functions default to '*' if the user didn't pass anything.
 	// Notice this. (This totally ignores the corner case where the user
 	// actually typed '*').
-	userTypedPattern := !hasString("*", patterns)
+	userTypedPattern := !HasString("*", patterns)
 	for name, t := range tests {
 		if NoNet && testRequiresInternet(t) {
 			plog.Debugf("Skipping test that requires network: %s", t.Name)
 			continue
 		}
 
-		var denylisted bool
-		// Drop anything which is denylisted directly or by pattern
-		for _, bl := range DenylistedTests {
-			nameMatch, err := filepath.Match(bl, t.Name)
-			if err != nil {
-				return nil, err
-			}
-			// If it matched the pattern this test is denylisted
-			if nameMatch {
-				denylisted = true
-				break
-			}
-
-			// Check if any native tests are denylisted. To exclude native tests, specify the high level
-			// test and a "/" and then the glob pattern.
-			// - basic/TestNetworkScripts: excludes only TestNetworkScripts
-			// - basic/* - excludes all
-			// - If no pattern is specified after / , excludes none
-			nativedenylistindex := strings.Index(bl, "/")
-			if nativedenylistindex > -1 {
-				// Check native tests for arch specific exclusion
-				for nativetestname := range t.NativeFuncs {
-					nameMatch, err := filepath.Match(bl[nativedenylistindex+1:], nativetestname)
-					if err != nil {
-						return nil, err
-					}
-					if nameMatch {
-						delete(t.NativeFuncs, nativetestname)
-					}
-				}
-			}
-		}
-		// If the test is denylisted, skip it and continue to the next test
-		if denylisted {
-			plog.Debugf("Skipping denylisted test %s", t.Name)
-			continue
-		}
-
-		nameMatch, err := matchesPatterns(t.Name, patterns)
+		nameMatch, err := MatchesPatterns(t.Name, patterns)
 		if err != nil {
 			return nil, err
 		}
 
 		tagMatch := false
 		for _, tag := range positiveTags {
-			tagMatch = hasString(tag, t.Tags) || tag == t.RequiredTag
+			tagMatch = HasString(tag, t.Tags) || tag == t.RequiredTag
 			if tagMatch {
 				break
 			}
@@ -530,7 +527,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 
 		negativeTagMatch := false
 		for _, tag := range negativeTags {
-			negativeTagMatch = hasString(tag, t.Tags)
+			negativeTagMatch = HasString(tag, t.Tags)
 			if negativeTagMatch {
 				break
 			}
@@ -540,7 +537,7 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 		}
 
 		if t.RequiredTag != "" && // if the test has a required tag...
-			!tagMatch && // and that tag was not provided by the user...
+			!HasString(t.RequiredTag, positiveTags) && // and that tag was not provided by the user...
 			(!userTypedPattern || !nameMatch) { // and the user didn't request it by name...
 			continue // then skip it
 		}
@@ -634,13 +631,58 @@ func filterTests(tests map[string]*register.Test, patterns []string, pltfrm stri
 	return r, nil
 }
 
+func filterDenylistedTests(tests map[string]*register.Test) (map[string]*register.Test, error) {
+	r := make(map[string]*register.Test)
+	for name, t := range tests {
+		denylisted := false
+		// Detect anything which is denylisted directly or by pattern
+		for _, bl := range DenylistedTests {
+			nameMatch, err := filepath.Match(bl, t.Name)
+			if err != nil {
+				return nil, err
+			}
+			// If it matched the pattern this test is denylisted
+			if nameMatch {
+				denylisted = true
+				break
+			}
+
+			// Check if any native tests are denylisted. To exclude native tests, specify the high level
+			// test and a "/" and then the glob pattern.
+			// - basic/TestNetworkScripts: excludes only TestNetworkScripts
+			// - basic/* - excludes all
+			// - If no pattern is specified after / , excludes none
+			nativedenylistindex := strings.Index(bl, "/")
+			if nativedenylistindex > -1 {
+				// Check native tests for arch specific exclusion
+				for nativetestname := range t.NativeFuncs {
+					nameMatch, err := filepath.Match(bl[nativedenylistindex+1:], nativetestname)
+					if err != nil {
+						return nil, err
+					}
+					if nameMatch {
+						delete(t.NativeFuncs, nativetestname)
+					}
+				}
+			}
+		}
+		// If the test is denylisted, skip it and continue to the next test
+		if denylisted {
+			plog.Debugf("Skipping denylisted test %s", t.Name)
+			continue
+		}
+		r[name] = t
+	}
+	return r, nil
+}
+
 // runProvidedTests is a harness for running multiple tests in parallel.
 // Filters tests based on a glob pattern and by platform. Has access to all
 // tests either registered in this package or by imported packages that
 // register tests in their init() function.  outputDir is where various test
 // logs and data will be written for analysis after the test run. If it already
 // exists it will be erased!
-func runProvidedTests(testsBank map[string]*register.Test, patterns []string, multiply int, rerun bool, allowRerunSuccess bool, pltfrm, outputDir string, propagateTestErrors bool) error {
+func runProvidedTests(testsBank map[string]*register.Test, patterns []string, multiply int, rerun bool, rerunSuccessTags []string, pltfrm, outputDir string) error {
 	var versionStr string
 
 	// Avoid incurring cost of starting machine in getClusterSemver when
@@ -650,14 +692,39 @@ func runProvidedTests(testsBank map[string]*register.Test, patterns []string, mu
 	//    either way
 
 	// Add denylisted tests in kola-denylist.yaml to DenylistedTests
-	err := parseDenyListYaml(pltfrm)
+	err := ParseDenyListYaml(pltfrm)
 	if err != nil {
 		plog.Fatal(err)
+	}
+
+	// Make sure all given patterns by the user match at least one test
+	for _, pattern := range patterns {
+		match, err := patternMatchesTests(pattern, testsBank)
+		if err != nil {
+			plog.Fatal(err)
+		}
+		if !match {
+			plog.Fatalf("The user provided pattern didn't match any tests: %s", pattern)
+		}
 	}
 
 	tests, err := filterTests(testsBank, patterns, pltfrm)
 	if err != nil {
 		plog.Fatal(err)
+	}
+
+	if len(tests) == 0 {
+		plog.Fatalf("There are no matching tests to run on this architecture/platform: %s %s", coreosarch.CurrentRpmArch(), pltfrm)
+	}
+
+	tests, err = filterDenylistedTests(tests)
+	if err != nil {
+		plog.Fatal(err)
+	}
+
+	if len(tests) == 0 {
+		fmt.Printf("There are no tests to run because all tests are denylisted. Output in %v\n", outputDir)
+		return nil
 	}
 
 	flight, err := NewFlight(pltfrm)
@@ -677,7 +744,11 @@ func runProvidedTests(testsBank map[string]*register.Test, patterns []string, mu
 		}
 	}
 
-	if len(nonExclusiveTests) > 0 {
+	if len(nonExclusiveTests) == 1 {
+		// If there is only one test then it can just be run by itself
+		// so add it back to the tests map.
+		tests[nonExclusiveTests[0].Name] = nonExclusiveTests[0]
+	} else if len(nonExclusiveTests) > 0 {
 		buckets := createTestBuckets(nonExclusiveTests)
 		numBuckets := len(buckets)
 		for i := 0; i < numBuckets; {
@@ -746,15 +817,11 @@ func runProvidedTests(testsBank map[string]*register.Test, patterns []string, mu
 			// At the end of the test, its cluster is destroyed
 			runTest(h, test, pltfrm, flight)
 		}
-		htests.Add(test.Name, run, test.Timeout)
+		htests.Add(test.Name, run, (test.Timeout*time.Duration(100+(Options.ExtendTimeoutPercent)))/100)
 	}
 
 	handleSuiteErrors := func(outputDir string, suiteErr error) error {
 		caughtTestError := suiteErr != nil
-
-		if !propagateTestErrors {
-			suiteErr = nil
-		}
 
 		if TAPFile != "" {
 			src := filepath.Join(outputDir, "test.tap")
@@ -769,78 +836,170 @@ func runProvidedTests(testsBank map[string]*register.Test, patterns []string, mu
 		} else {
 			fmt.Printf("PASS, output in %v\n", outputDir)
 		}
+
 		return suiteErr
 	}
 
 	suite := harness.NewSuite(opts, htests)
-	firstRunErr := suite.Run()
-	firstRunErr = handleSuiteErrors(outputDir, firstRunErr)
+	runErr := suite.Run()
+	runErr = handleSuiteErrors(outputDir, runErr)
 
-	testsToRerun := getRerunnable(testResults.getResults())
+	detectedFailedWarnTrueTests := len(getWarnTrueFailedTests(testResults.getResults())) != 0
+
+	testsToRerun := getRerunnable(testsBank, testResults.getResults())
+	numFailedTests := len(testsToRerun)
 	if len(testsToRerun) > 0 && rerun {
 		newOutputDir := filepath.Join(outputDir, "rerun")
 		fmt.Printf("\n\n======== Re-running failed tests (flake detection) ========\n\n")
-		reRunErr := runProvidedTests(testsBank, testsToRerun, multiply, false, allowRerunSuccess, pltfrm, newOutputDir, propagateTestErrors)
-		if allowRerunSuccess {
-			return reRunErr
+		reRunErr := runProvidedTests(testsToRerun, []string{"*"}, multiply, false, rerunSuccessTags, pltfrm, newOutputDir)
+		if reRunErr == nil && allTestsAllowRerunSuccess(testsToRerun, rerunSuccessTags) {
+			runErr = nil       // reset to success since all tests allowed rerun success
+			numFailedTests = 0 // zero out the tally of failed tests
+		} else {
+			runErr = reRunErr
 		}
+
 	}
 
-	// If the intial run failed and the rerun passed, we still return an error
-	return firstRunErr
+	// Return ErrWarnOnTestFail when ONLY tests with warn:true feature failed
+	if detectedFailedWarnTrueTests && numFailedTests == 0 {
+		return ErrWarnOnTestFail
+	} else {
+		return runErr
+	}
+}
+
+func getWarnTrueFailedTests(tests []*harness.H) []string {
+	var warnTrueFailedTests []string
+	for _, test := range tests {
+		if !test.Failed() {
+			continue
+		}
+		name := GetBaseTestName(test.Name())
+		if name == "" {
+			continue // skip non-exclusive test wrapper
+		}
+		if IsWarningOnFailure(name) {
+			warnTrueFailedTests = append(warnTrueFailedTests, name)
+		}
+	}
+	return warnTrueFailedTests
+}
+
+func allTestsAllowRerunSuccess(testsToRerun map[string]*register.Test, rerunSuccessTags []string) bool {
+	// Always consider the special AllowRerunSuccessTag that is added
+	// by the test harness in some failure scenarios.
+	rerunSuccessTags = append(rerunSuccessTags, AllowRerunSuccessTag)
+	// Build up a map of rerunSuccessTags so that we can easily check
+	// if a given tag is in the map.
+	rerunSuccessTagMap := make(map[string]bool)
+	for _, tag := range rerunSuccessTags {
+		if tag == "all" || tag == "*" {
+			// If `all` or `*` is in rerunSuccessTags then we can return early
+			return true
+		}
+		rerunSuccessTagMap[tag] = true
+	}
+	// Iterate over the tests that were re-ran. If any of them don't
+	// allow rerun success then just exit early.
+	for _, test := range testsToRerun {
+		testAllowsRerunSuccess := false
+		for _, tag := range test.Tags {
+			if rerunSuccessTagMap[tag] {
+				testAllowsRerunSuccess = true
+			}
+		}
+		if !testAllowsRerunSuccess {
+			return false
+		}
+	}
+	return true
+}
+func GetBaseTestName(testName string) string {
+	// If this is a non-exclusive wrapper then just return the empty string
+	if nonexclusiveWrapperMatch.MatchString(testName) {
+		return ""
+	}
+
+	// If the given test is a non-exclusive test with the prefix in
+	// the name we'll need to pull it apart. For example:
+	// non-exclusive-test-bucket-0/ext.config.files.license -> ext.config.files.license
+	substrings := nonexclusivePrefixMatch.Split(testName, 2)
+	return substrings[len(substrings)-1]
 }
 
 func GetRerunnableTestName(testName string) (string, bool) {
-	// The current nonexclusive test wrapper would rerun all non-exclusive tests.
-	// Instead, we only want to rerun the one(s) that failed, so we will not consider
-	// the wrapper as "rerunnable".
-	if nonexclusiveWrapperMatch.MatchString(testName) {
+	name := GetBaseTestName(testName)
+	if name == "" {
 		// Test is not rerunnable if the test name matches the wrapper pattern
 		return "", false
-	} else {
-		// Failed non-exclusive tests will have a prefix in the name
-		// since they are run as subtests of a wrapper test, we need to
-		// remove this prefix to match the true name of the test
-		substrings := nonexclusivePrefixMatch.Split(testName, 2)
-		name := substrings[len(substrings)-1]
-
-		if strings.Contains(name, "/") {
-			// In the case that a test is exclusive, we may
-			// be adding a subtest. We don't want to do this
-			return "", false
-		}
-		// The test is not a nonexclusive wrapper, and its not a
-		// subtest of an exclusive test
-		return name, true
 	}
+	if strings.Contains(name, "/") {
+		// In the case that a test is exclusive, we may
+		// be adding a subtest. We don't want to do this
+		return "", false
+	}
+
+	// Tests with 'warn: true' are not rerunnable
+	if IsWarningOnFailure(name) {
+		return "", false
+	}
+
+	// The test is not a nonexclusive wrapper, and its not a
+	// subtest of an exclusive test
+	return name, true
 }
 
-func getRerunnable(tests []*harness.H) []string {
-	var testsToRerun []string
-	for _, h := range tests {
+func IsWarningOnFailure(testName string) bool {
+	for _, pattern := range WarnOnErrorTests {
+		found, err := filepath.Match(pattern, testName)
+		if err != nil {
+			plog.Fatal(err)
+			return false
+		}
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func getRerunnable(testsBank map[string]*register.Test, testResults []*harness.H) map[string]*register.Test {
+	// First get the names of the tests that need to rerun
+	var testNamesToRerun []string
+	for _, h := range testResults {
 		// The current nonexclusive test wrapper would have all non-exclusive tests.
 		// We would add all those tests for rerunning if none of the non-exclusive
 		// subtests start due to some initial failure.
 		if nonexclusiveWrapperMatch.MatchString(h.Name()) && !h.GetNonExclusiveTestStarted() {
 			if h.Failed() {
-				testsToRerun = append(testsToRerun, h.Subtests()...)
+				testNamesToRerun = append(testNamesToRerun, h.Subtests()...)
 			}
 		} else {
 			name, isRerunnable := GetRerunnableTestName(h.Name())
 			if h.Failed() && isRerunnable {
-				testsToRerun = append(testsToRerun, name)
+				testNamesToRerun = append(testNamesToRerun, name)
+			}
+		}
+	}
+	// Then convert the list of names into a list of a register.Test objects
+	testsToRerun := make(map[string]*register.Test)
+	for name, t := range testsBank {
+		for _, rerun := range testNamesToRerun {
+			if name == rerun {
+				testsToRerun[name] = t
 			}
 		}
 	}
 	return testsToRerun
 }
 
-func RunTests(patterns []string, multiply int, rerun bool, allowRerunSuccess bool, pltfrm, outputDir string, propagateTestErrors bool) error {
-	return runProvidedTests(register.Tests, patterns, multiply, rerun, allowRerunSuccess, pltfrm, outputDir, propagateTestErrors)
+func RunTests(patterns []string, multiply int, rerun bool, rerunSuccessTags []string, pltfrm, outputDir string) error {
+	return runProvidedTests(register.Tests, patterns, multiply, rerun, rerunSuccessTags, pltfrm, outputDir)
 }
 
-func RunUpgradeTests(patterns []string, rerun bool, pltfrm, outputDir string, propagateTestErrors bool) error {
-	return runProvidedTests(register.UpgradeTests, patterns, 0, rerun, false, pltfrm, outputDir, propagateTestErrors)
+func RunUpgradeTests(patterns []string, rerun bool, pltfrm, outputDir string) error {
+	return runProvidedTests(register.UpgradeTests, patterns, 0, rerun, nil, pltfrm, outputDir)
 }
 
 // externalTestMeta is parsed from kola.json in external tests
@@ -862,6 +1021,7 @@ type externalTestMeta struct {
 	Conflicts                 []string `json:"conflicts"                           yaml:"conflicts"`
 	AllowConfigWarnings       bool     `json:"allowConfigWarnings"                 yaml:"allowConfigWarnings"`
 	NoInstanceCreds           bool     `json:"noInstanceCreds"                     yaml:"noInstanceCreds"`
+	Description               string   `json:"description"                         yaml:"description"`
 }
 
 // metadataFromTestBinary extracts JSON-in-comment like:
@@ -1045,9 +1205,10 @@ ExecStart=%s
 	config.AddSystemdUnit(unitName, unit, conf.NoState)
 
 	// Architectures using 64k pages use slightly more memory, ask for more than requested
-	// to make sure that we don't run out of it. Currently ppc64le and aarch64 use 64k pages.
+	// to make sure that we don't run out of it. Currently, only ppc64le uses 64k pages by default.
+	// See similar logic in boot-mirror.go and luks.go.
 	switch coreosarch.CurrentRpmArch() {
-	case "ppc64le", "aarch64":
+	case "ppc64le":
 		if targetMeta.MinMemory <= 4096 {
 			targetMeta.MinMemory = targetMeta.MinMemory * 2
 		}
@@ -1055,6 +1216,7 @@ ExecStart=%s
 
 	t := &register.Test{
 		Name:          testname,
+		Description:   targetMeta.Description,
 		ClusterSize:   1, // Hardcoded for now
 		ExternalTest:  executable,
 		DependencyDir: destDirs,
@@ -1141,14 +1303,29 @@ func testIsDenyListed(testname string) (bool, error) {
 	return false, nil
 }
 
+// Function that returns true if at least one test matches the given pattern
+func patternMatchesTests(pattern string, tests map[string]*register.Test) (bool, error) {
+	for testname := range tests {
+		if match, err := filepath.Match(pattern, testname); err != nil {
+			return false, err
+		} else if match {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // registerTestDir parses one test directory and registers it as a test
-func registerTestDir(dir, testprefix string, children []os.FileInfo) error {
+func registerTestDir(dir, testprefix string, children []os.DirEntry) error {
 	var dependencydir string
 	var meta externalTestMeta
-	var err error
 	userdata := conf.EmptyIgnition()
 	executables := []string{}
-	for _, c := range children {
+	for _, e := range children {
+		c, err := e.Info()
+		if err != nil {
+			return fmt.Errorf("getting info for %q: %w", e.Name(), err)
+		}
 		fpath := filepath.Join(dir, c.Name())
 		// follow symlinks; oddly, there's no IsSymlink()
 		if c.Mode()&os.ModeSymlink != 0 {
@@ -1370,7 +1547,7 @@ mainloop:
 func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Flight) register.Test {
 	// Parse test flags and gather configs
 	internetAccess := false
-	var flags []register.Flag
+	var tags []string
 	var nonExclusiveTestConfs []*conf.Conf
 	dependencyDirs := make(register.DepDirMap)
 	var subtests []string
@@ -1389,7 +1566,7 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 			plog.Fatalf("Non-exclusive test %v cannot have AppendKernelArgs", test.Name)
 		}
 		if !internetAccess && testRequiresInternet(test) {
-			flags = append(flags, register.RequiresInternetAccess)
+			tags = append(tags, NeedsInternetTag)
 			internetAccess = true
 		}
 
@@ -1453,10 +1630,9 @@ func makeNonExclusiveTest(bucket int, tests []*register.Test, flight platform.Fl
 		UserData: mergedConfig,
 		Subtests: subtests,
 		// This will allow runTest to copy kolet to machine
-		NativeFuncs: make(map[string]register.NativeFuncWrap),
-		ClusterSize: 1,
-		Flags:       flags,
-
+		NativeFuncs:   make(map[string]register.NativeFuncWrap),
+		ClusterSize:   1,
+		Tags:          tags,
 		DependencyDir: dependencyDirs,
 	}
 
@@ -1493,6 +1669,10 @@ func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flig
 	defer func() {
 		h.StopExecTimer()
 		c.Destroy()
+		if h.TimedOut() {
+			// We'll allow tests that time out to succeed on rerun.
+			markTestForRerunSuccess(t, "Test timed out.")
+		}
 		if testSkipBaseChecks(t) {
 			plog.Debugf("Skipping base checks for %s", t.Name)
 			return
@@ -1544,6 +1724,9 @@ func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flig
 			return err
 		})
 		if err != nil {
+			// The platform failed starting machines, which usually isn't *CoreOS
+			// fault. Maybe it will have better luck in the rerun.
+			markTestForRerunSuccess(t, "Platform failed starting machines.")
 			h.Fatalf("Cluster failed starting machines: %v", err)
 		}
 	}
@@ -1560,6 +1743,10 @@ func runTest(h *harness.H, t *register.Test, pltfrm string, flight platform.Flig
 		Cluster:     c,
 		NativeFuncs: names,
 		FailFast:    t.FailFast,
+	}
+
+	if IsWarningOnFailure(t.Name) {
+		tcluster.H.WarningOnFailure()
 	}
 
 	// Note that we passed in SkipStartMachine=true in our machine
@@ -1655,25 +1842,38 @@ func scpKolet(machines []platform.Machine) error {
 }
 
 // CheckConsole checks some console output for badness and returns short
-// descriptions of any badness it finds. If t is specified, its flags are
-// respected.
-func CheckConsole(output []byte, t *register.Test) []string {
-	var ret []string
+// descriptions of any bad lines it finds along with a boolean
+// indicating if the configuration has the bad lines marked as
+// warnOnly or not (for things we don't want to error for). If t is
+// specified, its flags are respected and tags possibly updated for
+// rerun success.
+func CheckConsole(output []byte, t *register.Test) (bool, []string) {
+	var badlines []string
+	warnOnly, allowRerunSuccess := true, true
 	for _, check := range consoleChecks {
 		if check.skipFlag != nil && t != nil && t.HasFlag(*check.skipFlag) {
 			continue
 		}
 		match := check.match.FindSubmatch(output)
 		if match != nil {
-			badness := check.desc
+			badline := check.desc
 			if len(match) > 1 {
 				// include first subexpression
-				badness += fmt.Sprintf(" (%s)", match[1])
+				badline += fmt.Sprintf(" (%s)", match[1])
 			}
-			ret = append(ret, badness)
+			badlines = append(badlines, badline)
+			if !check.warnOnly {
+				warnOnly = false
+			}
+			if !check.allowRerunSuccess {
+				allowRerunSuccess = false
+			}
 		}
 	}
-	return ret
+	if len(badlines) > 0 && allowRerunSuccess && t != nil {
+		markTestForRerunSuccess(t, "CheckConsole:")
+	}
+	return warnOnly, badlines
 }
 
 func SetupOutputDir(outputDir, platform string) (string, error) {
