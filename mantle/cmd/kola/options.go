@@ -56,7 +56,7 @@ func init() {
 	root.PersistentFlags().StringVarP(&kola.Options.Distribution, "distro", "b", "", "Distribution: "+strings.Join(kolaDistros, ", "))
 	root.PersistentFlags().StringVarP(&kolaParallelArg, "parallel", "j", "1", "number of tests to run in parallel, or \"auto\" to match CPU count")
 	sv(&kola.TAPFile, "tapfile", "", "file to write TAP results to")
-	root.PersistentFlags().BoolVarP(&kola.Options.NoTestExitError, "no-test-exit-error", "T", false, "Don't exit with non-zero if tests fail")
+	root.PersistentFlags().BoolVarP(&kola.Options.UseWarnExitCode77, "on-warn-failure-exit-77", "", false, "Exit with code 77 if 'warn: true' tests fail")
 	sv(&kola.Options.BaseName, "basename", "kola", "Cluster name prefix")
 	ss("debug-systemd-unit", []string{}, "full-unit-name.service to enable SYSTEMD_LOG_LEVEL=debug on. Can be specified multiple times.")
 	ssv(&kola.DenylistedTests, "denylist-test", []string{}, "Test pattern to add to denylist. Can be specified multiple times.")
@@ -68,6 +68,8 @@ func init() {
 	sv(&kola.Options.CosaWorkdir, "workdir", "", "coreos-assembler working directory")
 	sv(&kola.Options.CosaBuildId, "build", "", "coreos-assembler build ID")
 	sv(&kola.Options.CosaBuildArch, "arch", coreosarch.CurrentRpmArch(), "The target architecture of the build")
+	// we make this a percentage to avoid having to deal with floats
+	root.PersistentFlags().UintVar(&kola.Options.ExtendTimeoutPercent, "extend-timeout-percentage", 0, "Extend all test timeouts by N percent")
 	// rhcos-specific options
 	sv(&kola.Options.OSContainer, "oscontainer", "", "oscontainer image pullspec for pivot (RHCOS only)")
 
@@ -154,6 +156,7 @@ func init() {
 	bv(&kola.QEMUOptions.Native4k, "qemu-native-4k", false, "Force 4k sectors for main disk")
 	bv(&kola.QEMUOptions.Nvme, "qemu-nvme", false, "Use NVMe for main disk")
 	bv(&kola.QEMUOptions.Swtpm, "qemu-swtpm", true, "Create temporary software TPM")
+	ssv(&kola.QEMUOptions.BindRO, "qemu-bind-ro", nil, "Inject a host directory; this does not automatically mount in the guest")
 
 	sv(&kola.QEMUIsoOptions.IsoPath, "qemu-iso", "", "path to CoreOS ISO image")
 	bv(&kola.QEMUIsoOptions.AsDisk, "qemu-iso-as-disk", false, "attach ISO image as regular disk")
@@ -216,8 +219,6 @@ func syncOptionsImpl(useCosa bool) error {
 			kola.QEMUOptions.Firmware = "uefi"
 		} else if kola.Options.CosaBuildArch == "x86_64" && kola.QEMUOptions.Native4k {
 			kola.QEMUOptions.Firmware = "uefi"
-		} else {
-			kola.QEMUOptions.Firmware = "bios"
 		}
 	}
 

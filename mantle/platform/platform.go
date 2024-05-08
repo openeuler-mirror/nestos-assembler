@@ -182,7 +182,7 @@ type Options struct {
 	CosaBuildId   string
 	CosaBuildArch string
 
-	NoTestExitError bool
+	UseWarnExitCode77 bool
 
 	// OSContainer is an image pull spec that can be given to the pivot service
 	// in RHCOS machines to perform machine content upgrades.
@@ -191,6 +191,8 @@ type Options struct {
 	OSContainer string
 
 	SSHOnTestFailure bool
+
+	ExtendTimeoutPercent uint
 }
 
 // RuntimeConfig contains cluster-specific configuration.
@@ -407,38 +409,11 @@ func NewMachines(c Cluster, userdata *conf.UserData, n int, options MachineOptio
 	return machs, nil
 }
 
-// checkSystemdUnitFailures ensures that no system unit is in a failed state,
-// temporarily ignoring some non-fatal flakes on RHCOS.
-// See: https://bugzilla.redhat.com/show_bug.cgi?id=1914362
-func checkSystemdUnitFailures(output string, distribution string) error {
-	if len(output) == 0 {
-		return nil
+// checkSystemdUnitFailures ensures that no system unit is in a failed state.
+func checkSystemdUnitFailures(output string) error {
+	if len(output) > 0 {
+		return fmt.Errorf("some systemd units failed: %s", output)
 	}
-
-	var ignoredUnits []string
-	if distribution == "rhcos" {
-		ignoredUnits = append(ignoredUnits, "user@1000.service")
-		ignoredUnits = append(ignoredUnits, "user-runtime-dir@1000.service")
-	}
-
-	var failedUnits []string
-	for _, unit := range strings.Split(output, "\n") {
-		// Filter ignored units
-		ignored := false
-		for _, i := range ignoredUnits {
-			if unit == i {
-				ignored = true
-				break
-			}
-		}
-		if !ignored {
-			failedUnits = append(failedUnits, unit)
-		}
-	}
-	if len(failedUnits) > 0 {
-		return fmt.Errorf("some systemd units failed: %s", failedUnits)
-	}
-
 	return nil
 }
 
@@ -473,7 +448,10 @@ func CheckMachine(ctx context.Context, m Machine) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		out, stderr, err := m.SSH("systemctl is-system-running")
+		// By design, `systemctl is-system-running` returns nonzero codes based on its state.
+		// We want to explicitly accept some nonzero states and test instead by the string so
+		// add `|| :`.
+		out, stderr, err := m.SSH("systemctl is-system-running || :")
 		if !bytes.Contains([]byte("initializing starting running stopping"), out) {
 			return nil // stop retrying if the system went haywire
 		}
@@ -487,24 +465,8 @@ func CheckMachine(ctx context.Context, m Machine) error {
 		return errors.Wrapf(err, "ssh unreachable")
 	}
 
-	out, stderr, err := m.SSH(`. /etc/os-release && echo "$ID-$VARIANT_ID"`)
-	if err != nil {
-		return fmt.Errorf("no /etc/os-release file: %v: %s", err, stderr)
-	}
-
-	// ensure we're talking to a supported system
-	var distribution string
-	switch string(out) {
-	case `nestos-container`, `NestOS-nestos`:
-		distribution = "nestos"
-	// Reserved for older versions of NestOS
-	case `fedora-coreos`:
-		distribution = "fcos"
-	case `scos-`, `scos-coreos`, `rhcos-`, `rhcos-coreos`:
-		distribution = "rhcos"
-	default:
-		return fmt.Errorf("not a supported instance: %v", string(out))
-	}
+	// NestOS don't want to check '/etc/os-release' to check if it is supported
+	
 
 	// check systemd version on host to see if we can use `busctl --json=short`
 	var systemdVer int
@@ -531,7 +493,7 @@ func CheckMachine(ctx context.Context, m Machine) error {
 	if err != nil {
 		return fmt.Errorf("failed to query systemd for failed units: %s: %v: %s", out, err, stderr)
 	}
-	err = checkSystemdUnitFailures(string(out), distribution)
+	err = checkSystemdUnitFailures(string(out))
 	if err != nil {
 		plog.Error(err)
 		systemdFailures = true

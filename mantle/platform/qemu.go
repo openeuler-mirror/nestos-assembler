@@ -339,7 +339,7 @@ func (inst *QemuInstance) SwitchBootOrder() (err2 error) {
 		switch dev.Device {
 		case "installiso":
 			bootdev = devpath
-		case "d1", "mpath10":
+		case "disk-1", "mpath10":
 			primarydev = devpath
 		case "mpath11":
 			secondarydev = devpath
@@ -383,8 +383,8 @@ func (inst *QemuInstance) SwitchBootOrder() (err2 error) {
 }
 
 // RemovePrimaryBlockDevice deletes the primary device from a qemu instance
-// and sets the seconday device as primary. It expects that all block devices
-// are mirrors.
+// and sets the secondary device as primary. It expects that all block devices
+// with device name disk-<N> are mirrors.
 func (inst *QemuInstance) RemovePrimaryBlockDevice() (err2 error) {
 	var primaryDevice string
 	var secondaryDevicePath string
@@ -397,7 +397,7 @@ func (inst *QemuInstance) RemovePrimaryBlockDevice() (err2 error) {
 	// a `BackingFileDepth` parameter of a device and check if
 	// it is a removable and part of `virtio-blk-pci` devices.
 	for _, dev := range blkdevs.Return {
-		if !dev.Removable && strings.Contains(dev.DevicePath, "virtio-backend") {
+		if !dev.Removable && strings.HasPrefix(dev.Device, "disk-") {
 			if dev.Inserted.BackingFileDepth == 1 {
 				primaryDevice = dev.DevicePath
 			} else {
@@ -1131,7 +1131,7 @@ func (builder *QemuBuilder) addDiskImpl(disk *Disk, primary bool) error {
 		opts = "," + strings.Join(diskOpts, ",")
 	}
 
-	id := fmt.Sprintf("d%d", builder.diskID)
+	id := fmt.Sprintf("disk-%d", builder.diskID)
 
 	// Avoid file locking detection, and the disks we create
 	// here are always currently ephemeral.
@@ -1916,6 +1916,43 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 	}
 	if err := inst.qmpSocket.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect over qmp to qemu instance")
+	}
+
+	// Hacky code to test https://github.com/openshift/os/pull/1346
+	if timeout, ok := os.LookupEnv("COSA_TEST_CDROM_UNPLUG"); ok {
+		val, err := time.ParseDuration(timeout)
+		if err != nil {
+			return nil, err
+		}
+		go func() {
+			devs, err := inst.listDevices()
+			if err != nil {
+				plog.Error("failed to list devices")
+				return
+			}
+
+			var cdrom string
+			for _, dev := range devs.Return {
+				switch dev.Type {
+				case "child<scsi-cd>":
+					cdrom = filepath.Join("/machine/peripheral-anon", dev.Name)
+				default:
+					break
+				}
+			}
+			if cdrom == "" {
+				plog.Errorf("failed to get scsi-cd id")
+				return
+			}
+
+			plog.Debugf("get cdrom id %s", cdrom)
+			time.Sleep(val)
+			if err := inst.deleteBlockDevice(cdrom); err != nil {
+				plog.Errorf("failed to delete block device: %s", cdrom)
+				return
+			}
+			plog.Info("delete cdrom")
+		}()
 	}
 
 	return &inst, nil
