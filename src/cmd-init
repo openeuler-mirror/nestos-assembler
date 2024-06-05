@@ -82,14 +82,14 @@ if [ $# = 0 ]; then
     exit 1
 fi
 
-# If the current working dir is not empty then error out
-# unless force provided
-if [ "$FORCE" != "1" ] && [ -n "$(ls ./)" ]; then
-   fatal "init: current directory is not empty, override with --force"
-fi
-
 source=$1; shift
 subdir=${1:-}
+
+# If the current working dir is not empty then error out
+# unless force provided
+if [[ ${source} != /* ]] && [ "$FORCE" != "1" ] && [ -n "$(ls ./)" ]; then
+   fatal "init: current directory is not empty, override with --force"
+fi
 
 preflight
 
