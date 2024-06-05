@@ -51,7 +51,7 @@ var (
 
 	root = &cobra.Command{
 		Use:   "kola [command]",
-		Short: "The CoreOS Superdeep Borehole",
+		Short: "The NestOS Superdeep Borehole",
 		// http://en.wikipedia.org/wiki/Kola_Superdeep_Borehole
 	}
 
