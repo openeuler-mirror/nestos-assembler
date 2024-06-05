@@ -37,7 +37,7 @@ var (
 		RunE:    runQemuExec,
 		PreRunE: preRun,
 		Use:     "qemuexec",
-		Short:   "Directly execute qemu on a CoreOS instance",
+		Short:   "Directly execute qemu on a NestOS instance",
 
 		SilenceUsage: true,
 	}

@@ -25,7 +25,7 @@ import (
 	"github.com/coreos/stream-metadata-go/stream"
 	"github.com/pkg/errors"
 
-	"github.com/coreos/mantle/auth"
+	//"github.com/coreos/mantle/auth"
 	"github.com/coreos/mantle/fcos"
 	"github.com/coreos/mantle/kola"
 	"github.com/coreos/mantle/platform"
@@ -63,63 +63,63 @@ func init() {
 	bv(&kola.ForceRunPlatformIndependent, "run-platform-independent", false, "Run tests that claim platform independence")
 	ssv(&kola.Tags, "tag", []string{}, "Test tag to run. Can be specified multiple times.")
 	bv(&kola.Options.SSHOnTestFailure, "ssh-on-test-failure", false, "SSH into a machine when tests fail")
-	sv(&kola.Options.Stream, "stream", "", "CoreOS stream ID (e.g. for Fedora CoreOS: stable, testing, next)")
-	sv(&kola.Options.CosaWorkdir, "workdir", "", "coreos-assembler working directory")
-	sv(&kola.Options.CosaBuildId, "build", "", "coreos-assembler build ID")
+	//sv(&kola.Options.Stream, "stream", "", "CoreOS stream ID (e.g. for Fedora CoreOS: stable, testing, next)")
+	sv(&kola.Options.CosaWorkdir, "workdir", "", "nestos-assembler working directory")
+	sv(&kola.Options.CosaBuildId, "build", "", "nestos-assembler build ID")
 	sv(&kola.Options.CosaBuildArch, "arch", coreosarch.CurrentRpmArch(), "The target architecture of the build")
 	// rhcos-specific options
 	sv(&kola.Options.OSContainer, "oscontainer", "", "oscontainer image pullspec for pivot (RHCOS only)")
 
 	// aws-specific options
-	defaultRegion := os.Getenv("AWS_REGION")
-	if defaultRegion == "" {
-		// As everyone knows, this is the one, true region.  Everything else is a mirage.
-		defaultRegion = "us-east-1"
-	}
-	sv(&kola.AWSOptions.CredentialsFile, "aws-credentials-file", "", "AWS credentials file (default \"~/.aws/credentials\")")
-	sv(&kola.AWSOptions.Region, "aws-region", defaultRegion, "AWS region")
-	sv(&kola.AWSOptions.Profile, "aws-profile", "default", "AWS profile name")
-	sv(&kola.AWSOptions.AMI, "aws-ami", "", `AWS AMI ID`)
-	// See https://github.com/openshift/installer/issues/2919 for example
-	sv(&kola.AWSOptions.InstanceType, "aws-type", "", "AWS instance type")
-	sv(&kola.AWSOptions.SecurityGroup, "aws-sg", "kola", "AWS security group name")
-	sv(&kola.AWSOptions.IAMInstanceProfile, "aws-iam-profile", "kola", "AWS IAM instance profile name")
+	// defaultRegion := os.Getenv("AWS_REGION")
+	// if defaultRegion == "" {
+	// 	// As everyone knows, this is the one, true region.  Everything else is a mirage.
+	// 	defaultRegion = "us-east-1"
+	// }
+	// sv(&kola.AWSOptions.CredentialsFile, "aws-credentials-file", "", "AWS credentials file (default \"~/.aws/credentials\")")
+	// sv(&kola.AWSOptions.Region, "aws-region", defaultRegion, "AWS region")
+	// sv(&kola.AWSOptions.Profile, "aws-profile", "default", "AWS profile name")
+	// sv(&kola.AWSOptions.AMI, "aws-ami", "", `AWS AMI ID`)
+	// // See https://github.com/openshift/installer/issues/2919 for example
+	// sv(&kola.AWSOptions.InstanceType, "aws-type", "", "AWS instance type")
+	// sv(&kola.AWSOptions.SecurityGroup, "aws-sg", "kola", "AWS security group name")
+	// sv(&kola.AWSOptions.IAMInstanceProfile, "aws-iam-profile", "kola", "AWS IAM instance profile name")
 
 	// azure-specific options
-	sv(&kola.AzureOptions.AzureProfile, "azure-profile", "", "Azure profile (default \"~/"+auth.AzureProfilePath+"\")")
-	sv(&kola.AzureOptions.AzureAuthLocation, "azure-auth", "", "Azure auth location (default \"~/"+auth.AzureAuthPath+"\")")
-	sv(&kola.AzureOptions.DiskURI, "azure-disk-uri", "", "Azure disk uri (custom images)")
-	sv(&kola.AzureOptions.Publisher, "azure-publisher", "CoreOS", "Azure image publisher (default \"CoreOS\"")
-	sv(&kola.AzureOptions.Offer, "azure-offer", "CoreOS", "Azure image offer (default \"CoreOS\"")
-	sv(&kola.AzureOptions.Sku, "azure-sku", "alpha", "Azure image sku/channel (default \"alpha\"")
-	sv(&kola.AzureOptions.Version, "azure-version", "", "Azure image version")
-	sv(&kola.AzureOptions.Location, "azure-location", "westus", "Azure location (default \"westus\"")
-	sv(&kola.AzureOptions.Size, "azure-size", "Standard_D2_v2", "Azure machine size (default \"Standard_D2_v2\")")
+	// sv(&kola.AzureOptions.AzureProfile, "azure-profile", "", "Azure profile (default \"~/"+auth.AzureProfilePath+"\")")
+	// sv(&kola.AzureOptions.AzureAuthLocation, "azure-auth", "", "Azure auth location (default \"~/"+auth.AzureAuthPath+"\")")
+	// sv(&kola.AzureOptions.DiskURI, "azure-disk-uri", "", "Azure disk uri (custom images)")
+	// sv(&kola.AzureOptions.Publisher, "azure-publisher", "CoreOS", "Azure image publisher (default \"CoreOS\"")
+	// sv(&kola.AzureOptions.Offer, "azure-offer", "CoreOS", "Azure image offer (default \"CoreOS\"")
+	// sv(&kola.AzureOptions.Sku, "azure-sku", "alpha", "Azure image sku/channel (default \"alpha\"")
+	// sv(&kola.AzureOptions.Version, "azure-version", "", "Azure image version")
+	// sv(&kola.AzureOptions.Location, "azure-location", "westus", "Azure location (default \"westus\"")
+	// sv(&kola.AzureOptions.Size, "azure-size", "Standard_D2_v2", "Azure machine size (default \"Standard_D2_v2\")")
 
 	// do-specific options
-	sv(&kola.DOOptions.ConfigPath, "do-config-file", "", "DigitalOcean config file (default \"~/"+auth.DOConfigPath+"\")")
-	sv(&kola.DOOptions.Profile, "do-profile", "", "DigitalOcean profile (default \"default\")")
-	sv(&kola.DOOptions.AccessToken, "do-token", "", "DigitalOcean access token (overrides config file)")
-	sv(&kola.DOOptions.Region, "do-region", "sfo2", "DigitalOcean region slug")
-	sv(&kola.DOOptions.Size, "do-size", "1gb", "DigitalOcean size slug")
-	sv(&kola.DOOptions.Image, "do-image", "alpha", "DigitalOcean image ID, {alpha, beta, stable}, or user image name")
+	// sv(&kola.DOOptions.ConfigPath, "do-config-file", "", "DigitalOcean config file (default \"~/"+auth.DOConfigPath+"\")")
+	// sv(&kola.DOOptions.Profile, "do-profile", "", "DigitalOcean profile (default \"default\")")
+	// sv(&kola.DOOptions.AccessToken, "do-token", "", "DigitalOcean access token (overrides config file)")
+	// sv(&kola.DOOptions.Region, "do-region", "sfo2", "DigitalOcean region slug")
+	// sv(&kola.DOOptions.Size, "do-size", "1gb", "DigitalOcean size slug")
+	// sv(&kola.DOOptions.Image, "do-image", "alpha", "DigitalOcean image ID, {alpha, beta, stable}, or user image name")
 
 	// esx-specific options
-	sv(&kola.ESXOptions.ConfigPath, "esx-config-file", "", "ESX config file (default \"~/"+auth.ESXConfigPath+"\")")
-	sv(&kola.ESXOptions.Server, "esx-server", "", "ESX server")
-	sv(&kola.ESXOptions.Profile, "esx-profile", "", "ESX profile (default \"default\")")
-	sv(&kola.ESXOptions.BaseVMName, "esx-base-vm", "", "ESX base VM name")
+	// sv(&kola.ESXOptions.ConfigPath, "esx-config-file", "", "ESX config file (default \"~/"+auth.ESXConfigPath+"\")")
+	// sv(&kola.ESXOptions.Server, "esx-server", "", "ESX server")
+	// sv(&kola.ESXOptions.Profile, "esx-profile", "", "ESX profile (default \"default\")")
+	// sv(&kola.ESXOptions.BaseVMName, "esx-base-vm", "", "ESX base VM name")
 
 	// gce-specific options
-	sv(&kola.GCEOptions.Image, "gce-image", "", "GCE image, full api endpoints names are accepted if resource is in a different project")
-	sv(&kola.GCEOptions.Project, "gce-project", "fedora-coreos-devel", "GCE project name")
-	sv(&kola.GCEOptions.Zone, "gce-zone", "us-central1-a", "GCE zone name")
-	sv(&kola.GCEOptions.MachineType, "gce-machinetype", "n1-standard-1", "GCE machine type")
-	sv(&kola.GCEOptions.DiskType, "gce-disktype", "pd-ssd", "GCE disk type")
-	sv(&kola.GCEOptions.Network, "gce-network", "default", "GCE network")
-	sv(&kola.GCEOptions.ServiceAcct, "gce-service-account", "", "GCE service account to attach to instance (default project default)")
-	bv(&kola.GCEOptions.ServiceAuth, "gce-service-auth", false, "for non-interactive auth when running within GCE")
-	sv(&kola.GCEOptions.JSONKeyFile, "gce-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCEConfigPath+"\")")
+	// sv(&kola.GCEOptions.Image, "gce-image", "", "GCE image, full api endpoints names are accepted if resource is in a different project")
+	// sv(&kola.GCEOptions.Project, "gce-project", "fedora-coreos-devel", "GCE project name")
+	// sv(&kola.GCEOptions.Zone, "gce-zone", "us-central1-a", "GCE zone name")
+	// sv(&kola.GCEOptions.MachineType, "gce-machinetype", "n1-standard-1", "GCE machine type")
+	// sv(&kola.GCEOptions.DiskType, "gce-disktype", "pd-ssd", "GCE disk type")
+	// sv(&kola.GCEOptions.Network, "gce-network", "default", "GCE network")
+	// sv(&kola.GCEOptions.ServiceAcct, "gce-service-account", "", "GCE service account to attach to instance (default project default)")
+	// bv(&kola.GCEOptions.ServiceAuth, "gce-service-auth", false, "for non-interactive auth when running within GCE")
+	// sv(&kola.GCEOptions.JSONKeyFile, "gce-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCEConfigPath+"\")")
 
 	// openstack-specific options
 	sv(&kola.OpenStackOptions.ConfigPath, "openstack-config-file", "", "Path to a clouds.yaml formatted OpenStack config file. The underlying library defaults to ./clouds.yaml")
@@ -132,19 +132,19 @@ func init() {
 	sv(&kola.OpenStackOptions.FloatingIPNetwork, "openstack-floating-ip-network", "", "OpenStack network to use when creating a floating IP")
 
 	// packet-specific options
-	sv(&kola.PacketOptions.ConfigPath, "packet-config-file", "", "Packet config file (default \"~/"+auth.PacketConfigPath+"\")")
-	sv(&kola.PacketOptions.Profile, "packet-profile", "", "Packet profile (default \"default\")")
-	sv(&kola.PacketOptions.ApiKey, "packet-api-key", "", "Packet API key (overrides config file)")
-	sv(&kola.PacketOptions.Project, "packet-project", "", "Packet project UUID (overrides config file)")
-	sv(&kola.PacketOptions.Facility, "packet-facility", "sjc1", "Packet facility code")
-	sv(&kola.PacketOptions.Plan, "packet-plan", "", "Packet plan slug (default arch-dependent, e.g. \"t1.small.x86\")")
-	sv(&kola.PacketOptions.Architecture, "packet-architecture", "x86_64", "Packet CPU architecture")
-	sv(&kola.PacketOptions.IPXEURL, "packet-ipxe-url", "", "iPXE script URL (default arch-dependent, e.g. \"https://raw.githubusercontent.com/coreos/coreos-assembler/main/mantle/platform/api/packet/fcos-x86_64.ipxe\")")
-	sv(&kola.PacketOptions.ImageURL, "packet-image-url", "", "image URL (default arch-dependent, e.g. \"https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/31.20200223.3.0/x86_64/fedora-coreos-31.20200223.3.0-metal.x86_64.raw.xz\")")
+	// sv(&kola.PacketOptions.ConfigPath, "packet-config-file", "", "Packet config file (default \"~/"+auth.PacketConfigPath+"\")")
+	// sv(&kola.PacketOptions.Profile, "packet-profile", "", "Packet profile (default \"default\")")
+	// sv(&kola.PacketOptions.ApiKey, "packet-api-key", "", "Packet API key (overrides config file)")
+	// sv(&kola.PacketOptions.Project, "packet-project", "", "Packet project UUID (overrides config file)")
+	// sv(&kola.PacketOptions.Facility, "packet-facility", "sjc1", "Packet facility code")
+	// sv(&kola.PacketOptions.Plan, "packet-plan", "", "Packet plan slug (default arch-dependent, e.g. \"t1.small.x86\")")
+	// sv(&kola.PacketOptions.Architecture, "packet-architecture", "x86_64", "Packet CPU architecture")
+	// sv(&kola.PacketOptions.IPXEURL, "packet-ipxe-url", "", "iPXE script URL (default arch-dependent, e.g. \"https://raw.githubusercontent.com/coreos/coreos-assembler/main/mantle/platform/api/packet/fcos-x86_64.ipxe\")")
+	// sv(&kola.PacketOptions.ImageURL, "packet-image-url", "", "image URL (default arch-dependent, e.g. \"https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/31.20200223.3.0/x86_64/fedora-coreos-31.20200223.3.0-metal.x86_64.raw.xz\")")
 
 	// QEMU-specific options
 	sv(&kola.QEMUOptions.Firmware, "qemu-firmware", "", "Boot firmware: bios,uefi,uefi-secure (default bios)")
-	sv(&kola.QEMUOptions.DiskImage, "qemu-image", "", "path to CoreOS disk image")
+	sv(&kola.QEMUOptions.DiskImage, "qemu-image", "", "path to NestOS disk image")
 	sv(&kola.QEMUOptions.DiskSize, "qemu-size", "", "Resize target disk via qemu-img resize [+]SIZE")
 	sv(&kola.QEMUOptions.Memory, "qemu-memory", "", "Default memory size in MB")
 	bv(&kola.QEMUOptions.NbdDisk, "qemu-nbd-socket", false, "Present the disks over NBD socket to qemu")
@@ -153,7 +153,7 @@ func init() {
 	bv(&kola.QEMUOptions.Nvme, "qemu-nvme", false, "Use NVMe for main disk")
 	bv(&kola.QEMUOptions.Swtpm, "qemu-swtpm", true, "Create temporary software TPM")
 
-	sv(&kola.QEMUIsoOptions.IsoPath, "qemu-iso", "", "path to CoreOS ISO image")
+	sv(&kola.QEMUIsoOptions.IsoPath, "qemu-iso", "", "path to NestOS ISO image")
 	bv(&kola.QEMUIsoOptions.AsDisk, "qemu-iso-as-disk", false, "attach ISO image as regular disk")
 }
 
