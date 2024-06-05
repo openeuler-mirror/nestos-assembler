@@ -15,11 +15,22 @@ sys.path.insert(0, cosa_dir)
 
 from cosalib import cmdlib
 
+transports = {
+    'containers-storage':'containers-storage:',
+    'dir':'dir:',
+    'docker':'docker://',
+    'docker-archive':'docker-archive:',
+    'docker-daemon':'docker-daemon',
+}
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--authfile", help="Authentication file",
                     action='store')
 parser.add_argument("--insecure", help="Ignoring SSL/TLS verification, allow insecure registry",
                     action='store_true')
+parser.add_argument("--transport", help="destination image transport, support: \
+                    containers-storage, dir, docker, docker-archive, docker-daemon",
+                    default='docker')
 parser.add_argument("name", help="destination image reference")
 
 args = parser.parse_args()
@@ -50,6 +61,10 @@ if args.insecure:
     skopeoargs.extend(["--insecure-policy"])
     skopeoargs.extend(["--dest-tls-verify=false"])
 
-skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://{container_name}"])
+if args.transport not in transports.keys():
+    print(f"Not supported transport:{args.transport}")
+    exit(1)
+
+skopeoargs.extend([f"oci-archive:{ociarchive}", f"{transports[args.transport]}{container_name}"])
 print(subprocess.list2cmdline(skopeoargs))
 os.execvp('skopeo', skopeoargs)
