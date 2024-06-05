@@ -64,8 +64,8 @@ func init() {
 		ClusterSize: 1,
 		Flags:       []register.Flag{register.RequiresInternetAccess},
 		NativeFuncs: map[string]register.NativeFuncWrap{
-			"PodmanEcho":     register.CreateNativeFuncWrap(TestPodmanEcho),
-			"PodmanWgetHead": register.CreateNativeFuncWrap(TestPodmanWgetHead),
+			"DockerEcho":     register.CreateNativeFuncWrap(TestDockerEcho),
+			"DockerWgetHead": register.CreateNativeFuncWrap(TestDockerWgetHead),
 		},
 		Distros: []string{"fcos", "nestos"},
 	})
@@ -86,7 +86,7 @@ func init() {
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"ServicesDisabled": register.CreateNativeFuncWrap(TestServicesDisabledRHCOS),
 		},
-		Distros: []string{"rhcos", "nestos"},
+		Distros: []string{"rhcos"},
 	})
 }
 
@@ -101,12 +101,20 @@ func TestPortSsh() error {
 
 func TestDockerEcho() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.io/busybox", "echo")
+	util.RunCmdTimeout(DockerTimeout, "sudo", "systemctl", "start", "docker")
+	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "docker.io/busybox", "echo")
 }
 
 func TestDockerPing() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "docker", "run", "docker.io/busybox", "ping", "-c4", "baidu.com")
+	util.RunCmdTimeout(DockerTimeout, "sudo", "systemctl", "start", "docker")
+	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "docker.io/busybox", "ping", "-c4", "baidu.com")
+}
+
+func TestDockerWgetHead() error {
+	//t.Parallel()
+	util.RunCmdTimeout(DockerTimeout, "sudo", "systemctl", "start", "docker")
+	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "docker.io/busybox", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
 }
 
 func TestPodmanEcho() error {

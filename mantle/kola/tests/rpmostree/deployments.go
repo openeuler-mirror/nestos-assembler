@@ -201,7 +201,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	m := c.Machines()[0]
 
-	_, err := c.SSH(m, `sudo wget -P /var/home/nest http://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm`)
+	_, err := c.SSH(m, `sudo bash -c 'cd ${HOME} && curl -O http://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm'`)
 	if err != nil {
 		c.Fatal(err)
 	}
