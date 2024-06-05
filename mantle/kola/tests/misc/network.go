@@ -40,11 +40,12 @@ func init() {
 		UserData: conf.EmptyIgnition(),
 	})
 	// TODO: rewrite test for NetworkManager
+	// This test is for systemd-networkd.service, but using NetworkManager.service now.
 	register.RegisterTest(&register.Test{
 		Run:            NetworkInitramfsSecondBoot,
 		ClusterSize:    1,
 		Name:           "nestos.network.initramfs.second-boot",
-		ExcludeDistros: []string{"fcos", "rhcos"},
+		ExcludeDistros: []string{"fcos", "rhcos", "nestos"},
 	})
 	// This test follows the same network configuration used on https://github.com/RHsyseng/rhcos-slb
 	// with a slight change, where the MCO script is run from ignition: https://github.com/RHsyseng/rhcos-slb/blob/main/setup-ovs.sh.

@@ -35,6 +35,7 @@ func init() {
 		Run:         podmanBaseTest,
 		ClusterSize: 1,
 		Name:        `podman.base`,
+		RequiredTag: "podman",
 	})
 	// These remaining tests use networking, and hence don't work reliably on RHCOS
 	// right now due to due to https://bugzilla.redhat.com/show_bug.cgi?id=1757572
@@ -45,15 +46,17 @@ func init() {
 		Flags:       []register.Flag{register.RequiresInternetAccess}, // For pulling nginx
 		Distros:     []string{"fcos", "nestos"},
 		FailFast:    true,
+		RequiredTag: "podman",
 	})
 	register.RegisterTest(&register.Test{
 		Run:         podmanNetworksReliably,
 		ClusterSize: 1,
 		Name:        `podman.network-single`,
 		// Not really but podman blows up if there's no /etc/resolv.conf
-		Tags:    []string{kola.NeedsInternetTag},
-		Distros: []string{"fcos", "nestos"},
-		Timeout: 20 * time.Minute,
+		Tags:        []string{kola.NeedsInternetTag},
+		Distros:     []string{"fcos", "nestos"},
+		Timeout:     20 * time.Minute,
+		RequiredTag: "podman",
 	})
 	// https://github.com/coreos/mantle/pull/1080
 	// register.RegisterTest(&register.Test{
