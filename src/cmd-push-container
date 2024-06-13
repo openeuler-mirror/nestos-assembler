@@ -20,7 +20,7 @@ transports = {
     'dir':'dir:',
     'docker':'docker://',
     'docker-archive':'docker-archive:',
-    'docker-daemon':'docker-daemon',
+    'docker-daemon':'docker-daemon:',
 }
 
 parser = argparse.ArgumentParser()
