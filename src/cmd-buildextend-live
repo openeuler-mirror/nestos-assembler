@@ -584,6 +584,8 @@ def generate_iso():
             # Note: virt-make-fs lets us do this as non-root
             efibootfile = os.path.join(tmpisoimages, 'efiboot.img')
             os.environ["LIBGUESTFS_BACKEND"] = "direct"
+            if "COSA_NO_KVM" in os.environ:
+                os.environ["LIBGUESTFS_BACKEND_SETTINGS"] = "force_tcg"
             # On RHEL 8, when booting from a disk device (rather than a CD),
             # https://github.com/systemd/systemd/issues/14408 causes the
             # hybrid ESP to race with the ISO9660 filesystem for the
