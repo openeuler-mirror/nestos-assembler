@@ -32,6 +32,8 @@ func init() {
 		Name:        "rpmostree.upgrade-rollback",
 		FailFast:    true,
 		Tags:        []string{"rpm-ostree", "upgrade"},
+		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
+		ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         rpmOstreeInstallUninstall,
@@ -201,7 +203,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	m := c.Machines()[0]
 
-	_, err := c.SSH(m, `sudo bash -c 'cd ${HOME} && curl -O http://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm'`)
+	_, err := c.SSH(m, `bash -c 'cd ${HOME} && curl -L -O https://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm'`)
 	if err != nil {
 		c.Fatal(err)
 	}

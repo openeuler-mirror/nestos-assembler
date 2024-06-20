@@ -57,7 +57,7 @@ type ostreeAdminStatus struct {
 
 // getOstreeRemotes returns the current number of ostree remotes on a machine
 func getOstreeRemotes(c cluster.TestCluster, m platform.Machine) (int, []string) {
-	remoteListOut := string(c.MustSSH(m, "ostree remote list"))
+	remoteListOut := string(c.MustSSH(m, "sudo ostree remote list"))
 	numRemotes := 0
 	// If we get anything other than an empty string calculate the results
 	// NOTE: This is needed as splitting "" ends up providing a count of 1
@@ -74,7 +74,7 @@ func getOstreeRemotes(c cluster.TestCluster, m platform.Machine) (int, []string)
 func getOstreeAdminStatus(c cluster.TestCluster, m platform.Machine) (ostreeAdminStatus, error) {
 	oaStatus := ostreeAdminStatus{}
 
-	oasOutput, err := c.SSH(m, "ostree admin status")
+	oasOutput, err := c.SSH(m, "sudo ostree admin status")
 	if err != nil {
 		return oaStatus, fmt.Errorf(`Could not get "ostree admin status": %v`, err)
 	}
@@ -149,12 +149,12 @@ func ostreeBasicTest(c cluster.TestCluster) {
 	// the checksum now
 	c.RunLogged("rev-parse", func(c cluster.TestCluster) {
 		// check the output of `ostree rev-parse`
-		c.AssertCmdOutputContains(m, ("ostree rev-parse " + oas.Origin), oas.Checksum)
+		c.AssertCmdOutputContains(m, ("sudo ostree rev-parse " + oas.Origin), oas.Checksum)
 	})
 
 	// verify the output of 'ostree show'
 	c.RunLogged("show", func(c cluster.TestCluster) {
-		oShowOut := c.MustSSH(m, ("ostree show " + oas.Checksum))
+		oShowOut := c.MustSSH(m, ("sudo ostree show " + oas.Checksum))
 		oShowOutSplit := strings.Split(string(oShowOut), "\n")
 		// we need at least the first 4 lines (commit, ContentChecksum, Date, Version)
 		// to proceed safely
@@ -205,7 +205,7 @@ func ostreeRemoteTest(c cluster.TestCluster) {
 
 	// verify `ostree remote list`
 	c.Run("list", func(c cluster.TestCluster) {
-		osRemoteListOut := c.MustSSH(m, "ostree remote list -u")
+		osRemoteListOut := c.MustSSH(m, "sudo ostree remote list -u")
 
 		osRemoteListSplit := strings.Split(string(osRemoteListOut), "\n")
 		// should have original remote + newly added remote
@@ -230,12 +230,12 @@ func ostreeRemoteTest(c cluster.TestCluster) {
 
 	// verify `ostree remote show-url`
 	c.Run("show-url", func(c cluster.TestCluster) {
-		c.AssertCmdOutputContains(m, ("ostree remote show-url " + remoteName), remoteUrl)
+		c.AssertCmdOutputContains(m, ("sudo ostree remote show-url " + remoteName), remoteUrl)
 	})
 
 	// verify `ostree remote refs`
 	c.Run("refs", func(c cluster.TestCluster) {
-		osRemoteRefsOut := c.MustSSH(m, ("ostree remote refs " + remoteName))
+		osRemoteRefsOut := c.MustSSH(m, ("sudo ostree remote refs " + remoteName))
 		if len(strings.Split(string(osRemoteRefsOut), "\n")) < 1 {
 			c.Fatalf(`Did not receive expected amount of refs from remote: %v`, string(osRemoteRefsOut))
 		}
@@ -243,14 +243,14 @@ func ostreeRemoteTest(c cluster.TestCluster) {
 
 	// verify `ostree remote summary`
 	c.Run("summary", func(c cluster.TestCluster) {
-		remoteRefsOut := c.MustSSH(m, ("ostree remote refs " + remoteName))
+		remoteRefsOut := c.MustSSH(m, ("sudo ostree remote refs " + remoteName))
 		remoteRefsOutSplit := strings.Split(string(remoteRefsOut), "\n")
 		remoteRefsCount := len(remoteRefsOutSplit)
 		if remoteRefsCount < 1 {
 			c.Fatalf(`Did not find any refs on ostree remote: %q`, string(remoteRefsOut))
 		}
 
-		osRemoteSummaryOut := c.MustSSH(m, ("ostree remote summary " + remoteName))
+		osRemoteSummaryOut := c.MustSSH(m, ("sudo ostree remote summary " + remoteName))
 		if len(strings.Split(string(osRemoteSummaryOut), "\n")) < 1 {
 			c.Fatalf(`Did not receive expected summary content from remote: %v`, string(osRemoteSummaryOut))
 		}
@@ -286,7 +286,7 @@ func ostreeRemoteTest(c cluster.TestCluster) {
 
 	// verify `ostree remote delete`
 	c.Run("delete", func(c cluster.TestCluster) {
-		preRemotesOut := c.MustSSH(m, "ostree remote list")
+		preRemotesOut := c.MustSSH(m, "sudo ostree remote list")
 		preNumRemotes := len(strings.Split(string(preRemotesOut), "\n"))
 
 		if preNumRemotes < 1 {

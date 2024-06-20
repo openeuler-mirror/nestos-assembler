@@ -127,7 +127,7 @@ func isulaWorkflow(c cluster.TestCluster) {
 
 	// Test: Run container
 	c.Run("run", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo isula run -itd --name busybox docker.io/busybox")
+		_, err := c.SSH(m, "sudo isula run -itd --name busybox atomhub.openatom.cn/library/busybox:latest")
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -191,7 +191,7 @@ func isulaWorkflow(c cluster.TestCluster) {
 
 	// Test: Delete image
 	c.Run("delete", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo isula rmi docker.io/busybox")
+		_, err := c.SSH(m, "sudo isula rmi atomhub.openatom.cn/library/busybox:latest")
 		if err != nil {
 			c.Fatal(err)
 		}

@@ -102,34 +102,34 @@ func TestPortSsh() error {
 func TestDockerEcho() error {
 	//t.Parallel()
 	util.RunCmdTimeout(DockerTimeout, "sudo", "systemctl", "start", "docker")
-	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "docker.io/busybox", "echo")
+	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "atomhub.openatom.cn/library/busybox:latest", "echo")
 }
 
 func TestDockerPing() error {
 	//t.Parallel()
 	util.RunCmdTimeout(DockerTimeout, "sudo", "systemctl", "start", "docker")
-	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "docker.io/busybox", "ping", "-c4", "baidu.com")
+	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "atomhub.openatom.cn/library/busybox:latest", "ping", "-c4", "baidu.com")
 }
 
 func TestDockerWgetHead() error {
 	//t.Parallel()
 	util.RunCmdTimeout(DockerTimeout, "sudo", "systemctl", "start", "docker")
-	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "docker.io/busybox", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
+	return util.RunCmdTimeout(DockerTimeout, "sudo", "docker", "run", "atomhub.openatom.cn/library/busybox:latest", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
 }
 
 func TestPodmanEcho() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.io/busybox", "echo")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "atomhub.openatom.cn/library/busybox:latest", "echo")
 }
 
 func TestPodmanPing() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.io/busybox", "ping", "-c4", "baidu.com")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "atomhub.openatom.cn/library/busybox:latest", "ping", "-c4", "baidu.com")
 }
 
 func TestPodmanWgetHead() error {
 	//t.Parallel()
-	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "docker.io/busybox", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
+	return util.RunCmdTimeout(DockerTimeout, "podman", "run", "atomhub.openatom.cn/library/busybox:latest", "wget", "--spider", "https://nestos.org.cn/kola/hotspot.txt")
 }
 
 // This execs gdbus, because we need to change uses to test perms.
