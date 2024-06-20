@@ -8,7 +8,7 @@ set -euo pipefail
 # We don't want to use libvirt for this, it inhibits debugging
 # shellcheck disable=SC2031
 export LIBGUESTFS_BACKEND=direct
-if [ "$COSA_NO_KVM" ];then
+if env|grep -q "^COSA_NO_KVM=";then
     export LIBGUESTFS_BACKEND_SETTINGS=force_tcg
 fi
 
