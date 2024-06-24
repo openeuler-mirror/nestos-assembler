@@ -129,7 +129,7 @@ func podmanWorkflow(c cluster.TestCluster) {
 	m := c.Machines()[0]
 
 	// Test: Verify container can run with volume mount and port forwarding
-	image := "docker.nju.edu.cn/library/nginx"
+	image := "atomhub.openatom.cn/library/nginx"
 	container_name := "nginx"
 	wwwRoot := "/usr/share/nginx/html"
 	var id string
