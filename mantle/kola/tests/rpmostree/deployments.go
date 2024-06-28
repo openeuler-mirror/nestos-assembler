@@ -33,7 +33,7 @@ func init() {
 		FailFast:    true,
 		Tags:        []string{"rpm-ostree", "upgrade"},
 		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
-		ExcludePlatforms: []string{"qemu-iso"},
+		// ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         rpmOstreeInstallUninstall,
