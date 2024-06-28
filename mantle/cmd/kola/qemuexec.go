@@ -84,9 +84,10 @@ func init() {
 	cmdQemuExec.Flags().StringVarP(&firstbootkargs, "firstbootkargs", "", "", "Additional first boot kernel arguments")
 	cmdQemuExec.Flags().StringArrayVar(&kargs, "kargs", nil, "Additional kernel arguments applied")
 	cmdQemuExec.Flags().BoolVarP(&usernet, "usernet", "U", false, "Enable usermode networking")
-	cmdQemuExec.Flags().StringSliceVar(&ignitionFragments, "add-ignition", nil, "Append well-known Ignition fragment: [\"autologin\", \"autoresize\"]")
+	cmdQemuExec.Flags().StringSliceVar(&ignitionFragments, "add-ignition", nil, "Append well-known Ignition fragment: [\"autologin\", \"autoresize\", \"noautoupdate\"]")
 	cmdQemuExec.Flags().StringVarP(&hostname, "hostname", "", "", "Set hostname via DHCP")
 	cmdQemuExec.Flags().IntVarP(&memory, "memory", "m", 0, "Memory in MB")
+	cmdQemuExec.Flags().StringVar(&architecture, "arch", "", "Use full emulation for target architecture (e.g. aarch64, x86_64, s390x, ppc64le)")
 	cmdQemuExec.Flags().StringArrayVarP(&addDisks, "add-disk", "D", []string{}, "Additional disk, human readable size (repeatable)")
 	cmdQemuExec.Flags().BoolVar(&cpuCountHost, "auto-cpus", false, "Automatically set number of cpus to host count")
 	cmdQemuExec.Flags().BoolVar(&directIgnition, "ignition-direct", false, "Do not parse Ignition, pass directly to instance")
@@ -113,6 +114,8 @@ func renderFragments(fragments []string, c *conf.Conf) error {
 			c.AddAutoLogin()
 		case "autoresize":
 			c.AddAutoResize()
+		case "noautoupdate":
+			c.DisableAutomaticUpdates()
 		default:
 			return fmt.Errorf("Unknown fragment: %s", fragtype)
 		}
@@ -246,6 +249,12 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 
 	builder := platform.NewQemuBuilder()
 	defer builder.Close()
+
+	if architecture != "" {
+		if err := builder.SetArchitecture(architecture); err != nil {
+			return err
+		}
+	}
 
 	var config *conf.Conf
 	if butane != "" {
