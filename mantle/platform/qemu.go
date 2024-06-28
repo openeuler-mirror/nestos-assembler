@@ -478,9 +478,12 @@ type QemuBuilder struct {
 	ignitionRendered bool
 
 	UsermodeNetworking        bool
+	usermodeNetworkingAddr    string
 	RestrictNetworking        bool
 	requestedHostForwardPorts []HostForwardPort
 	additionalNics            int
+	netbootP                  string
+	netbootDir                string
 
 	finalized bool
 	diskID    uint
@@ -597,9 +600,16 @@ func virtio(arch, device, args string) string {
 
 // EnableUsermodeNetworking configure forwarding for all requested ports,
 // via usermode network helpers.
-func (builder *QemuBuilder) EnableUsermodeNetworking(h []HostForwardPort) {
+func (builder *QemuBuilder) EnableUsermodeNetworking(h []HostForwardPort, usernetAddr string) {
 	builder.UsermodeNetworking = true
 	builder.requestedHostForwardPorts = h
+	builder.usermodeNetworkingAddr = usernetAddr
+}
+
+func (builder *QemuBuilder) SetNetbootP(filename, dir string) {
+	builder.UsermodeNetworking = true
+	builder.netbootP = filename
+	builder.netbootDir = dir
 }
 
 func (builder *QemuBuilder) AddAdditionalNics(additionalNics int) {
@@ -628,6 +638,34 @@ func (builder *QemuBuilder) setupNetworking() error {
 	}
 	if builder.RestrictNetworking {
 		netdev += ",restrict=on"
+	}
+	if builder.usermodeNetworkingAddr != "" {
+		netdev += ",net=" + builder.usermodeNetworkingAddr
+	}
+	if builder.netbootP != "" {
+		// do an early stat so we fail with a nicer error now instead of in the VM
+		if _, err := os.Stat(filepath.Join(builder.netbootDir, builder.netbootP)); err != nil {
+			return err
+		}
+		tftpDir := ""
+		relpath := ""
+		if builder.netbootDir == "" {
+			absPath, err := filepath.Abs(builder.netbootP)
+			if err != nil {
+				return err
+			}
+			tftpDir = filepath.Dir(absPath)
+			relpath = filepath.Base(absPath)
+		} else {
+			absPath, err := filepath.Abs(builder.netbootDir)
+			if err != nil {
+				return err
+			}
+			tftpDir = absPath
+			relpath = builder.netbootP
+		}
+		netdev += fmt.Sprintf(",tftp=%s,bootfile=/%s", tftpDir, relpath)
+		builder.Append("-boot", "order=n")
 	}
 
 	builder.Append("-netdev", netdev, "-device", virtio(builder.architecture, "net", "netdev=eth0"))
