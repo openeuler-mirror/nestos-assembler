@@ -692,11 +692,12 @@ func (builder *QemuBuilder) setupAdditionalNetworking() error {
 // SetArchitecture enables qemu full emulation for the target architecture.
 func (builder *QemuBuilder) SetArchitecture(arch string) error {
 	switch arch {
-	case "x86_64", "aarch64", "s390x", "ppc64le":
+	//case "x86_64", "aarch64", "s390x", "ppc64le":
+	case "x86_64", "aarch64":
 		builder.architecture = arch
 		return nil
 	}
-	return fmt.Errorf("architecture %s not supported by coreos-assembler qemu", arch)
+	return fmt.Errorf("architecture %s not supported by nestos-assembler qemu", arch)
 }
 
 // SetSecureExecution enables qemu confidential guest support and adds hostkey to ignition config.
