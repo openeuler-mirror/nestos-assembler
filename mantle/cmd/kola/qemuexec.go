@@ -70,6 +70,11 @@ var (
 	sshCommand string
 
 	additionalNics int
+
+	netboot    string
+	netbootDir string
+
+	usernetAddr string
 )
 
 const maxAdditionalNics = 16
@@ -96,7 +101,9 @@ func init() {
 	cmdQemuExec.Flags().StringVarP(&consoleFile, "console-to-file", "", "", "Filepath in which to save serial console logs")
 	cmdQemuExec.Flags().IntVarP(&additionalNics, "additional-nics", "", 0, "Number of additional NICs to add")
 	cmdQemuExec.Flags().StringVarP(&sshCommand, "ssh-command", "x", "", "Command to execute instead of spawning a shell")
-
+	cmdQemuExec.Flags().StringVarP(&netboot, "netboot", "", "", "Filepath to BOOTP program (e.g. PXELINUX/GRUB binary or iPXE script")
+	cmdQemuExec.Flags().StringVarP(&netbootDir, "netboot-dir", "", "", "Directory to serve over TFTP (default: BOOTP parent dir). If specified, --netboot is relative to this dir.")
+	cmdQemuExec.Flags().StringVarP(&usernetAddr, "usernet-addr", "", "", "Guest IP network (QEMU default is '10.0.2.0/24')")
 }
 
 func renderFragments(fragments []string, c *conf.Conf) error {
@@ -306,21 +313,19 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 	if kola.QEMUOptions.Firmware != "" {
 		builder.Firmware = kola.QEMUOptions.Firmware
 	}
-	if kola.QEMUOptions.DiskImage != "" {
+	if kola.QEMUOptions.DiskImage != "" && netboot == "" {
 		if err := builder.AddBootDisk(buildDiskFromOptions()); err != nil {
 			return err
 		}
-
 		if err != nil {
 			return err
 		}
 	}
-	if kola.QEMUIsoOptions.IsoPath != "" {
+	if kola.QEMUIsoOptions.IsoPath != "" && netboot == "" {
 		err := builder.AddIso(kola.QEMUIsoOptions.IsoPath, "bootindex=3", kola.QEMUIsoOptions.AsDisk)
 		if err != nil {
 			return err
 		}
-		// TODO: if kola.QEMUOptions.DiskImage != "" & kola.QEMUIsoOptions.IsoPath != "", still add a blank disk?
 		// Add a blank disk (this is a disk we can install to)
 		if err := builder.AddBootDisk(buildDiskFromOptions()); err != nil {
 			return err
@@ -345,11 +350,14 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 	if cpuCountHost {
 		builder.Processors = -1
 	}
-	if usernet {
+	if usernet || usernetAddr != "" {
 		h := []platform.HostForwardPort{
 			{Service: "ssh", HostPort: 0, GuestPort: 22},
 		}
-		builder.EnableUsermodeNetworking(h)
+		builder.EnableUsermodeNetworking(h, usernetAddr)
+	}
+	if netboot != "" {
+		builder.SetNetbootP(netboot, netbootDir)
 	}
 	if additionalNics != 0 {
 		if additionalNics < 0 || additionalNics > maxAdditionalNics {
