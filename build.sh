@@ -27,11 +27,11 @@ configure_yum_repos() {
     # builds.
     rm -rf /etc/yum.repos.d/*
 
-    # Consistent with the base image, current: openeuler 22.03-LTS-SP3
-    echo -e "[${version_id}-SP3-NestOS]\nname=NestOS\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP3/EPOL/multi_version/NestOS/For-Container/20231231/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
-    echo -e "[${version_id}-SP3-everything]\nname=everything\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP3/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
-    echo -e "[${version_id}-SP3-EPOL]\nname=EPOL\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP3/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
-    echo -e "[${version_id}-SP3-extra]\nname=extra\nenabled=1\nmetadata_expire=1m\nbaseurl=http://nestos.org.cn/NestOS-22.03-LTS-SP3/For-Container/20231231/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp3.repo
+    # Consistent with the base image, current: openeuler 22.03-LTS-SP4
+    echo -e "[${version_id}-SP4-NestOS]\nname=NestOS\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP4/EPOL/multi_version/NestOS/For-Container/20240628/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
+    echo -e "[${version_id}-SP4-everything]\nname=everything\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP4/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
+    echo -e "[${version_id}-SP4-EPOL]\nname=EPOL\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP4/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
+    echo -e "[${version_id}-SP4-extra]\nname=extra\nenabled=1\nmetadata_expire=1m\nbaseurl=https://nestos.org.cn/NestOS-22.03-LTS-SP4/For-Container/20240628/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
 }
 
 install_rpms() {
