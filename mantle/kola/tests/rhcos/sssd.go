@@ -27,7 +27,7 @@ func init() {
 		ClusterSize: 1,
 		Name:        `rhcos.sssd`,
 		Flags:       []register.Flag{},
-		Distros:     []string{"rhcos"},
+		Distros:     []string{"rhcos", "nestos"},
 		Platforms:   []string{"qemu"},
 		UserData: conf.Ignition(`{
 			"ignition": {

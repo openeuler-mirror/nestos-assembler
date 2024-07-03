@@ -27,7 +27,7 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:         Filesystem,
 		ClusterSize: 1,
-		Name:        "fcos.filesystem",
+		Name:        "nestos.filesystem",
 		Distros:     []string{"fcos", "nestos"},
 	})
 }
