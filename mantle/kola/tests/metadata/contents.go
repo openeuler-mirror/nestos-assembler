@@ -38,7 +38,7 @@ func init() {
 	}`)
 
 	register.RegisterTest(&register.Test{
-		Name:        "fcos.metadata.aws",
+		Name:        "nestos.metadata.aws",
 		Run:         verifyAWS,
 		ClusterSize: 1,
 		Platforms:   []string{"aws"},
@@ -47,7 +47,7 @@ func init() {
 	})
 
 	register.RegisterTest(&register.Test{
-		Name:        "fcos.metadata.azure",
+		Name:        "nestos.metadata.azure",
 		Run:         verifyAzure,
 		ClusterSize: 1,
 		Platforms:   []string{"azure"},
@@ -56,7 +56,7 @@ func init() {
 	})
 
 	register.RegisterTest(&register.Test{
-		Name:        "fcos.metadata.packet",
+		Name:        "nestos.metadata.packet",
 		Run:         verifyPacket,
 		ClusterSize: 1,
 		Platforms:   []string{"packet"},

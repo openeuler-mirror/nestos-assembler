@@ -41,10 +41,11 @@ func init() {
 		UserData: conf.EmptyIgnition(),
 	})
 	// TODO: rewrite test for NetworkManager
+	// This test is for systemd-networkd.service, but using NetworkManager.service now.
 	register.RegisterTest(&register.Test{
 		Run:            NetworkInitramfsSecondBoot,
 		ClusterSize:    1,
-		Name:           "coreos.network.initramfs.second-boot",
+		Name:           "nestos.network.initramfs.second-boot",
 		Description:    "Verify that networking is not started in the initramfs on the second boot.",
 		ExcludeDistros: []string{"fcos", "rhcos", "nestos"},
 	})
@@ -531,7 +532,7 @@ func setupBondWithDhcpTest(c cluster.TestCluster, primaryMac, secondaryMac, prim
 					"name": "openvswitch.service"
 				},
 				{
-					"contents": "[Unit]\nDescription=Capture MAC address from kargs\nBefore=coreos-installer.target\nAfter=coreos-installer.service\n\nConditionKernelCommandLine=macAddressList\nRequiresMountsFor=/boot\n\n[Service]\nType=oneshot\nMountFlags=slave\nExecStart=/usr/local/bin/capture-macs\n\n[Install]\nRequiredBy=multi-user.target\n",
+					"contents": "[Unit]\nDescription=Capture MAC address from kargs\nBefore=nestos-installer.target\nAfter=nestos-installer.service\n\nConditionKernelCommandLine=macAddressList\nRequiresMountsFor=/boot\n\n[Service]\nType=oneshot\nMountFlags=slave\nExecStart=/usr/local/bin/capture-macs\n\n[Install]\nRequiredBy=multi-user.target\n",
 					"enabled": true,
 					"name": "capture-macs.service"
 				},
@@ -702,7 +703,7 @@ func setupMultipleNetworkTest(c cluster.TestCluster, primaryMac, secondaryMac st
 					"name": "openvswitch.service"
 				},
 				{
-					"contents": "[Unit]\nDescription=Capture MAC address from kargs\nBefore=coreos-installer.target\nAfter=coreos-installer.service\n\nConditionKernelCommandLine=macAddressList\nRequiresMountsFor=/boot\n\n[Service]\nType=oneshot\nMountFlags=slave\nExecStart=/usr/local/bin/capture-macs\n\n[Install]\nRequiredBy=multi-user.target\n",
+					"contents": "[Unit]\nDescription=Capture MAC address from kargs\nBefore=nestos-installer.target\nAfter=nestos-installer.service\n\nConditionKernelCommandLine=macAddressList\nRequiresMountsFor=/boot\n\n[Service]\nType=oneshot\nMountFlags=slave\nExecStart=/usr/local/bin/capture-macs\n\n[Install]\nRequiredBy=multi-user.target\n",
 					"enabled": true,
 					"name": "capture-macs.service"
 				},

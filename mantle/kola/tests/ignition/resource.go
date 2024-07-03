@@ -76,6 +76,102 @@ func init() {
 		ExcludePlatforms: []string{"qemu"},
 		Timeout:          20 * time.Minute,
 	})
+	register.RegisterTest(&register.Test{
+		Name:        "nestos.ignition.resource.remote",
+		Run:         resourceRemote,
+		ClusterSize: 1,
+		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Tags:        []string{"ignition"},
+		// https://github.com/coreos/bugs/issues/2205 for DO
+		ExcludePlatforms: []string{"do"},
+		UserData: conf.Ignition(`{
+		  "ignition": {
+		      "version": "3.0.0"
+		  },
+		  "storage": {
+		      "files": [
+			  {
+			      "path": "/var/resource/http",
+			      "contents": {
+				  "source": "http://nestos.org.cn/kola/anonymous"
+			      },
+			      "mode": 420
+			  },
+			  {
+			      "path": "/var/resource/https",
+			      "contents": {
+				  "source": "https://nestos.org.cn/kola/anonymous"
+			      },
+			      "mode": 420
+			  }
+		      ]
+		  }
+	      }`),
+	})
+	register.RegisterTest(&register.Test{
+		Name:        "nestos.ignition.resource.s3",
+		Run:         resourceS3,
+		ClusterSize: 1,
+		Platforms:   []string{"aws"},
+		Tags:        []string{"ignition"},
+		UserData: conf.Ignition(`{
+		  "ignition": {
+		      "version": "3.0.0",
+		      "config": {
+		          "merge": [{
+		              "source": "s3://rh-kola-fixtures/resources/authenticated-var-v3.ign"
+		          }]
+		      }
+		  },
+		  "storage": {
+		      "files": [
+			  {
+			      "path": "/var/resource/s3-auth",
+			      "contents": {
+				  "source": "s3://rh-kola-fixtures/resources/authenticated"
+			      },
+			      "mode": 420
+			  }
+		      ]
+		  }
+	      }`),
+	})
+	// TODO: once Ignition supports this on all channels/distros
+	//       this test should be rolled into coreos.ignition.resources.remote
+	// Test specifically for versioned s3 objects
+	register.RegisterTest(&register.Test{
+		Name:        "nestos.ignition.resource.s3.versioned",
+		Run:         resourceS3Versioned,
+		ClusterSize: 1,
+		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Tags:        []string{"ignition"},
+		// https://github.com/coreos/bugs/issues/2205 for DO
+		ExcludePlatforms: []string{"do"},
+		UserData: conf.Ignition(`{
+		  "ignition": {
+		      "version": "3.0.0"
+		  },
+		  "storage": {
+		      "files": [
+			  {
+			      "path": "/var/resource/original",
+			      "contents": {
+				  "source": "https://rh-kola-fixtures.s3.amazonaws.com/resources/versioned?versionId=Ym98GTx0npVaJznSAd0I1eUjFoZMP8Zo"
+			      },
+			      "mode": 420
+			  },
+			  {
+			      "path": "/var/resource/latest",
+			      "contents": {
+				  "source": "https://rh-kola-fixtures.s3.amazonaws.com/resources/versioned"
+			      },
+			      "mode": 420
+			  }
+		      ]
+		  }
+	      }`),
+		Distros: []string{"rhcos"},
+	})
 }
 
 func resourceLocal(c cluster.TestCluster) {
@@ -99,6 +195,48 @@ func resourceLocal(c cluster.TestCluster) {
 		"data": "kola-data",
 		"http": "kola-http",
 		"tftp": "kola-tftp",
+	})
+}
+
+func resourceRemote(c cluster.TestCluster) {
+	m := c.Machines()[0]
+
+	checkResources(c, m, map[string]string{
+		"http":  "kola-anonymous",
+		"https": "kola-anonymous",
+	})
+}
+
+func resourceS3(c cluster.TestCluster) {
+	m := c.Machines()[0]
+
+	checkResources(c, m, map[string]string{
+		// object accessible by any authenticated S3 user, such as
+		// the IAM role associated with the instance
+		"s3-auth": "kola-authenticated",
+		// object created by configuration accessible by any authenticated
+		// S3 user, such as the IAM role associated with the instance
+		"s3-config": "kola-config",
+	})
+
+	// verify that the objects are inaccessible anonymously
+	for _, objectName := range []string{"authenticated", "authenticated.ign"} {
+		_, _, err := m.SSH("curl -sf https://rh-kola-fixtures.s3.amazonaws.com/resources/" + objectName)
+		if err == nil {
+			c.Fatal("anonymously fetching authenticated resource should have failed, but did not")
+		}
+	}
+
+	// ...but that the anonymous object is accessible
+	c.RunCmdSync(m, "curl -sf https://rh-kola-fixtures.s3.amazonaws.com/resources/anonymous")
+}
+
+func resourceS3Versioned(c cluster.TestCluster) {
+	m := c.Machines()[0]
+
+	checkResources(c, m, map[string]string{
+		"original": "original",
+		"latest":   "updated",
 	})
 }
 

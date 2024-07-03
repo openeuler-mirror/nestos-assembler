@@ -6,24 +6,26 @@ import (
 	"github.com/coreos/mantle/kola/tests/util"
 )
 
-func init(){
+func init() {
 	register.RegisterTest(&register.Test{
-		Run:		rpmOstreeRebase,
+		Run:         rpmOstreeRebase,
 		ClusterSize: 1,
-		Name: "rpmostree.rebase",
-		FailFast: true,
-		Tags: []string{"rpm-ostree","upgrade"},
-		Flags: []register.Flag{register.RequiresInternetAccess},
+		Name:        "rpmostree.rebase",
+		FailFast:    true,
+		Tags:        []string{"rpm-ostree", "upgrade"},
+		Flags:       []register.Flag{register.RequiresInternetAccess},
+		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
+		// ExcludePlatforms: []string{"qemu-iso"},
 	})
 }
 
 func rpmOstreeRebase(c cluster.TestCluster) {
 	m := c.Machines()[0]
 	arch := c.MustSSH(m, "uname -m")
-	var newBranch string = "ostree-unverified-registry:hub.oepkgs.net/nestos/nestos-test:22.03-LTS-SP2.20230922.0-" + string(arch)
+	var newBranch string = "ostree-unverified-registry:hub.oepkgs.net/nestos/nestos:22.03-LTS-SP3.20240110.0-" + string(arch)
 
 	originalStatus, err := util.GetRpmOstreeStatusJSON(c, m)
-	if err != nil{
+	if err != nil {
 		c.Fatal(err)
 	}
 
@@ -31,7 +33,7 @@ func rpmOstreeRebase(c cluster.TestCluster) {
 		c.Fatalf(`Unexpected results from "rpm-ostree status"; received: %v`, originalStatus)
 	}
 
-	c.Run("ostree upgrade",func(c cluster.TestCluster){		
+	c.Run("ostree upgrade", func(c cluster.TestCluster) {
 		// use "rpm-ostree rebase" to get to the "new" commit
 		_ = c.MustSSH(m, "sudo systemctl start docker.service && sudo rpm-ostree rebase --experimental "+newBranch+" --bypass-driver")
 		// get latest rpm-ostree status output to check validity
@@ -39,7 +41,7 @@ func rpmOstreeRebase(c cluster.TestCluster) {
 		if err != nil {
 			c.Fatal(err)
 		}
-		
+
 		// should have an additional deployment
 		if len(postUpgradeStatus.Deployments) != len(originalStatus.Deployments)+1 {
 			c.Fatalf("Expected %d deployments; found %d deployments", len(originalStatus.Deployments)+1, len(postUpgradeStatus.Deployments))

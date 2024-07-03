@@ -17,6 +17,7 @@ func init() {
 		Name:        `isula.base`,
 		Distros:     []string{"nestos"},
 		Flags:       []register.Flag{register.RequiresInternetAccess},
+		RequiredTag: "isula",
 	})
 	register.RegisterTest(&register.Test{
 		Run:         isulaWorkflow,
@@ -25,6 +26,7 @@ func init() {
 		Distros:     []string{"nestos"},
 		Flags:       []register.Flag{register.RequiresInternetAccess},
 		FailFast:    true,
+		RequiredTag: "isula",
 	})
 }
 
@@ -125,7 +127,7 @@ func isulaWorkflow(c cluster.TestCluster) {
 
 	// Test: Run container
 	c.Run("run", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo isula run -itd --name busybox hub.oepkgs.net/library/busybox")
+		_, err := c.SSH(m, "sudo isula run -itd --name busybox atomhub.openatom.cn/library/busybox:latest")
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -189,7 +191,7 @@ func isulaWorkflow(c cluster.TestCluster) {
 
 	// Test: Delete image
 	c.Run("delete", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo isula rmi hub.oepkgs.net/library/busybox")
+		_, err := c.SSH(m, "sudo isula rmi atomhub.openatom.cn/library/busybox:latest")
 		if err != nil {
 			c.Fatal(err)
 		}

@@ -32,6 +32,8 @@ func init() {
 		Flags:       []register.Flag{register.RequiresInternetAccess}, // need network to pull RPM
 		FailFast:    true,
 		Tags:        []string{"ostree"},
+		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
+		// ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         ostreeHotfixTest,
@@ -40,6 +42,8 @@ func init() {
 		Name:        "ostree.hotfix",
 		FailFast:    true,
 		Tags:        []string{"ostree"},
+		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
+		// ExcludePlatforms: []string{"qemu-iso"},
 		// enable debugging for https://github.com/coreos/fedora-coreos-tracker/issues/942
 		// we can drop it once we resolved it
 		UserData: conf.Butane(`

@@ -32,6 +32,8 @@ func init() {
 		Name:        "rpmostree.upgrade-rollback",
 		FailFast:    true,
 		Tags:        []string{"rpm-ostree", "upgrade"},
+		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
+		// ExcludePlatforms: []string{"qemu-iso"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         rpmOstreeInstallUninstall,
@@ -51,9 +53,9 @@ func init() {
 					"name": "nest"
 				  },
 				  "contents": {
-					"source": "https://github.com/projectatomic/atomic-host-tests/raw/master/rpm/aht-dummy-1.0-1.noarch.rpm",
+					"source": "http://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm",
 					"verification": {
-					  "hash": "sha512-da29ae637b30647cab2386a2ce6b4223c3ad7120ae8dd32d9ce275f26a11946400bba0b86f6feabb9fb83622856ef39f8cecf14b4975638c4d8c0cf33b0f7b26"
+					  "hash": "sha512-ad843f91a51a27416f2769014d03f329e1cd1e3a2907d1ff8bb17cabbec37f8e3417e81859bd14182c9e6efb3ca46d5fed60d02c82a8c4ce3c27f5e05c267eca"
 					}
 				  },
 				  "mode": 420
@@ -201,7 +203,7 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 
 	m := c.Machines()[0]
 
-	_, err := c.SSH(m, `sudo wget -P /var/home/nest http://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm`)
+	_, err := c.SSH(m, `bash -c 'cd ${HOME} && curl -L -O https://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm'`)
 	if err != nil {
 		c.Fatal(err)
 	}
