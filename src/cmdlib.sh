@@ -161,7 +161,19 @@ prepare_build() {
     mkdir "${tmp_builddir}"
 
     configdir=${workdir}/src/config
-    manifest=${configdir}/manifest.yaml
+    initconfig="${workdir}/src/config.json"
+    if [[ -f "${initconfig}" ]]; then
+        variant="$(jq --raw-output '."coreos-assembler.config-variant"' "${initconfig}")"
+        manifest="${configdir}/manifest-${variant}.yaml"
+        image="${configdir}/image-${variant}.yaml"
+        # Currently unused as cmd-buildextend-extensions is in Python
+        # extensions="${configdir}/extensions-${variant}.yaml"
+    else
+        manifest="${configdir}/manifest.yaml"
+        image="${configdir}/image.yaml"
+        # Currently unused as cmd-buildextend-extensions is in Python
+        # extensions="${configdir}/extensions.yaml"
+    fi
     # for the base lockfile, we default to JSON since that's what rpm-ostree
     # actually outputs
     manifest_lock=$(pick_yaml_or_else_json "${configdir}/manifest-lock.${basearch}" json)
@@ -202,6 +214,11 @@ prepare_build() {
             rm -f "${tmprepo}/summary"
         else
             ostree init --repo="${tmprepo}" --mode=archive
+        fi
+
+        # No need to fsync for transient flows
+        if test -f "${workdir}/tmp/nosa-transient"; then
+            ostree --repo="${tmprepo}" config set 'core.fsync' 'false'
         fi
     fi
 
@@ -311,7 +328,7 @@ prepare_compose_overlays() {
         exit 1
     fi
 
-    if [ -d "${overridesdir}" ] || [ -d "${ovld}" ]; then
+    if [ -d "${overridesdir}" ] || [ -d "${ovld}" ] || [ -d "${workdir}/src/yumrepos" ]; then
         mkdir -p "${tmp_overridesdir}"
         cat > "${override_manifest}" <<EOF
 include: ${manifest}
@@ -319,7 +336,14 @@ EOF
         # Because right now rpm-ostree doesn't look for .repo files in
         # each included dir.
         # https://github.com/projectatomic/rpm-ostree/issues/1628
-        cp "${workdir}"/src/config/*.repo "${tmp_overridesdir}"/
+        find "${configdir}/" -maxdepth 1 -type f -name '*.repo' -exec cp -t "${tmp_overridesdir}" {} +
+        if [ -d "${workdir}/src/yumrepos" ]; then
+            find "${workdir}/src/yumrepos/" -maxdepth 1 -type f -name '*.repo' -exec cp -t "${tmp_overridesdir}" {} +
+        fi
+        if ! ls "${tmp_overridesdir}"/*.repo; then
+            echo "ERROR: no yum repo files were found"
+            exit 1
+        fi
         manifest=${override_manifest}
     fi
 
@@ -385,6 +409,35 @@ EOF
     else
         rm -vf "${local_overrides_lockfile}"
     fi
+
+    contentset_path=""
+    if [ -e "${configdir}/content_sets.yaml" ]; then
+        contentset_path="${configdir}/content_sets.yaml"
+    elif [ -e "${workdir}/src/yumrepos/content_sets.yaml" ]; then
+        contentset_path="${workdir}/src/yumrepos/content_sets.yaml"
+    fi
+
+    if [ -n "${contentset_path}" ]; then
+        mkdir -p "${tmp_overridesdir}"/contentsetrootfs/usr/share/buildinfo/
+        # create_content_manifest takes in the base repos and maps them to their pulp repository IDs
+        # available in content_sets.yaml. The mapped repos are then available in content_manifest.json
+        # Feature: https://issues.redhat.com/browse/GRPA-3731
+        create_content_manifest "${contentset_path}" "${tmp_overridesdir}/contentsetrootfs/usr/share/buildinfo/content_manifest.json"
+        # adjust permissions to appease the ext.config.shared.files.file-directory-permissions test
+        chmod 0644 "${tmp_overridesdir}/contentsetrootfs/usr/share/buildinfo/content_manifest.json"
+
+        echo -n "Committing ${tmp_overridesdir}/contentsetrootfs... "
+        commit_overlay contentset "${tmp_overridesdir}/contentsetrootfs"
+        layers="${layers} overlay/contentset"
+    fi
+
+    if [ -n "${layers}" ]; then
+        echo "ostree-layers:" >> "${override_manifest}"
+        for layer in ${layers}; do
+            echo "  - ${layer}" >> "${override_manifest}"
+        done
+    fi
+
     rootfs_overrides="${overridesdir}/rootfs"
     if [[ -d "${rootfs_overrides}" && -n $(ls -A "${rootfs_overrides}") ]]; then
         echo -n "Committing ${rootfs_overrides}... "
