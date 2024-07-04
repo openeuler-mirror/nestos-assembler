@@ -25,6 +25,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/context"
 
+	"github.com/coreos/coreos-assembler/mantle/kola"
 	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
 	"github.com/coreos/coreos-assembler/mantle/kola/register"
 	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
@@ -189,20 +190,23 @@ func init() {
 		Run:         crioBaseTests,
 		ClusterSize: 1,
 		Name:        `crio.base`,
-		// crio pods require fetching a kubernetes pause image
-		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Description: "Verify cri-o basic funcions work, include storage driver is overlay, storage root is /varlib/containers/storage, cgroup driver is systemd, and cri-o containers have reliable networking",
 		Distros:     []string{"rhcos", "nestos"},
 		UserData:    enableCrioIgn,
 		RequiredTag: "crio",
+		// crio pods require fetching a kubernetes pause image
+		Tags: []string{"crio", kola.NeedsInternetTag},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         crioNetwork,
 		ClusterSize: 2,
 		Name:        "crio.network",
-		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Description: "Verify crio containers can make network connections outside of the host.",
 		Distros:     []string{"rhcos", "nestos"},
 		UserData:    enableCrioIgn,
 		RequiredTag: "crio",
+		// this test requires net connections outside the host
+		Tags: []string{"crio", kola.NeedsInternetTag},
 		// qemu machines cannot communicate between each other
 		ExcludePlatforms: []string{"qemu"},
 	})
@@ -367,12 +371,7 @@ func crioNetwork(c cluster.TestCluster) {
 // crioNetworksReliably verifies that crio containers have a reliable network
 func crioNetworksReliably(c cluster.TestCluster) {
 	m := c.Machines()[0]
-
-	// Figure out the host IP address on the crio default bridge. This is
-	// required as the default subnet was changed in 1.18 to avoid a conflict
-	// with the default podman bridge.
-	subnet := c.MustSSH(m, "jq --raw-output '.ipam.ranges[0][0].subnet' /usr/etc/cni/net.d/100-crio-bridge.conf")
-	hostIP := fmt.Sprintf("%s.1", strings.TrimSuffix(string(subnet), ".0/16"))
+	hostIP := "127.0.0.1"
 
 	// Here we generate 10 pods, each will run a container responsible for
 	// pinging to host

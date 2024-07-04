@@ -28,6 +28,7 @@ func init() {
 		Run:         Filesystem,
 		ClusterSize: 1,
 		Name:        "nestos.filesystem",
+		Description: "Verify the permissions are correct on the filesystem.",
 		Distros:     []string{"fcos", "nestos"},
 	})
 }
@@ -78,7 +79,6 @@ func StickyDirs(c cluster.TestCluster) {
 		"/tmp",
 		"/var/tmp",
 		"/run/user/1000/libpod",
-		"/run/ephemeral/var/tmp",
 	}
 
 	output := c.MustSSH(m, fmt.Sprintf("sudo find / -ignore_readdir_race -path %s -prune -o -type d -perm /1000 -print", strings.Join(ignore, " -prune -o -path ")))

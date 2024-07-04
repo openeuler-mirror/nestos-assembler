@@ -24,6 +24,7 @@ func init() {
 		Run:         AuthVerify,
 		ClusterSize: 1,
 		Name:        "nestos.auth.verify",
+		Description: "Verify that invalid password prevents access to the host.",
 	})
 }
 
