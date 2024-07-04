@@ -98,9 +98,14 @@ func runBootMirrorTest(c cluster.TestCluster) {
 	var err error
 	options := platform.QemuMachineOptions{
 		MachineOptions: platform.MachineOptions{
-			AdditionalDisks: []string{"5120M", "5120M"},
+			AdditionalDisks: []string{"5G", "5G"},
 			MinMemory:       4096,
 		},
+	}
+	// ppc64le uses 64K pages; see similar logic in harness.go and luks.go
+	switch coreosarch.CurrentRpmArch() {
+	case "ppc64le":
+		options.MinMemory = 8192
 	}
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
@@ -145,9 +150,14 @@ func runBootMirrorLUKSTest(c cluster.TestCluster) {
 	var err error
 	options := platform.QemuMachineOptions{
 		MachineOptions: platform.MachineOptions{
-			AdditionalDisks: []string{"5120M"},
+			AdditionalDisks: []string{"5G"},
 			MinMemory:       4096,
 		},
+	}
+	// ppc64le uses 64K pages; see similar logic in harness.go and luks.go
+	switch coreosarch.CurrentRpmArch() {
+	case "ppc64le":
+		options.MinMemory = 8192
 	}
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
@@ -232,6 +242,15 @@ func detachPrimaryBlockDevice(c cluster.TestCluster, m platform.Machine) {
 		}); err != nil {
 			c.Fatalf("Failed to retrieve boot ID: %v", err)
 		}
+
+		// Give some time to the host before doing the reboot. Without it, we've noticed
+		// that rebooting too quickly after ripping out the primary device can trigger
+		// a kernel panic on ppc64le. This may be memory-related since the same panic
+		// happens more easily if memory is lowered to 4G.
+		if coreosarch.CurrentRpmArch() == "ppc64le" {
+			time.Sleep(60 * time.Second)
+		}
+
 		err := m.Reboot()
 		if err != nil {
 			c.Fatalf("Failed to reboot the machine: %v", err)

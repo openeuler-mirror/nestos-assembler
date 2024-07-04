@@ -23,6 +23,7 @@ import (
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.once",
+		Description: "Verify Ignition only runs once.",
 		Run:         runsOnce,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},

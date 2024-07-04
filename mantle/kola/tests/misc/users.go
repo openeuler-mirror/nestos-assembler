@@ -25,8 +25,9 @@ func init() {
 	register.RegisterTest(&register.Test{
 		Run:              CheckUserShells,
 		ClusterSize:      1,
-		ExcludePlatforms: []string{"gce"},
+		ExcludePlatforms: []string{"gcp"},
 		Name:             "nestos.users.shells",
+		Description:      "Verify that there are no invalid users.",
 		Distros:          []string{"fcos", "nestos"},
 	})
 }
@@ -36,11 +37,10 @@ func CheckUserShells(c cluster.TestCluster) {
 	var badusers []string
 
 	ValidUsers := map[string]string{
-		"sync":          "/bin/sync",
-		"shutdown":      "/sbin/shutdown",
-		"halt":          "/sbin/halt",
-		"nest":          "/bin/bash",
-		"node_exporter": "/bin/nologin",
+		"sync":     "/bin/sync",
+		"shutdown": "/sbin/shutdown",
+		"halt":     "/sbin/halt",
+		"nest":     "/bin/bash",
 	}
 
 	output := c.MustSSH(m, "getent passwd")

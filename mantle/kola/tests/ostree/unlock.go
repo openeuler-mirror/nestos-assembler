@@ -17,11 +17,11 @@ package ostree
 import (
 	"fmt"
 
+	"github.com/coreos/coreos-assembler/mantle/kola"
 	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
 	"github.com/coreos/coreos-assembler/mantle/kola/register"
 	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
 	"github.com/coreos/coreos-assembler/mantle/platform"
-	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
@@ -29,36 +29,18 @@ func init() {
 		Run:         ostreeUnlockTest,
 		ClusterSize: 1,
 		Name:        "ostree.unlock",
-		Flags:       []register.Flag{register.RequiresInternetAccess}, // need network to pull RPM
+		Description: "Verify installing an rpm does not persist when using `ostree admin unlock`.",
 		FailFast:    true,
-		Tags:        []string{"ostree"},
-		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
-		// ExcludePlatforms: []string{"qemu-iso"},
+		Tags:        []string{"ostree", kola.NeedsInternetTag}, // need network to pull RPM
 	})
 	register.RegisterTest(&register.Test{
 		Run:         ostreeHotfixTest,
 		ClusterSize: 1,
-		Flags:       []register.Flag{register.RequiresInternetAccess}, // need network to pull RPM
 		Name:        "ostree.hotfix",
+		Description: "Verify that the deployment can be put into hotfix mode where RPMs installed with persist across reboots.",
 		FailFast:    true,
-		Tags:        []string{"ostree"},
-		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
-		// ExcludePlatforms: []string{"qemu-iso"},
-		// enable debugging for https://github.com/coreos/fedora-coreos-tracker/issues/942
-		// we can drop it once we resolved it
-		UserData: conf.Butane(`
-variant: fcos
-version: 1.4.0
-systemd:
-  units:
-  - name: rpm-ostreed.service
-    dropins:
-    - name: 10-debug.conf
-      contents: |-
-        [Service]
-        Environment=G_MESSAGES_DEBUG=rpm-ostreed`),
+		Tags:        []string{"ostree", kola.NeedsInternetTag}, // need network to pull RPM
 	})
-
 }
 
 var (

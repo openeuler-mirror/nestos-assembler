@@ -22,6 +22,7 @@ import (
 
 	"github.com/coreos/pkg/capnslog"
 
+	"github.com/coreos/coreos-assembler/mantle/kola"
 	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
 	"github.com/coreos/coreos-assembler/mantle/kola/register"
 	"github.com/coreos/coreos-assembler/mantle/platform/conf"
@@ -35,6 +36,7 @@ func init() {
 		Run:         rhcosClusterInsecure,
 		ClusterSize: 3,
 		Name:        "rhcos.etcd.cluster.insecure",
+		Description: "Verify that an etcd cluster in podman without TLS or external discovery services works.",
 		UserData: conf.Ignition(`{
   "ignition": { "version": "3.0.0" },
   "systemd": {
@@ -51,7 +53,7 @@ func init() {
     ]
   }
 }`),
-		Flags:   []register.Flag{register.RequiresInternetAccess}, // fetching etcd requires networking
+		Tags:    []string{kola.NeedsInternetTag}, // fetching etcd requires networking
 		Distros: []string{"rhcos"},
 		// qemu machines cannot communicate between each other
 		ExcludePlatforms: []string{"qemu"},
@@ -60,6 +62,7 @@ func init() {
 		Run:         rhcosClusterTLS,
 		ClusterSize: 3,
 		Name:        "rhcos.etcd.cluster.tls",
+		Description: "Verify that an etcd cluster in podman with TLS without discovery services works.",
 		UserData: conf.Ignition(`{
   "ignition": { "version": "3.0.0" },
   "systemd": {
@@ -85,7 +88,7 @@ func init() {
     ]
   }
 }`),
-		Flags:   []register.Flag{register.RequiresInternetAccess}, // fetching etcd requires networking
+		Tags:    []string{kola.NeedsInternetTag}, // fetching etcd requires networking
 		Distros: []string{"rhcos"},
 		// qemu machines cannot communicate between each other
 		ExcludePlatforms: []string{"qemu"},
