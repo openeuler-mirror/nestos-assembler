@@ -10,26 +10,30 @@ print_help() {
 Usage: coreos-assembler build --help
        coreos-assembler build [OPTIONS]... [TARGET]...
 
-  Build OSTree and image base artifacts from previously fetched packages.
+  Build bootable container (ostree) and image base artifacts from previously fetched packages.
   Accepted TARGET arguments:
 
-  - ostree     Compose an ostree commit
+  - container  Build the bootable container image (ostree)
+  - ostree     Deprecated alias for container
   - qemu       Also create a QCOW2 image to run with QEMU
   - metal      Also create a raw disk image
   - metal4k    Also create a raw disk image for 4K native disks
 
-  The "qemu" and "metal" targets imply "ostree". If unspecified, defaults to
+  The "qemu" and "metal" targets imply "container". If unspecified, defaults to
   "qemu". They are equivalent to manually running buildextend-[TARGET] after.
 
   The following options are supported:
 
-  --delay-meta-merge  Set 'coreos-assembler.delayed-meta-merge' in build metadata (default: false)
-  --force             Always create a new OSTree commit, even if nothing appears to have changed
-  --force-image       Force an image rebuild even if there were no changes to image input
-  --skip-prune        Skip prunning previous builds
-  --strict            Only allow installing locked packages when using lockfiles
-  --tag TAG           Set the given tag in the build metadata
-  --version VERSION   Use the given version instead of generating one based on current time
+  --delay-meta-merge    Set 'coreos-assembler.delayed-meta-merge' in build metadata (default: false)
+  --force               Always create a new OSTree commit, even if nothing appears to have changed
+  --force-image         Force an image rebuild even if there were no changes to image input
+  --skip-prune          Skip prunning previous builds
+  -F | --fetch          Also perform a fetch
+  --strict              Only allow installing locked packages when using lockfiles
+  --prepare-only        Do not actually build, only set things up so that `rpm-ostree compose image` works.
+  --tag TAG             Set the given tag in the build metadata
+  --version VERSION     Use the given version instead of generating one based on current time
+  --skip-config-archive Disable creating a tar.gz archive of the config repo.
 
   Additional environment variables supported:
 
@@ -43,14 +47,17 @@ EOF
 DELAY_META_MERGE=false
 FORCE=
 FORCE_IMAGE=
+FETCH=
 SKIP_PRUNE=0
+PREPARE_ONLY=0
 VERSION=
 PARENT=
 PARENT_BUILD=
 TAG=
 STRICT=
+CONFIG_ARCHIVE=1
 rc=0
-options=$(getopt --options hft: --longoptions tag:,help,force,version:,parent:,parent-build:,delay-meta-merge,force-nocache,force-image,skip-prune,strict -- "$@") || rc=$?
+options=$(getopt --options hfFt: --longoptions tag:,help,fetch,force,version:,parent:,parent-build:,delay-meta-merge,force-nocache,force-image,skip-prune,prepare-only,strict,skip-config-archive -- "$@") || rc=$?
 [ $rc -eq 0 ] || {
     print_help
     exit 1
@@ -65,14 +72,23 @@ while true; do
         -f | --force | --force-nocache)
             FORCE="--force-nocache"
             ;;
+        -F | --fetch)
+            FETCH=1
+            ;;
         --delay-meta-merge)
             DELAY_META_MERGE=true
+            ;;
+        --skip-config-archive)
+            CONFIG_ARCHIVE=0
             ;;
         --force-image)
             FORCE_IMAGE=1
             ;;
         --skip-prune)
             SKIP_PRUNE=1
+            ;;
+        --prepare-only)
+            PREPARE_ONLY=1
             ;;
         --strict)
             STRICT=1
@@ -108,6 +124,13 @@ while true; do
     shift
 done
 
+# TODO: In the future optimize this to avoid doing all the "prepare_build"
+# stuff twice.  Also in a `cosa init --transient` case we can avoid writing
+# any cache data at all for the RPMs.
+if test -n "${FETCH}"; then
+    nosa fetch
+fi
+
 if [ $# -eq 0 ]; then
     set -- qemu
 fi
@@ -115,7 +138,13 @@ fi
 # sanity check the targets and aggregate into a set
 declare -A targets=( )
 for target in "$@"; do
-    if [[ $target != ostree ]]; then
+    # Process the alias
+    if [[ $target == ostree ]]; then
+        target=container
+    fi
+    # Except we *always* build the container image, so ignore
+    # it as a request.
+    if [[ $target != container ]]; then
         case "$target" in
             metal|metal4k|qemu|secex) ;;
             *) fatal "Unrecognized target: $target" ;;
@@ -138,11 +167,15 @@ prepare_build
 ostree --version
 rpm-ostree --version
 
-previous_build=$(get_latest_build)
+previous_build=$(get_latest_build_for_arch "$basearch")
+echo "Previous build: ${previous_build:-none}"
 if [ -n "${previous_build}" ]; then
     previous_builddir=$(get_build_dir "${previous_build}")
+    if [ ! -d "${previous_builddir}" ]; then
+        echo "Previous build directory doesn't exist locally. Ignoring..."
+        previous_build=""
+    fi
 fi
-echo "Previous build: ${previous_build:-none}"
 
 previous_commit=
 previous_ostree_tarfile_path=
@@ -160,7 +193,8 @@ if [ -n "${previous_commit}" ]; then
     commitpartial=${tmprepo}/state/${previous_commit}.commitpartial
     if [ ! -f "${commitpath}" ] || [ -f "${commitpartial}" ]; then
         if [ -f "${previous_builddir}/${previous_ostree_tarfile_path}" ]; then
-            import_ostree_commit_for_build "${previous_build}"
+            # don't extract the image.json though, keep the one we generated during prepare_build above
+            import_ostree_commit_for_build "${previous_build}" 0
         else
             # ok, just fallback to importing the commit object only
             mkdir -p "$(dirname "${commitpath}")"
@@ -173,6 +207,9 @@ if [ -n "${previous_commit}" ]; then
     if test -n "${ref}" && ! ostree rev-parse --repo="${tmprepo}" "${ref}" &>/dev/null; then
         ostree refs --repo="${tmprepo}" --create "${ref}" "${previous_commit}"
     fi
+
+    # also make sure the previous build ref exists
+    ostree refs --repo="${tmprepo}" --create "${previous_build}" "${previous_commit}" --force
 
     # Corner-case here: if the previous build was for a different ref, then we
     # want to make sure rpm-ostree doesn't select the same version. Do this by
@@ -230,7 +267,15 @@ EOF
 if [ -d "${workdir}/src/yumrepos" ]; then
     prepare_git_artifacts "${workdir}/src/yumrepos" "${PWD}/coreos-assembler-yumrepos-git.json"
 fi
-prepare_git_artifacts "${configdir_gitrepo}" "${PWD}/coreos-assembler-config.tar.gz" "${PWD}/coreos-assembler-config-git.json"
+
+# set the config repo archive file name
+config_archive="${PWD}/coreos-assembler-config.tar.gz"
+if [ "${CONFIG_ARCHIVE}"  == 0 ]; then
+    # archiving the config is disabled by the command-line. Blank file name disables its generation.
+    config_archive=""
+fi
+
+prepare_git_artifacts "${configdir_gitrepo}" "${PWD}/coreos-assembler-config-git.json" "${config_archive}"
 
 extra_compose_args=()
 
@@ -271,12 +316,16 @@ if [ -n "${PARENT}" ]; then
 fi
 extra_compose_args+=("$parent_arg")
 
-# These need to be absolute paths right now for rpm-ostree
-composejson="$(readlink -f "${workdir}"/tmp/compose.json)"
 # Put this under tmprepo so it gets automatically chown'ed if needed
 lockfile_out=${tmprepo}/tmp/manifest-lock.generated.${basearch}.json
 # shellcheck disable=SC2119
 prepare_compose_overlays
+
+if test "${PREPARE_ONLY}" = 1; then
+    echo "Option --prepare-only was specified; exiting"
+    exit 0
+fi
+
 # See https://github.com/coreos/coreos-assembler/pull/1379 - we want the local
 # dev case to explicitly fetch updates when they want them, plus CI pipelines
 # generally want to react to "changed or not" with a separate `fetch`.
@@ -285,6 +334,16 @@ prepare_compose_overlays
 if [ ! -f "${workdir}"/builds/builds.json ] && [ ! -f "${fetch_stamp}" ] ; then
     fatal "Must fetch before building"
 fi
+composefs="$(jq -r .composefs < "${image_json}")"
+case "${composefs}" in
+    false) 
+    ;;
+    true)
+        ostree config --repo="${tmprepo}" set ex-integrity.composefs "true"
+    ;;
+    *) fatal "Unhandled composefs setting: ${composefs}" ;;
+esac
+
 # --cache-only is here since `fetch` is a separate verb
 # shellcheck disable=SC2086
 if test -n "${previous_commit}"; then
@@ -292,7 +351,6 @@ if test -n "${previous_commit}"; then
 fi
 RUNVM_NONET=1 runcompose_tree --cache-only ${FORCE} \
            --add-metadata-from-json "${commitmeta_input_json}" \
-           --write-composejson-to "${composejson}" \
            --ex-write-lockfile-to "${lockfile_out}".tmp \
            "${extra_compose_args[@]}"
 strip_out_lockfile_digests "$lockfile_out".tmp
@@ -331,7 +389,7 @@ else
         cp-reflink "${cached_previous_composejson}" "${composejson}"
     else
         if [ -z "${previous_build}" ]; then
-            # This can happen if building the OSTree worked on the first time,
+            # This can happen if building the bootable container worked on the first time,
             # but image creation failed, and then tmp/ was nuked before trying a
             # second time. Just recommend re-running with --force.
             fatal "compose tree had no changes, but no previous build or cached data; try rerunning with --force"
@@ -387,21 +445,67 @@ if [ "${commit}" == "${previous_commit}" ] && \
     ostree_tarfile_path=$(jq -r '.images.ostree.path' < "${previous_builddir}/meta.json")
     cp-reflink "${previous_builddir}/${previous_ostree_tarfile_path}" "${ostree_tarfile_path}"
     ostree_tarfile_sha256=$(jq -r '.images.ostree.sha256' < "${previous_builddir}/meta.json")
+    
+    ostree_oci_manifest_path="${name}-${buildid}-ostree.${basearch}-manifest.json"
+    skopeo inspect --raw oci-archive:"${ostree_tarfile_path}" > tmp/manifest.json
+    /usr/lib/coreos-assembler/finalize-artifact tmp/manifest.json "${ostree_oci_manifest_path}"
+    ostree_oci_manifest_sha256=$(sha256sum "${ostree_oci_manifest_path}" | awk '{print$1}')
+    ostree_oci_manifest_size=$(stat --format=%s "${ostree_oci_manifest_path}")
+
     # backcompat: allow older build without this field
     if [ "${ostree_tarfile_sha256}" = "null" ]; then
         ostree_tarfile_sha256=
     fi
 else
     ostree_format=$(jq -r '.["ostree-format"]' < "${image_json}")
+    ostree_tarfile_path="${name}-${buildid}-ostree.${basearch}.ociarchive"
+    gitsrc=$(jq -r .git.origin < "${PWD}/coreos-assembler-config-git.json")
+    openshift_cvo_labels=$(jq -r '.["ostree-container-inject-openshift-cvo-labels"]' < "${image_json}")
+
+    # The ostree-ext default is 64, but this is still too much apparently
+    # for (older?) versions of podman AKA containers/storage (or maybe)
+    # a kernel limitation?  For example
+    # `cannot mount layer, mount label "" too large 4168 > page size 4096`
+    MAX_OSTREECONTAINER_LAYERS=50
     case "${ostree_format}" in
-        null|oci)
-            ostree_tarfile_path="${name}-${buildid}-ostree.${basearch}.ociarchive"
-            rpm-ostree ex-container 'export' --cmd /usr/bin/bash --repo="${tmprepo}" "${buildid}" oci-archive:"${ostree_tarfile_path}".tmp:latest
-            ;;
+        oci-chunked-v1) ;;
         *) fatal "Unknown ostree-format: ${ostree_format}"
     esac
+    labels=()
+    if test "${openshift_cvo_labels}" = "true"; then
+        labels+=("--label=io.openshift.build.version-display-names=machine-os=$(extract_osrelease_name "$buildid")" \
+                 "--label=io.openshift.build.versions=machine-os=${buildid}"
+                )
+    fi
+    
+    last_build_manifest=()
+    if rpm-ostree compose container-encapsulate --help |grep -q -e "--previous-build-manifest"; then
+      # Use the last stable release if buildfetch used
+      if [ -n "${PARENT_BUILD}" ] && [ -f "${parent_builddir}/${name}-${PARENT_BUILD}-ostree.${basearch}-manifest.json" ]; then
+        last_build_manifest+=("--previous-build-manifest=${parent_builddir}/${name}-${PARENT_BUILD}-ostree.${basearch}-manifest.json")
+      # Use the previous local build
+      elif [ -n "${previous_build}" ] && [ -f "${previous_builddir}/${name}-${previous_build}-ostree.${basearch}-manifest.json" ]; then
+        last_build_manifest+=("--previous-build-manifest=${previous_builddir}/${name}-${previous_build}-ostree.${basearch}-manifest.json")
+      fi
+    fi
+    runv rpm-ostree compose container-encapsulate --max-layers="$MAX_OSTREECONTAINER_LAYERS" --format-version=1 \
+        --repo="${tmprepo}" \
+        --label="coreos-assembler.image-config-checksum=${image_config_checksum}" \
+        --label="coreos-assembler.image-input-checksum=${image_input_checksum}" \
+        --label="org.opencontainers.image.source=${gitsrc}" \
+        --label="org.opencontainers.image.revision=${config_gitrev}" \
+        --copymeta-opt=nestos.stream \
+        "${last_build_manifest[@]}" \
+        "${labels[@]}" \
+        "${buildid}" \
+        oci-archive:"${ostree_tarfile_path}".tmp:latest
     /usr/lib/coreos-assembler/finalize-artifact "${ostree_tarfile_path}"{.tmp,}
     ostree_tarfile_sha256=$(sha256sum "${ostree_tarfile_path}" | awk '{print$1}')
+    ostree_oci_manifest_path="${name}-${buildid}-ostree.${basearch}-manifest.json"
+    skopeo inspect --raw oci-archive:"${ostree_tarfile_path}" > tmp/manifest.json
+    /usr/lib/coreos-assembler/finalize-artifact tmp/manifest.json "${ostree_oci_manifest_path}"
+    ostree_oci_manifest_sha256=$(sha256sum "${ostree_oci_manifest_path}" | awk '{print$1}')
+    ostree_oci_manifest_size=$(stat --format=%s "${ostree_oci_manifest_path}")
 fi
 
 # The base metadata, plus locations for code sources.
@@ -443,7 +547,13 @@ cat > tmp/images.json <<EOF
     "ostree": {
         "path": "${ostree_tarfile_path}",
         "sha256": "${ostree_tarfile_sha256}",
-        "size": ${ostree_tarfile_size}
+        "size": ${ostree_tarfile_size},
+        "skip-compression": true
+    },
+    "oci-manifest": {
+      "path": "${ostree_oci_manifest_path}",
+      "sha256": "${ostree_oci_manifest_sha256}",
+      "size": ${ostree_oci_manifest_size}
     }
   }
 }

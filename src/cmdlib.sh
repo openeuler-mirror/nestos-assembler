@@ -769,10 +769,10 @@ openshift_git_hack() {
 prepare_git_artifacts() {
     # prepare_git_artifacts prepares two artifacts from a GIT repo:
     #   1. JSON describing the GIT tree.
-    #   2. A tarball of the source.
+    #   2. Optionally, a tarball of the source.
     local gitd="${1:?first argument must be the git directory}"; shift;
-    local tarball="${1:?second argument me be the tarball name}"; shift;
-    local json="${1:?third argument must be the json file name to emit}"; shift;
+    local json="${1:?second argument must be the json file name to emit}"; shift;
+    local tarball="${1:-}"
 
     openshift_git_hack "${gitd}"
 
@@ -857,6 +857,18 @@ get_latest_build() {
     fi
 }
 
+get_latest_build_for_arch() {
+    local arch=$1; shift
+    # yup, this is happening
+    (python3 -c "
+import sys
+sys.path.insert(0, '${DIR}')
+from cosalib.builds import Builds
+buildid = Builds('${workdir:-$(pwd)}').get_latest_for_arch('${arch}')
+if buildid:
+    print(buildid)")
+}
+
 get_build_dir() {
     local buildid=$1; shift
     # yup, this is happening
@@ -918,6 +930,7 @@ cmdlib.write_image_json('${srcfile}', '${outfile}')")
 # and also writes tmp/image.json if arg2 is unset or set to 1
 import_ostree_commit_for_build() {
     local buildid=$1; shift
+    local extractjson=${1:-1}
     (python3 -c "
 import sys
 sys.path.insert(0, '${DIR}')
@@ -927,6 +940,16 @@ workdir = '${workdir:-$(pwd)}'
 builds = Builds(workdir)
 builddir = builds.get_build_dir('${buildid}')
 buildmeta = builds.get_build_meta('${buildid}')
-cmdlib.import_ostree_commit(workdir, builddir, buildmeta)
+cmdlib.import_ostree_commit(workdir, builddir, buildmeta, ${extractjson})
 ")
+}
+
+# Extract the value of NAME from os-release
+extract_osrelease_name() {
+    local buildid=$1; shift
+    local out="$workdir/tmp/osrelease"
+    rm "${out}" -rf
+    ostree checkout --repo "${tmprepo}" --user-mode --subpath=/usr/lib/os-release "${buildid}" "$out"
+    # shellcheck disable=SC1091,SC2153
+    (. "$out/os-release" && echo "${NAME}")
 }

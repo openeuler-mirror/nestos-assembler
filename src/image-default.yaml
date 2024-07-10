@@ -2,9 +2,16 @@
 bootfs: "ext4"
 rootfs: "xfs"
 
+# Set to "true" to enable composefs
+composefs: false
+
 # Additional default kernel arguments injected into disk images
 extra-kargs: []
 
+# Can also be oci-chunked
+ostree-format: oci-chunked-v1
+# Inject io.openshift.build.version-display-names for OpenShift CVO
+ostree-container-inject-openshift-cvo-labels: false
 # True if we should use `ostree container image deploy`
 deploy-via-container: false
 # Set this to a target container reference, e.g. ostree-unverified-registry:quay.io/example/os:latest
