@@ -283,6 +283,18 @@ def generate_iso():
     # moved where Ignition will see it.
     with open(os.path.join(tmpisoimages, ignition_img), 'wb') as fdst:
         fdst.write(bytes(ignition_img_size))
+
+    # Generate JSON file that lists OS features available to
+    # coreos-installer {iso|pxe} customize.  Put it in the initramfs for
+    # pxe customize and the ISO for iso customize.
+    features = json.dumps(get_os_features(), indent=2, sort_keys=True) + '\n'
+    featurespath = os.path.join(tmpinitrd_base, 'etc/nestos/features.json')
+    os.makedirs(os.path.dirname(featurespath), exist_ok=True)
+    with open(featurespath, 'w') as fh:
+        fh.write(features)
+    with open(os.path.join(tmpisocoreos, 'features.json'), 'w') as fh:
+        fh.write(features)
+
     # Add osmet files
     tmp_osmet = os.path.join(tmpinitrd_rootfs, img_metal_obj['path'] + '.osmet')
     print('Generating osmet file for 512b metal image')
@@ -507,6 +519,65 @@ def generate_iso():
                    '--user-mode', '--subpath',
                    "/usr/lib/bootupd/updates/EFI",
                    buildmeta_commit, tmpimageefidir])
+            
+            #Reference：https://github.com/coreos/coreos-assembler/pull/2435 
+
+            # Find name of vendor directory
+            vendor_ids = [n for n in os.listdir(tmpimageefidir) if n != "BOOT"]
+            if len(vendor_ids) != 1:
+                raise Exception(f"did not find exactly one EFI vendor ID: {vendor_ids}")
+
+            # Delete fallback and its CSV file.  Its purpose is to create
+            # EFI boot variables, which we don't want when booting from
+            # removable media.
+            #
+            # A future shim release will merge fallback.efi into the main
+            # shim binary and enable the fallback behavior when the CSV
+            # exists.  But for now, fail if fallback.efi is missing.
+            for path in ensure_glob(os.path.join(tmpimageefidir, "BOOT", "fb*.efi")):
+                os.unlink(path)
+            # openEuler shim package has two mm*.efi that put in "BOOT" and "openEuler" dir, delete one of them here
+            for path in ensure_glob(os.path.join(tmpimageefidir, "BOOT", "mm*.efi")):
+                os.unlink(path)
+            
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "BOOT*.CSV")):
+                os.unlink(path)
+
+            # Drop vendor copies of shim; we already have it in BOOT*.EFI in
+            # BOOT
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "shim*.efi")):
+                os.unlink(path)
+            # openEuler shim package has two fb*.efi that put in "BOOT" and "openEuler" dir, delete them all
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "fb*.efi")):
+                os.unlink(path)
+
+            # Consolidate remaining files into BOOT.  shim needs GRUB to be
+            # there, and the rest doesn't hurt.
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "*")):
+                shutil.move(path, os.path.join(tmpimageefidir, "BOOT"))
+            os.rmdir(os.path.join(tmpimageefidir, vendor_ids[0]))
+
+            # Inject a stub grub.cfg pointing to the one in the main ISO image.
+            #
+            # When booting via El Torito, this stub is not used; GRUB reads
+            # the ISO image directly using its own ISO support.  This
+            # happens when booting from a CD device, or when the ISO is
+            # copied to a USB stick and booted on EFI firmware which prefers
+            # to boot a hard disk from an El Torito image if it has one.
+            # EDK II in QEMU behaves this way.
+            #
+            # This stub is used with EFI firmware which prefers to boot a
+            # hard disk from an ESP, or which cannot boot a hard disk via El
+            # Torito at all.  In that case, GRUB thinks it booted from a
+            # partition of the disk (a fake ESP created by isohybrid,
+            # pointing to efiboot.img) and needs a grub.cfg there.
+            with open(os.path.join(tmpimageefidir, "BOOT", "grub.cfg"), "w") as fh:
+                fh.write(f'''search --label "{volid}" --set root --no-floppy
+set prefix=($root)/EFI/{vendor_ids[0]}
+echo "Booting via ESP..."
+configfile $prefix/grub.cfg
+boot
+''')
 
             # Install binaries from boot partition
             # Manually construct the tarball to ensure proper permissions and ownership
@@ -518,6 +589,8 @@ def generate_iso():
             # Note: virt-make-fs lets us do this as non-root
             efibootfile = os.path.join(tmpisoimages, 'efiboot.img')
             os.environ["LIBGUESTFS_BACKEND"] = "direct"
+            if "COSA_NO_KVM" in os.environ:
+                os.environ["LIBGUESTFS_BACKEND_SETTINGS"] = "force_tcg"
             # On RHEL 8, when booting from a disk device (rather than a CD),
             # https://github.com/systemd/systemd/issues/14408 causes the
             # hybrid ESP to race with the ISO9660 filesystem for the
@@ -592,8 +665,8 @@ def generate_iso():
     if basearch == "x86_64":
         runcmd(['/usr/bin/isohybrid', '--uefi', f'{tmpisofile}.minimal'])
     # this consumes the minimal image
-    #runcmd(['coreos-installer', 'iso', 'extract', 'minimal-iso',
-    #             tmpisofile, f'{tmpisofile}.minimal', "--consume"])
+    runcmd(['nestos-installer', 'pack', 'minimal-iso',
+                 tmpisofile, f'{tmpisofile}.minimal', "--consume"])
 
     buildmeta['images'].update({
         'live-iso': {
