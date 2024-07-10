@@ -35,3 +35,7 @@ tar
 
 # needed for extensions container build
 podman
+
+# For running osbuild
+# NestOS currently does not plan to introduce the osbuild build way
+# osbuild osbuild-ostree osbuild-selinux osbuild-tools python3-pyrsistent
