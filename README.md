@@ -1,7 +1,7 @@
 # nestos-assembler
 
 ### 介绍
-nestos-assembler是用于构建NestOS系统的构建环境.
+nestos-assembler是用于构建NestOS系统的构建环境。
 
 ### 概述
 nestos-assembler是一个构建环境，该环境包含一系列工具，可用来构建NestOS，nestos-assembler实现了在构建和测试操作系统的过程都是封装在一个容器中。
