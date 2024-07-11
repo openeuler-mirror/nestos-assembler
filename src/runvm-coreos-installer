@@ -1,17 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
+# This script runs the coreos-installer found in the compose itself inside a
+# chroot inside a supermin VM. The first argument is the path to the metal
+# image. It will be available as /dev/disk/by-id/virtio-coreos. The second
+# argument is an optional path to an output file. It will be available as
+# /var/tmp/coreos-installer-output. All following arguments are passed as is to
+# coreos-installer.
+
 if [ ! -f /etc/cosa-supermin ]; then
     dn=$(dirname "$0")
     # shellcheck source=src/cmdlib.sh
     . "${dn}"/cmdlib.sh
 
     img_src=$1; shift
-    sector_size=$1; shift
-    osmet_dest=$1; shift
-    checksum=$1; shift
-    speed=$1; shift
-    coreinst=${1:-${OSMET_PACK_COREOS_INSTALLER:-}}
+    output_path=$1; shift
 
     workdir=$(pwd)
     TMPDIR=$(readlink -f tmp/tmp-osmet-pack)
@@ -30,14 +33,20 @@ if [ ! -f /etc/cosa-supermin ]; then
     fi
 
     device_opts=
-    if [ "$sector_size" != 512 ]; then
-        device_opts=",physical_block_size=${sector_size},logical_block_size=${sector_size}"
+    if [[ "${img_src}" == *metal4k* ]]; then
+        device_opts=",physical_block_size=4096,logical_block_size=4096"
     fi
 
-    # stamp it with "osmet" serial so we find it easily in the VM
-    runvm -drive "if=none,id=osmet,format=raw,readonly=on,file=${img_src}" \
-        -device "virtio-blk,serial=osmet,drive=osmet${device_opts}" -- \
-        /usr/lib/coreos-assembler/osmet-pack "$@"
+    virtioserial_args=()
+    if [ -n "${output_path}" ]; then
+        virtioserial_args+=(-chardev "file,id=coreosout,path=${output_path}" \
+                            -device "virtserialport,chardev=coreosout,name=coreosout")
+    fi
+
+    runvm -drive "if=none,id=coreos,format=raw,readonly=on,file=${img_src}" \
+        -device "virtio-blk,serial=coreos,drive=coreos${device_opts}" \
+        "${virtioserial_args[@]}" -- \
+        /usr/lib/coreos-assembler/runvm-coreos-installer "$@"
 
     mv "${TMPDIR}/osmet.bin" "${osmet_dest}"
     rm -rf "${TMPDIR}"
@@ -85,3 +94,8 @@ RUST_BACKTRACE=full ${coreinst} pack osmet /dev/disk/by-id/virtio-osmet \
     --output /tmp/osmet.bin $fast
 
 mv /tmp/osmet.bin "${osmet_dest}"
+
+# and now transfer out the output file if provided (see header)
+if [ -f /var/tmp/coreos-installer-output ]; then
+    cp /var/tmp/coreos-installer-output /dev/virtio-ports/coreosout
+fi
