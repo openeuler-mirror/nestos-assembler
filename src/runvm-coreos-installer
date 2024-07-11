@@ -16,21 +16,12 @@ if [ ! -f /etc/cosa-supermin ]; then
     img_src=$1; shift
     output_path=$1; shift
 
-    workdir=$(pwd)
-    TMPDIR=$(readlink -f tmp/tmp-osmet-pack)
-    rm -rf "${TMPDIR}"
-    mkdir -p "${TMPDIR}"
-
     if [[ $img_src == *.gz || $img_src == *.xz ]]; then
         img="$(basename "$img_src")"
         fatal "Cannot pack osmet from $img; not an uncompressed image"
     fi
 
-    set -- "${TMPDIR}/osmet.bin" "${checksum}" "${speed}"
-    if [ -n "${coreinst:-}" ]; then
-        cp "${coreinst}" "${TMPDIR}/nestos-installer"
-        set -- "$@" "${TMPDIR}/nestos-installer"
-    fi
+    workdir=$(pwd)
 
     device_opts=
     if [[ "${img_src}" == *metal4k* ]]; then
@@ -48,52 +39,35 @@ if [ ! -f /etc/cosa-supermin ]; then
         "${virtioserial_args[@]}" -- \
         /usr/lib/coreos-assembler/runvm-coreos-installer "$@"
 
-    mv "${TMPDIR}/osmet.bin" "${osmet_dest}"
-    rm -rf "${TMPDIR}"
-
     exit 0
 fi
 
 # This runs inside supermin
 
-osmet_dest=$1; shift
-checksum=$1; shift
-speed=$1; shift
-coreinst=${1:-}
-
-set -x
-
 mkdir -p /sysroot
-rootfs=/dev/disk/by-id/virtio-osmet-part4
+rootfs=/dev/disk/by-id/virtio-coreos-part4
 mount -o ro "${rootfs}" /sysroot
 osname=$(ls /sysroot/ostree/deploy)
 deploydir=$(find "/sysroot/ostree/deploy/$osname/deploy" -mindepth 1 -maxdepth 1 -type d)
-# shellcheck disable=SC1090,SC1091
-description=$(. "${deploydir}/etc/os-release" && echo "${PRETTY_NAME}")
 
-if [ -z "${coreinst}" ]; then
-    # if we weren't given a custom coreos-installer, then we want to use the one
-    # from the target system itself; chroot into it to avoid linking issues
-    for mnt in dev proc sys run var tmp; do
-        mount --rbind /$mnt "${deploydir}/$mnt"
-    done
-    coreinst="chroot ${deploydir} nestos-installer"
-fi
+# we want to use the coreos-installer from the target system but we need to
+# chroot into it to avoid linking issues
+for mnt in dev proc sys run var tmp; do
+    mount --rbind /$mnt "${deploydir}/$mnt"
+done
 
-case "$speed" in
-    fast)      fast=--fast ;;
-    normal)    fast=       ;;
-    *)         exit 1      ;;
-esac
+# some dirs which we expect to exist already
+mkdir -p "${deploydir}/var/"{home,mnt,opt,roothome,srv}
 
-# We don't want double quotes (for both `coreinst` and `fast`, which may be '')
-# shellcheck disable=SC2086
-RUST_BACKTRACE=full ${coreinst} pack osmet /dev/disk/by-id/virtio-osmet \
-    --description "${description}" \
-    --checksum "${checksum}" \
-    --output /tmp/osmet.bin $fast
+# and pass through the workdir itself
+workdir=$(pwd)
+mkdir -p "${deploydir}/${workdir}/"
+mount --bind "${workdir}" "${deploydir}/${workdir}"
 
-mv /tmp/osmet.bin "${osmet_dest}"
+# echo back the invocation
+set -x
+
+RUST_BACKTRACE=full chroot "${deploydir}" env -C "${workdir}" nestos-installer "$@"
 
 # and now transfer out the output file if provided (see header)
 if [ -f /var/tmp/coreos-installer-output ]; then
