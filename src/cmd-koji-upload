@@ -1,4 +1,5 @@
 #!/usr/bin/python3 -u
+# pylint: disable=E1136
 """
 cmd-koji-upload performs the required steps to make COSA a Koji Content
 Generator. When running this in an automated fashion, you will need a Kerberos
@@ -192,6 +193,36 @@ class Build(_Build):
 
         return fname, True
 
+    def get_rpm_list(self, host=None):
+        """
+        Translate commitmeta.json/HOST OS rpms into a json list
+        Returns the json rpms list
+        """
+        components = []
+        if host is None:
+            rpms = self.commit["rpmostree.rpmdb.pkglist"]
+        else:
+            host_rpms = subprocess.check_output('rpm -qa --qf="%{NAME}:%{EPOCH}:%{RELEASE}:%{VERSION}:%{ARCH}:%{SIGMD5}:%{SIGPGP} \n"', shell=True).strip()
+            rpms = (host_rpms.decode('utf-8')).split("\n")
+
+        for rpm in rpms:
+            if host is None:
+                name, epoch, version, release, arch = rpm
+                sigmd5, sigpgp, epoch = None, None, None
+            else:
+                name, epoch, release, version, arch, sigmd5, sigpgp = rpm.split(':')
+            entry = {
+                "type": "rpm",
+                "name": name,
+                "version": version,
+                "release": release,
+                "epoch": epoch,
+                "arch": arch,
+                "sigmd5": sigmd5,
+                "sigpgp": sigpgp}
+            components.append(entry)
+        return components
+
     def mutate_for_koji(self, fname):
         """
         Koji is _so_ pendantic about the naming of files and their extensions,
@@ -375,6 +406,71 @@ class _KojiBase():
         return session
 
 
+class Search(_KojiBase):
+    """
+    Search for builds
+    """
+
+    def __init__(self, profile):
+        """
+        Creates a new instance for search.
+
+        :param profile: Koji profile name in /etc/koji.conf.d
+        :type str
+        """
+        super().__init__(profile)
+
+    def get_state(self, nvr):
+        """
+        Return the build state.
+        :param nvr: The nvr name from Brew
+
+        For more about build state see:
+          https://pagure.io/koji/blob/master/f/www/kojiweb/builds.chtml#_27
+          https://pagure.io/koji/blob/master/f/tests/test_cli/test_import.py#_73
+        """
+
+        info = self.session.getBuild(nvr, strict=False)
+        if (info):
+            return (info['state'])
+
+        # Don't return anything else if no build was found.
+        # Since the build states are describe as numbers from 0
+        # to 4, let's get an empty return
+        return ""
+
+    def check_tag(self, nvr, tag):
+        """
+        Check if the build contains the tag
+        :param nvr: The nvr name from Brew
+        :param tag: The tag to be checked
+        """
+
+        tags = self.session.listTags(build=nvr)
+        for build_tag in tags:
+            if tag == build_tag['name']:
+                return True
+
+        return False
+
+    def ensure_tag(self, nvr, tag):
+        """
+        Ensure if the build contains the tag
+        :param nvr: The nvr name from Brew
+        :param tag: The tag to be checked
+        """
+
+        if not self.check_tag(nvr, tag):
+            log.info('Build %s was not tagged. Adding tag: %s' % (nvr, tag))
+            task_id = self.session.tagBuild(tag, nvr)
+            task_result = klib.watch_tasks(self.session, [task_id], quiet=True, poll_interval=15)
+            if task_result != 0:
+                raise Exception('failed to tag builds')
+            log.info('Tag %s successfully added' % (tag))
+        else:
+            log.info('Tag %s already exists' % (tag))
+
+
 class Reserve(_KojiBase):
     """
     Reserves a place in Koji for later archival.
@@ -398,12 +494,21 @@ class Reserve(_KojiBase):
         """
         log.info("Reserving a unique koji id")
 
-        release = datetime.datetime.utcnow().strftime("%H%M%S")
-
+        # The koji/brew NVR is constructed like so:
+        # Name = "rhcos-$arch", like `rhcos-x86_64`
+        # Version = Everything before `-` in RHCOS version
+        # Release = Everything after `-` in RHCOS version
+        #
+        # Example: RHCOS Build ID: 414.92.202307170903-0 for x86_64
+        #   Name = rhcos-x86_64
+        #   Version = 414.92.202307170903
+        #   Release = 0
+        #   NVR = rhcos-x86_64-414.92.202307170903-0
+        version, release = build.build_id.split('-')
         data = {
             "name": f"{build.build_name}-{build.basearch}",
             "release": release,
-            "version": f"{build.build_id.replace('-', '.')}",
+            "version": version,
             "cg": "coreos-assembler",
         }
 
@@ -464,10 +569,13 @@ class Upload(_KojiBase):
         self._session = None
         self._tag = tag
         self._image_files = None
-        self._release = None
         self._reserve_id_file = None
         self._retry_attempts = 2
         self._uploaded = False
+        self._s3 = None
+        self._s3_bucket = None
+        self._s3_key = None
+        self._s3_url = None
 
         if self._tag is None:
             raise Exception("build tag must be set")
@@ -524,7 +632,8 @@ class Upload(_KojiBase):
             "filename": obj['upload_path'],
             "filesize": obj["size"],
             "type": ext,
-            "extra": {"image": {"arch": arch}}
+            "extra": {"image": {"arch": arch}},
+            "components": ""
         }
 
         if etype not in ("image", "source"):
@@ -546,6 +655,8 @@ class Upload(_KojiBase):
         for _, value in (self.build).get_artifacts():
             file_output = self.get_file_meta(value)
             if file_output is not None:
+                if "commitmeta.json" in value['upload_path']:
+                    file_output["components"] = self.build.get_rpm_list()
                 outputs.append(file_output)
         self._image_files = outputs
         return self._image_files
@@ -560,7 +671,6 @@ class Upload(_KojiBase):
 
         now = datetime.datetime.utcnow()
         stamp = now.strftime("%s")
-        self.release = now.strftime("%H%M%S")
 
         """
         Koji has a couple of checks to ensure the reservation data (build_Id, release, name
@@ -591,10 +701,29 @@ class Upload(_KojiBase):
             except:
                 pass
 
+        if self._s3 is not None:
+            self.build.meta['s3'] = {
+                'bucket': self._s3_bucket,
+                'key': self._s3_key,
+                'public-url': self._s3_url
+            }
+            self.build.meta_write()
+
         source = self.build.get_meta_key(
             "meta", self.build.ckey("container-config-git"))
 
         log.debug(f"Preparing manifest for {(len(self.image_files))} files")
+        # The koji/brew NVR is constructed like so:
+        # Name = "rhcos-$arch", like `rhcos-x86_64`
+        # Version = Everything before `-` in RHCOS version
+        # Release = Everything after `-` in RHCOS version
+        #
+        # Example: RHCOS Build ID: 414.92.202307170903-0 for x86_64
+        #   Name = rhcos-x86_64
+        #   Version = 414.92.202307170903
+        #   Release = 0
+        #   NVR = rhcos-x86_64-414.92.202307170903-0
+        version, release = self.build.build_id.split('-')
         self._manifest = {
             "metadata_version": 0,
             "build": {
@@ -608,14 +737,11 @@ class Upload(_KojiBase):
                     }
                 },
                 "name": f"{self.build.build_name}-{self.build.basearch}",
-                "release": self._release,
+                "release": release,
                 "owner": self._owner,
                 "source": source['origin'],
                 "start_time": stamp,
-                # RHCOS wants to be semver-compatible, but Koji doesn't
-                # accept `-`.  See
-                # https://github.com/openshift/oc/pull/209#issuecomment-564876535
-                "version": f"{self.build.build_id.replace('-', '.')}"
+                "version": version
             },
             "buildroots": [{
                 "id": 1,
@@ -634,7 +760,7 @@ class Upload(_KojiBase):
                     "arch": self.build.basearch,
                     "name": "coreos-assembler"
                 },
-                "components": "",
+                "components": self.build.get_rpm_list('host'),
                 "extra": {
                     "coreos-assembler": {
                         "build_id": 1,
@@ -775,6 +901,11 @@ Examples:
         --keytab keytab \
         --owner me@FEDORA.COM \
         --profile koji
+    $ cmd-koji-upload search \
+        --nvr nvr \
+        --keytab keytab \
+        --owner me@FEDORA.COM \
+        --profile koji
 
 Environment variables are supported:
     - KOJI_USERNAME will set the owner
@@ -794,7 +925,7 @@ Environment variables are supported:
     parent_parser.add_argument("--buildroot", default="builds",
                         help="Build diretory")
     parent_parser.add_argument("--dump", default=False, action='store_true',
-                        help="Dump the manfiest and exit")
+                        help="Dump the manifest and exit")
     parent_parser.add_argument("--no-upload", default=False, action='store_true',
                         help="Do not upload, just parse the build")
     parent_parser.add_argument("--arch", default=get_basearch(),
@@ -821,6 +952,11 @@ Environment variables are supported:
     upload_cmd = sub_commands.add_parser(
         "upload", help="Uploads to koji", parents=[parent_parser], add_help=False)
 
+    search_cmd = sub_commands.add_parser(
+        "search", help="Search for a build", parents=[parent_parser], add_help=False)
+
+    ensure_cmd = sub_commands.add_parser(
+        "ensure-tag", help="Ensure the build tag is correct", parents=[parent_parser], add_help=False)
     sub_commands.add_parser(
         "reserve-id", help="Reserves a koji id", parents=[parent_parser], add_help=False)
 
@@ -841,6 +977,30 @@ Environment variables are supported:
         '--reserve-id-state-file', required=False,
         help='Uses the path for a reservation file previous created')
 
+    upload_cmd.add_argument(
+        '--s3-bucket', required=False,
+        help='Store bucket information in meta.json')
+
+    upload_cmd.add_argument(
+        '--s3-key', required=False,
+        help='Store key information in meta.json')
+
+    upload_cmd.add_argument(
+        '--s3-url', required=False,
+        help='Store url information in meta.json')
+
+    search_cmd.add_argument(
+        '--nvr',  required=True,
+        help='NVR to look for')
+
+    ensure_cmd.add_argument(
+        '--nvr',  required=True,
+        help='NVR to look for')
+
+    ensure_cmd.add_argument(
+        '--tag',  required=True,
+        help='Ensure the tag if the build does not have it')
+
     args, extra_args = parser.parse_known_args()
     set_logger(args.log_level)
 
@@ -857,7 +1017,10 @@ Environment variables are supported:
 
     if args.auth:
         kinit(args.keytab, args.owner)
-
+    if args._command == 'search':
+        print(Search(args.profile).get_state(args.nvr))
+    if args._command == 'ensure-tag':
+        Search(args.profile).ensure_tag(args.nvr, args.tag)
     if args._command == 'upload':
 
         upload = Upload(build, args.owner, args.tag, args.profile)
@@ -873,6 +1036,12 @@ Environment variables are supported:
             Reserve(args.profile).reserve_id(build)
         if args.reserve_id_state_file:
             upload._reserve_id_file = args.reserve_id_state_file
+        if args.s3_bucket or args.s3_key or args.s3_url:
+            upload._s3 = True
+            upload._s3_bucket = args.s3_bucket
+            upload._s3_key = args.s3_key
+            upload._s3_url = args.s3_url
+
         build.build_artifacts()
         upload.upload()
     elif args._command == 'reserve-id':

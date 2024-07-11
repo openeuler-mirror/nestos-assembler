@@ -1,5 +1,5 @@
 #!/bin/bash
-# Automate an end-to-end run of nestos-installer with the metal image, which then
+# Automate an end-to-end run of coreos-installer with the metal image, which then
 # boots and writes a success message to a virtio-serial port, which we read on the host.
 set -euo pipefail
 
