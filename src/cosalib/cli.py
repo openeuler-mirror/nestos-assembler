@@ -150,10 +150,7 @@ class BuildCli(Cli):
             help='Override build id, defaults to latest')
         self.add_argument(
             '--buildroot', env_var="BUILD_ROOT", default='builds',
-            help='Build diretory')
-        self.add_argument(
-            '--dump', default=False, action='store_true',
-            help='Dump the manfiest and exit')
+            help='Build directory')
         self.add_argument(
             '--schema', env_var="META_SCHEMA",
             default='/usr/lib/coreos-assembler/v1.json',
