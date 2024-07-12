@@ -22,7 +22,7 @@ from cosalib.cmdlib import (
     retry_stop,
     rm_allow_noent,
     sha256sum_file)
-from cosalib.s3 import download_file, head_bucket, head_object
+from cosalib.s3 import S3
 
 retry_requests_exception = (retry_if_exception_type(requests.Timeout) |
                             retry_if_exception_type(requests.ReadTimeout) |
@@ -34,6 +34,8 @@ FCOS_STREAMS_URL = "https://builds.coreos.fedoraproject.org/prod/streams"
 
 def main():
     args = parse_args()
+    if args.aws_config_file:
+        os.environ["AWS_CONFIG_FILE"] = args.aws_config_file
 
     url = args.url or f'{FCOS_STREAMS_URL}/{args.stream}/builds'
     if url.startswith("s3://"):
@@ -92,13 +94,26 @@ def main():
     else:
         arches = args.arch
 
+    # If someone passed in --find-build-for-arch they want us to
+    # find the most recent build that was successful for $arch.
+    # Since this may be a different build ID for the different
+    # given possible architectures we'll limit the use of this option
+    # to a single given arch.
+    if args.find_build_for_arch:
+        if len(arches) != 1:
+            raise Exception("Must provide single arch when finding build for architecture")
+        buildid = builds.get_latest_for_arch(arches[0])
+        if buildid is None:
+            print(f"No builds for arch {arches[0]} found in the history")
+            return
+
     for arch in arches:
         # If the architecture doesn't exist then assume there were
         # no builds for this architecture yet, which can only happen
-        # if someone passed in the architecture value. return early
+        # if someone passed in architecture value(s)
         if arch not in builds.get_build_arches(buildid):
             print(f"No {arch} artifacts for build {buildid}")
-            return
+            continue
 
         builddir = builds.get_build_dir(buildid, arch)
         os.makedirs(builddir, exist_ok=True)
@@ -107,14 +122,18 @@ def main():
         assert builddir.startswith("builds/")
         builddir = builddir[len("builds/"):]
 
-        objects = ['meta.json', 'commitmeta.json', 'ostree-commit-object']
+        default_objects = ['meta.json', 'commitmeta.json', 'ostree-commit-object']
+        objects = default_objects + args.file
         for f in objects:
             fetcher.fetch(f'{builddir}/{f}')
 
         buildmeta = load_json(f'builds/{builddir}/meta.json')
 
-        if args.artifact == ['all']:
-            artifacts = buildmeta['images']
+        # dedupe any possible duplicates in the list
+        args.artifact = set(args.artifact)
+
+        if 'all' in args.artifact:
+            artifacts = buildmeta['images'].keys()
         else:
             artifacts = args.artifact
 
@@ -130,17 +149,17 @@ def main():
                 print(f"Expected  sha256sum: {img['sha256']}")
                 raise Exception(f"Downloaded checksum for {imgpath} does not match expected")
 
+        # also nuke the any local matching OStree ref, since we want to build on
+        # top of this new one
+        if 'ref' in buildmeta and os.path.isdir('tmp/repo'):
+            subprocess.check_call(['ostree', 'refs', '--repo', 'tmp/repo',
+                                   '--delete', buildmeta['ref']],
+                                  stdout=subprocess.DEVNULL)
+
     # and finally the symlink
-    if args.build is None:
+    if args.build is None or args.build == builds.get_latest():
         rm_allow_noent('builds/latest')
         os.symlink(buildid, 'builds/latest')
-
-    # also nuke the any local matching OStree ref, since we want to build on
-    # top of this new one
-    if 'ref' in buildmeta and os.path.isdir('tmp/repo'):
-        subprocess.check_call(['ostree', 'refs', '--repo', 'tmp/repo',
-                               '--delete', buildmeta['ref']],
-                              stdout=subprocess.DEVNULL)
 
 
 def parse_args():
@@ -157,6 +176,12 @@ def parse_args():
                         help="the target architecture(s)")
     parser.add_argument("--artifact", default=[], action='append',
                         help="Fetch given image artifact(s)", metavar="ARTIFACT")
+    parser.add_argument("--file", default=[], action='append',
+                        help="Fetch given non-artifact file(s)")
+    parser.add_argument("--aws-config-file", metavar='CONFIG', default="",
+                        help="Path to AWS config file")
+    parser.add_argument("--find-build-for-arch", action='store_true',
+                        help="Traverse build history to find latest for given architecture")
     return parser.parse_args()
 
 
@@ -201,12 +226,26 @@ class HTTPFetcher(Fetcher):
 
     @retry(stop=retry_stop, retry=retry_requests_exception, before_sleep=retry_callback)
     def fetch_impl(self, url, dest):
-        # notice we don't use `stream=True` here; the stuff we're fetching for
-        # now is super small
-        with requests.get(url) as r:
+        with requests.get(url, stream=True) as r:
             r.raise_for_status()
             with open(dest, mode='wb') as f:
-                f.write(r.content)
+                # Stream file data from the network to the file in these size chunks.
+                # 30 MiB is somewhat arbitrary but should be easily supported on most systems
+                # without transfer slowdown.
+                max_chunk_size = 30 * 1024 * 1024
+
+                # If the HTTP headers have encoded the file transfer as chunks already, respect those instead
+                # of our hardcoded max size.
+                if 'chunked' in r.headers.get('transfer-encoding', list()):
+                    max_chunk_size = None
+
+                # With stream=True above, read data from the network and write it to the file in chunks
+                # rather than trying to put it all in RAM and then write it all to disk.
+                # For large ociarchive files on lower-RAM systems, this can cause a crash, and the performance
+                # trade-off for chunking it is usually negligible unless the files are extra huge, the disk IO cache is
+                # very small, and the network pipe is very large.
+                for chunk in r.iter_content(chunk_size=max_chunk_size):
+                    f.write(chunk)
 
     @retry(stop=retry_stop, retry=retry_requests_exception, before_sleep=retry_callback)
     def exists_impl(self, url):
@@ -221,20 +260,23 @@ class HTTPFetcher(Fetcher):
 
 
 class S3Fetcher(Fetcher):
+    def __init__(self, url_base):
+        super().__init__(url_base)
+        self.s3_client = S3()
 
     def fetch_impl(self, url, dest):
         assert url.startswith("s3://")
         bucket, key = url[len("s3://"):].split('/', 1)
         # this function does not need to be retried with the decorator as download_file would
         # retry automatically based on s3config settings
-        download_file(bucket, key, dest)
+        self.s3_client.download_file(bucket, key, dest)
 
     def exists_impl(self, url):
         assert url.startswith("s3://")
         bucket, key = url[len("s3://"):].split('/', 1)
         # sanity check that the bucket exists and we have access to it
-        head_bucket(bucket=bucket)
-        return head_object(bucket=bucket, key=key)
+        self.s3_client.head_bucket(bucket=bucket)
+        return self.s3_client.head_object(bucket=bucket, key=key)
 
 
 class LocalFetcher(Fetcher):
