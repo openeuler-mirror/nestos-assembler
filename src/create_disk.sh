@@ -1,4 +1,6 @@
-#!/bin/sh
+#!/bin/bash
+set -euo pipefail
+
 # This script is run in supermin to create a Fedora CoreOS style
 # disk image, very much in the spirit of the original
 # Container Linux (orig CoreOS) disk layout, although adapted
@@ -8,7 +10,6 @@
 # although see also https://github.com/coreos/coreos-assembler/pull/298
 # For people building "derived"/custom FCOS-like systems, feel free to file
 # an issue and we can discuss configuration needs.
-set -euo pipefail
 
 # This fixed UUID is detected in ignition-dracut and changed
 # on firstboot:
@@ -27,7 +28,6 @@ Fedora CoreOS style disk image from an OSTree.
 
 Options:
     --config: JSON-formatted image.yaml
-    --disk: disk device to use
     --help: show this help
     --kargs: kernel CLI args
     --platform: Ignition platform ID
@@ -36,7 +36,7 @@ Options:
     --with-secure-execution:  enable IBM SecureExecution
 
 You probably don't want to run this script by hand. This script is
-run as part of 'coreos-assembler build'.
+run as part of 'nestos-assembler build'.
 EOC
 }
 
@@ -54,7 +54,6 @@ do
     flag="${1}"; shift;
     case "${flag}" in
         --config)                   config="${1}"; shift;;
-        --disk)                  disk="${1}"; shift;;
         --help)                     usage; exit;;
         --kargs)                    extrakargs="${extrakargs} ${1}"; shift;;
         --no-x86-bios-bootloader)   x86_bios_bootloader=0;;
@@ -100,7 +99,7 @@ trap dump_err_info ERR
 # Parse the passed config JSON and extract a mandatory value
 getconfig() {
     k=$1
-    jq -re .'"'$k'"' < ${config}
+    jq -re .\""$k"\" < "${config}"
 }
 # Return a configuration value, or default if not set
 getconfig_def() {
@@ -108,7 +107,7 @@ getconfig_def() {
     shift
     default=$1
     shift
-    jq -re .'"'$k'"'//'"'${default}'"' < ${config}
+    jq -re .\""$k"\"//\""${default}"\" < "${config}"
 }
 
 rootfs_type=$(getconfig rootfs)
@@ -116,6 +115,7 @@ case "${rootfs_type}" in
     xfs|ext4verity|btrfs) ;;
     *) echo "Invalid rootfs type: ${rootfs_type}" 1>&2; exit 1;;
 esac
+rootfs_args=$(getconfig_def "rootfs-args" "")
 
 bootfs=$(getconfig "bootfs")
 composefs=$(getconfig_def "composefs" "")
@@ -149,32 +149,33 @@ if [[ ${secure_execution} -eq 1 ]]; then
     SDPART=1
     BOOTVERITYHASHPN=5
     ROOTVERITYHASHPN=6
+    extrakargs="${extrakargs} swiotlb=262144"
 fi
 # Make the size relative
 if [ "${rootfs_size}" != "0" ]; then
     rootfs_size="+${rootfs_size}"
 fi
+
+# shellcheck disable=SC2031
 case "$arch" in
     x86_64)
         EFIPN=2
-        sgdisk -Z $disk \
+        sgdisk -Z "$disk" \
         -U "${uninitialized_gpt_uuid}" \
         -n 1:0:+1M -c 1:BIOS-BOOT -t 1:21686148-6449-6E6F-744E-656564454649 \
         -n ${EFIPN}:0:+127M -c ${EFIPN}:EFI-SYSTEM -t ${EFIPN}:C12A7328-F81F-11D2-BA4B-00A0C93EC93B \
         -n ${BOOTPN}:0:+384M -c ${BOOTPN}:boot \
-        -n ${ROOTPN}:0:${rootfs_size} -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
-        sgdisk -p "$disk"
+        -n ${ROOTPN}:0:"${rootfs_size}" -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
         ;;
     aarch64)
         RESERVEDPN=1
         EFIPN=2
-        sgdisk -Z $disk \
+        sgdisk -Z "$disk" \
         -U "${uninitialized_gpt_uuid}" \
         -n ${RESERVEDPN}:0:+1M -c ${RESERVEDPN}:reserved -t ${RESERVEDPN}:8DA63339-0007-60C0-C436-083AC8230908 \
         -n ${EFIPN}:0:+127M -c ${EFIPN}:EFI-SYSTEM -t ${EFIPN}:C12A7328-F81F-11D2-BA4B-00A0C93EC93B \
         -n ${BOOTPN}:0:+384M -c ${BOOTPN}:boot \
-        -n ${ROOTPN}:0:${rootfs_size} -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
-        sgdisk -p "$disk"
+        -n ${ROOTPN}:0:"${rootfs_size}" -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
         ;;
     s390x)
         sgdisk_args=()
@@ -192,7 +193,7 @@ case "$arch" in
         fi
         # NB: in the bare metal case when targeting ECKD DASD disks, this
         # partition table is not what actually gets written to disk in the end:
-        # nestos-installer has code which transforms it into a DASD-compatible
+        # coreos-installer has code which transforms it into a DASD-compatible
         # partition table and copies each partition individually bitwise.
         sgdisk -Z "$disk" -U "${uninitialized_gpt_uuid}" "${sgdisk_args[@]}"
         ;;
@@ -200,16 +201,16 @@ case "$arch" in
         PREPPN=1
         RESERVEDPN=2
         # ppc64le doesn't use special uuid for root partition
-        sgdisk -Z $disk \
+        sgdisk -Z "$disk" \
         -U "${uninitialized_gpt_uuid}" \
         -n ${PREPPN}:0:+4M -c ${PREPPN}:PowerPC-PReP-boot -t ${PREPPN}:9E1A2D38-C612-4316-AA26-8B49521E5A8B \
         -n ${RESERVEDPN}:0:+1M -c ${RESERVEDPN}:reserved -t ${RESERVEDPN}:8DA63339-0007-60C0-C436-083AC8230908 \
         -n ${BOOTPN}:0:+384M -c ${BOOTPN}:boot \
-        -n ${ROOTPN}:0:${rootfs_size} -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
-        sgdisk -p "$disk"
+        -n ${ROOTPN}:0:"${rootfs_size}" -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
         ;;
 esac
 
+sgdisk -p "$disk"
 udevtrig
 
 boot_dev="${disk}${BOOTPN}"
@@ -260,13 +261,16 @@ case "${rootfs_type}" in
         # So basically, we're choosing performance over half-implemented security.
         # Eventually, we'd like both - once XFS gains verity (probably not too hard),
         # we could unconditionally enable it there.
-        mkfs.ext4 -b $(getconf PAGE_SIZE) -O verity -L root "${root_dev}" -U "${rootfs_uuid}"
+        # shellcheck disable=SC2086
+        mkfs.ext4 -b "$(getconf PAGE_SIZE)" -O verity -L root "${root_dev}" -U "${rootfs_uuid}" ${rootfs_args}
         ;;
     btrfs)
-        mkfs.btrfs -L root "${root_dev}" -U "${rootfs_uuid}"
+        # shellcheck disable=SC2086
+        mkfs.btrfs -L root "${root_dev}" -U "${rootfs_uuid}" ${rootfs_args}
         ;;
     xfs|"")
-        mkfs.xfs "${root_dev}" -L root -m reflink=1 -m uuid="${rootfs_uuid}"
+        # shellcheck disable=SC2086
+        mkfs.xfs "${root_dev}" -L root -m reflink=1 -m uuid="${rootfs_uuid}" ${rootfs_args}
         ;;
     *)
         echo "Unknown rootfs_type: $rootfs_type" 1>&2
@@ -283,15 +287,15 @@ rootfs=/tmp/rootfs
 rm -rf ${rootfs}
 mkdir -p ${rootfs}
 mount -o discard "${root_dev}" ${rootfs}
-chcon $(matchpathcon -n /) ${rootfs}
+chcon "$(matchpathcon -n /)" ${rootfs}
 mkdir ${rootfs}/boot
-chcon $(matchpathcon -n /boot) $rootfs/boot
+chcon "$(matchpathcon -n /boot)" $rootfs/boot
 mount "${boot_dev}" $rootfs/boot
-chcon $(matchpathcon -n /boot) $rootfs/boot
+chcon "$(matchpathcon -n /boot)" $rootfs/boot
 # FAT doesn't support SELinux labeling, it uses "genfscon", so we
 # don't need to give it a label manually.
 if [ ${EFIPN:+x} ]; then
-    mkdir $rootfs/boot/efi
+    mkdir ${rootfs}/boot/efi
     mount "${disk}${EFIPN}" $rootfs/boot/efi
 fi
 if [[ ${secure_execution} -eq 1 ]]; then
@@ -319,9 +323,13 @@ if [ "${rootfs_type}" = "ext4verity" ] && [ -z "${composefs}" ]; then
 fi
 
 # Compute kargs
-# Note that $ignition_firstboot is interpreted by grub at boot time,
-# *not* the shell here.  Hence the backslash escape.
-allkargs="$extrakargs \$ignition_firstboot"
+allkargs="$extrakargs"
+# shellcheck disable=SC2031
+if [ "$arch" != s390x ]; then
+    # Note that $ignition_firstboot is interpreted by grub at boot time,
+    # *not* the shell here.  Hence the backslash escape.
+    allkargs+=" \$ignition_firstboot"
+fi
 
 if test -n "${deploy_via_container}"; then
     kargsargs=""
@@ -329,12 +337,21 @@ if test -n "${deploy_via_container}"; then
     do
         kargsargs+="--karg=$karg "
     done
+    # shellcheck disable=SC2086
     ostree container image deploy --imgref "${ostree_container}" \
         ${container_imgref:+--target-imgref $container_imgref} \
+        --write-commitid-to /tmp/commit.txt \
         --stateroot "$os_name" --sysroot $rootfs $kargsargs
+    deploy_commit=$(cat /tmp/commit.txt)
+    rm /tmp/commit.txt
 else
     # Pull the container image...
     time ostree container image pull $rootfs/ostree/repo "${ostree_container}"
+    # But we default to not leaving a ref for the image around, so the
+    # layers will get GC'd on the first update if the
+    # user doesn't switch to a container image.
+    ostree --repo=$rootfs/ostree/repo refs --delete ostree/container/image
+    ostree --repo=$rootfs/ostree/repo prune --refs-only --depth=0
     # Deploy it, using an optional remote prefix
     if test -n "${remote_name}"; then
         deploy_ref="${remote_name}:${ref}"
@@ -347,12 +364,13 @@ else
     do
         kargsargs+="--karg-append=$karg "
     done
+    # shellcheck disable=SC2086
     ostree admin deploy "${deploy_ref}" --sysroot $rootfs --os "$os_name" $kargsargs
+    deploy_commit=$commit
 fi
-# Note that at the current time, this only supports deploying non-layered
-# container images; xref https://github.com/ostreedev/ostree-rs-ext/issues/143
-deploy_root="$rootfs/ostree/deploy/${os_name}/deploy/${commit}.0"
-test -d "${deploy_root}"
+# Sanity check
+deploy_root="$rootfs/ostree/deploy/${os_name}/deploy/${deploy_commit}.0"
+test -d "${deploy_root}" || (echo "failed to find $deploy_root"; exit 1)
 
 # This will allow us to track the version that an install
 # originally used; if we later need to understand something
@@ -369,7 +387,7 @@ test -d "${deploy_root}"
 #                convenient to have here as a strong cross-reference.
 # imgid:         The full image name, the same as will end up in the
 #                `images` dict in `meta.json`.
-cat > $rootfs/.coreos-aleph-version.json << EOF
+cat > $rootfs/.nestos-aleph-version.json << EOF
 {
 	"build": "${buildid}",
 	"ref": "${ref}",
@@ -378,22 +396,20 @@ cat > $rootfs/.coreos-aleph-version.json << EOF
 }
 EOF
 
-# we use pure BLS on most architectures; this may
-# be overridden below
-bootloader_backend=none
-
 install_uefi() {
     # https://github.com/coreos/fedora-coreos-tracker/issues/510
     # See also https://github.com/ostreedev/ostree/pull/1873#issuecomment-524439883
-    /usr/bin/bootupctl backend install --src-root="${deploy_root}" "${rootfs}"
+    # Unshare mount ns to work around https://github.com/coreos/bootupd/issues/367
+    unshare -m /usr/bin/bootupctl backend install --src-root="${deploy_root}" "${rootfs}"
     # We have a "static" grub config file that basically configures grub to look
     # in the RAID called "md-boot", if it exists, or the partition labeled "boot".
     local target_efi="$rootfs/boot/efi"
-    local grubefi=$(find "${target_efi}/EFI/" -maxdepth 1 -type d | grep -v BOOT)
+    local grubefi
+    grubefi=$(find "${target_efi}/EFI/" -maxdepth 1 -type d | grep -v BOOT)
     local vendor_id="${grubefi##*/}"
     local vendordir="${target_efi}/EFI/${vendor_id}"
     mkdir -p "${vendordir}"
-	cat > ${vendordir}/grub.cfg << 'EOF'
+    cat > "${vendordir}/grub.cfg" << 'EOF'
 if [ -e (md/md-boot) ]; then
   # The search command might pick a RAID component rather than the RAID,
   # since the /boot RAID currently uses superblock 1.0.  See the comment in
@@ -433,6 +449,18 @@ install_grub_cfg() {
     fi
 }
 
+# For some commands, we need to make sure to use the binary and userspace of the
+# target system. XXX: Switch to bwrap.
+chroot_run() {
+    for mnt in dev proc sys run var tmp; do
+        mount --rbind "/$mnt" "${deploy_root}/$mnt"
+    done
+    chroot "${deploy_root}" "$@"
+    for mnt in dev proc sys run var tmp; do
+        umount --recursive "${deploy_root}/$mnt"
+    done
+}
+
 generate_gpgkeys() {
     local pkey
     pkey="${1}"
@@ -445,6 +473,7 @@ generate_gpgkeys() {
 }
 
 # Other arch-specific bootloader changes
+# shellcheck disable=SC2031
 case "$arch" in
 x86_64)
     # UEFI
@@ -452,11 +481,13 @@ x86_64)
     if [ "${x86_bios_bootloader}" = 1 ]; then
         # And BIOS grub in addition.  See also
         # https://github.com/coreos/fedora-coreos-tracker/issues/32
-        grub2-install \
+        # Install BIOS/PReP bootloader using the target system's grub2-install,
+        # see https://github.com/coreos/coreos-assembler/issues/3156
+        chroot_run /sbin/grub2-install \
             --target i386-pc \
             --boot-directory $rootfs/boot \
             --modules mdraid1x \
-            $disk
+            "$disk"
     fi
     ;;
 aarch64)
@@ -465,11 +496,11 @@ aarch64)
     ;;
 ppc64le)
     # to populate PReP Boot, i.e. support pseries
-    grub2-install --target=powerpc-ieee1275 --boot-directory $rootfs/boot --no-nvram "${disk}${PREPPN}"
+    chroot_run /sbin/grub2-install --target=powerpc-ieee1275 --boot-directory $rootfs/boot --no-nvram "${disk}${PREPPN}"
     install_grub_cfg
     ;;
 s390x)
-    bootloader_backend=zipl
+    ostree config --repo $rootfs/ostree/repo set sysroot.bootloader zipl
     rdcore_zipl_args=("--boot-mount=$rootfs/boot" "--append-karg=ignition.firstboot")
     # in the secex case, we run zipl at the end; in the non-secex case, we need
     # to run it now because zipl wants rw access to the bootfs
@@ -481,6 +512,18 @@ s390x)
     ;;
 esac
 
+# enable support for GRUB password
+# shellcheck disable=SC2031
+if [ "$arch" != s390x ]; then
+    ostree config --repo $rootfs/ostree/repo set sysroot.bls-append-except-default 'grub_users=""'
+fi
+
+# For local secex build we create an empty file and later mount-bind real private key to it,
+# so rdcore could append it to initrd. Best approach is to teach rdcore how to append file
+# with different source and dest- paths.
+if [[ ${secure_execution} -eq 1 ]] && [[ ! -e /dev/disk/by-id/virtio-genprotimg ]]; then
+    touch "${deploy_root}/usr/lib/nestos/ignition.asc"
+fi
 touch $rootfs/boot/ignition.firstboot
 
 # Finally, add the immutable bit to the physical root; we don't
@@ -495,8 +538,9 @@ chattr +i $rootfs
 fstrim -a -v
 # Ensure the filesystem journals are flushed
 for fs in $rootfs/boot $rootfs; do
-    mount -o remount,ro $fs
-    xfs_freeze -f $fs
+    mount -o remount,ro "$fs"
+    fsfreeze -f "$fs"
+    fsfreeze -u "$fs"
 done
 
 umount -R $rootfs
@@ -541,8 +585,8 @@ rdcore_replacement() {
     se_parmfile="${se_tmp_boot}/parmfile"
 
     # Ignition GPG private key
-    mkdir -p "${se_tmp_boot}/usr/lib/coreos"
-    generate_gpgkeys "${se_tmp_boot}/usr/lib/coreos/ignition.asc"
+    mkdir -p "${se_tmp_boot}/usr/lib/nestos"
+    generate_gpgkeys "${se_tmp_boot}/usr/lib/nestos/ignition.asc"
 
     blsfile=$(find "${rootfs}"/boot/loader/entries/*.conf)
     echo "$(grep options "${blsfile}" | cut -d' ' -f2-)" "${se_kargs_append[@]}" > "${se_parmfile}"
@@ -567,12 +611,12 @@ if [[ ${secure_execution} -eq 1 ]]; then
     if [ ! -e /dev/disk/by-id/virtio-genprotimg ]; then
         echo "Building local Secure Execution Image, running zipl and genprotimg"
         generate_gpgkeys "/tmp/ignition.asc"
-        mount --rbind "/tmp/ignition.asc" "${deploy_root}/usr/lib/coreos/ignition.asc"
+        mount --rbind "/tmp/ignition.asc" "${deploy_root}/usr/lib/nestos/ignition.asc"
         # run zipl with root hashes as kargs
         rdcore_zipl_args+=("--secex-mode=enforce" "--hostkey=/dev/disk/by-id/virtio-hostkey")
         rdcore_zipl_args+=("--append-karg=rootfs.roothash=$(cat /tmp/root-roothash)")
         rdcore_zipl_args+=("--append-karg=bootfs.roothash=$(cat /tmp/boot-roothash)")
-        rdcore_zipl_args+=("--append-file=/usr/lib/coreos/ignition.asc")
+        rdcore_zipl_args+=("--append-file=/usr/lib/nestos/ignition.asc")
         chroot_run /usr/lib/dracut/modules.d/50rdcore/rdcore zipl "${rdcore_zipl_args[@]}"
     else
         echo "Building release Secure Execution Image, zipl and genprotimg will be run later"

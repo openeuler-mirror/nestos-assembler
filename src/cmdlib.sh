@@ -5,10 +5,6 @@ set -euo pipefail
 DIR=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 RFC3339="%Y-%m-%dT%H:%M:%SZ"
 
-# Detect what platform we are on
-export ISFEDORA=1
-export ISEL=''
-
 info() {
     echo "info: $*" 1>&2
 }
@@ -20,6 +16,12 @@ fatal() {
         echo "fatal: $*" 1>&2
     fi
     exit 1
+}
+
+# Execute a command, also writing the cmdline to stdout
+runv() {
+    echo "Running: " "$@"
+    "$@"
 }
 
 # Get target base architecture
@@ -35,10 +37,12 @@ arch=$(uname -m)
 export arch
 
 case $arch in
-    "x86_64")  DEFAULT_TERMINAL="ttyS0"   ;;
-    "ppc64le") DEFAULT_TERMINAL="hvc0"    ;;
-    "aarch64") DEFAULT_TERMINAL="ttyAMA0" ;;
-    "s390x")   DEFAULT_TERMINAL="ttysclp0";;
+    "x86_64")  DEFAULT_TERMINAL="ttyS0,115200n8" ;;
+    "ppc64le") DEFAULT_TERMINAL="hvc0"           ;;
+    "aarch64") DEFAULT_TERMINAL="ttyAMA0"        ;;
+    "s390x")   DEFAULT_TERMINAL="ttysclp0"       ;;
+    # minimal support; the rest of cosa isn't yet riscv64-aware
+    "riscv64") DEFAULT_TERMINAL="ttyS0"          ;;
     *)         fatal "Architecture ${arch} not supported"
 esac
 export DEFAULT_TERMINAL
@@ -91,10 +95,6 @@ depcheck() {
 preflight() {
     depcheck
 
-    if [ "$(stat -f --printf="%T" .)" = "overlayfs" ] && [ -z "${COSA_SKIP_OVERLAY:-}" ]; then
-        fatal "$(pwd) must be a volume"
-    fi
-
     # See https://pagure.io/centos-infra/issue/48
     if test "$(umask)" = 0000; then
         fatal "Your umask is unset, please use umask 0022 or so"
@@ -107,7 +107,7 @@ preflight_kvm() {
 
     if test -z "${COSA_NO_KVM:-}"; then
         if ! test -c /dev/kvm; then
-            fatal "Missing /dev/kvm"
+            fatal "Missing /dev/kvm; you can set COSA_NO_KVM=1 to bypass this at the cost of performance."
         fi
         if ! [ -w /dev/kvm ]; then
             if ! has_privileges; then
@@ -119,6 +119,12 @@ preflight_kvm() {
             fi
         fi
     fi
+}
+
+# Use this for things like disabling fsync.
+# For more information, see the docs of `cosa init --transient`.
+is_transient() {
+    test -f "${workdir}"/tmp/nosa-transient
 }
 
 # Picks between yaml or json based on which version exists. Errors out if both
@@ -145,11 +151,20 @@ yaml2json() {
 prepare_build() {
     preflight
     preflight_kvm
+    workdir="$(pwd)"
+
     if ! [ -d builds ]; then
-        fatal "No $(pwd)/builds found; did you run coreos-assembler init?"
+        fatal "No ${workdir}/builds found; did you run coreos-assembler init?"
     fi
 
-    workdir="$(pwd)"
+    if [ "$(stat -f --printf="%T" .)" = "overlayfs" ] && [ -z "${COSA_SKIP_OVERLAY:-}" ]; then
+        fatal "${workdir} must be a volume"
+    fi
+
+    if test '!' -w "${workdir}"; then
+        ls -ald "${workdir}"
+        fatal "${workdir} is not writable"
+    fi
 
     # Be nice to people who have older versions that
     # didn't create this in `init`.
@@ -214,6 +229,9 @@ prepare_build() {
             rm -f "${tmprepo}/summary"
         else
             ostree init --repo="${tmprepo}" --mode=archive
+            # This archive repo is transient, so lower the compression
+            # level to avoid burning excessive CPU.
+            ostree --repo="${tmprepo}" config set archive.zlib-level 2
         fi
 
         # No need to fsync for transient flows
@@ -228,24 +246,24 @@ prepare_build() {
     fi
     export configdir_gitrepo
 
-    manifest_tmp_json=${tmp_builddir}/manifest.json
-    rpm-ostree compose tree --repo="${tmprepo}" --print-only "${manifest}" > "${manifest_tmp_json}"
+    flattened_manifest=${tmp_builddir}/manifest.json
+    rpm-ostree compose tree --repo="${tmprepo}" --print-only "${manifest}" > "${flattened_manifest}"
+    export flattened_manifest
 
     # Abuse the rojig/name as the name of the VM images
     # Also grab rojig summary for image upload descriptions
-    name=$(jq -r '.rojig.name' < "${manifest_tmp_json}")
-    summary=$(jq -r '.rojig.summary' < "${manifest_tmp_json}")
-    ref=$(jq -r '.ref//""' < "${manifest_tmp_json}")
+    name=$(jq -r '.rojig.name' < "${flattened_manifest}")
+    summary=$(jq -r '.rojig.summary' < "${flattened_manifest}")
+    ref=$(jq -r '.ref//""' < "${flattened_manifest}")
     export name ref summary
     # And validate fields coreos-assembler requires, but not rpm-ostree
     required_fields=("automatic-version-prefix")
     for field in "${required_fields[@]}"; do
-        if ! jq -re '."'"${field}"'"' < "${manifest_tmp_json}" >/dev/null; then
+        if ! jq -re '."'"${field}"'"' < "${flattened_manifest}" >/dev/null; then
             echo "Missing required field in src/config/manifest.yaml: ${field}" 1>&2
             exit 1
         fi
     done
-    rm -f "${manifest_tmp_json}"
 
     # This dir is no longer used
     rm builds/work -rf
@@ -289,11 +307,54 @@ commit_overlay() {
     # files, but we do.
     touch "${TMPDIR}/overlay/statoverride"
     echo -n "Committing ${name}: ${path} ... "
-    ostree commit --repo="${tmprepo}" --tree=dir="${TMPDIR}/overlay" -b "${name}" \
+    ostree commit --repo="${tmprepo}" \
+        --tree=dir="${TMPDIR}/overlay" -b "overlay/${name}" \
         --owner-uid 0 --owner-gid 0 --no-xattrs --no-bindings --parent=none \
         --mode-ro-executables --timestamp "${git_timestamp}" \
         --statoverride <(sed -e '/^#/d' "${TMPDIR}/overlay/statoverride") \
         --skip-list <(echo /statoverride)
+}
+
+create_content_manifest(){
+    local source_file=$1
+    local destination=$2
+    mkdir -p "${workdir}"/tmp/buildinfo
+    base_repos=$(jq .repos "${flattened_manifest}")
+
+    # Get the data form content_sets.yaml and map the repo names given in '$base_repos' to their corresponding
+    # pulp repository IDs provided in https://www.redhat.com/security/data/metrics/repository-to-cpe.json
+    python3 -c "
+import json, yaml;
+
+# Open the yaml and load the data
+f = open('$source_file')
+data = yaml.safe_load(f);
+f.close();
+repos=[];
+
+for base_repo in $base_repos:
+    if base_repo in data['repo_mapping']:
+        if data['repo_mapping'][base_repo]['name'] != '':
+            repo_name = data['repo_mapping'][base_repo]['name'].replace('\$ARCH', '$(arch)');
+            repos.append(repo_name)
+        else:
+            print('Warning: No corresponding repo in repository-to-cpe.json for ' + base_repo)
+    else:
+        # Warning message for repositories with no entry in content_sets.yaml
+        print('Warning: No corresponding entry in content_sets.yaml for ' + base_repo)
+
+content_manifest_data = json.dumps({
+    'metadata': {
+        'icm_version': 1,
+        'icm_spec': 'https://raw.githubusercontent.com/containerbuildsystem/atomic-reactor/master/atomic_reactor/schemas/content_manifest.json',
+        'image_layer_index': 1
+    },
+    'content_sets': repos,
+    'image_contents': []
+    });
+with open('$destination', 'w') as outfile:
+    outfile.write(content_manifest_data)
+    "
 }
 
 # Implement support for automatic local overrides:
@@ -352,18 +413,7 @@ EOF
             if ! [ -d "${n}" ]; then
                 continue
             fi
-            local bn ovlname
-            bn=$(basename "${n}")
-            ovlname="${name}-config-overlay-${bn}"
-            commit_overlay "${ovlname}" "${n}"
-            layers="${layers} ${ovlname}"
-        done
-    fi
-
-    if [ -n "${layers}" ]; then
-        echo "ostree-layers:" >> "${override_manifest}"
-        for layer in ${layers}; do
-            echo "  - ${layer}" >> "${override_manifest}"
+            commit_overlay "$(basename "${n}")" "${n}"
         done
     fi
 
@@ -385,7 +435,11 @@ EOF
         # the same RPMs: the `dnf repoquery` below is to pick the latest one
         dnf repoquery  --repofrompath=tmp,"file://${overridesdir}/rpm" \
             --disablerepo '*' --enablerepo tmp --refresh --latest-limit 1 \
-            --exclude '*.src' --qf '%{NAME}\t%{EVR}\t%{ARCH}' --quiet | python3 -c '
+            --exclude '*.src' --qf '%{name}\t%{evr}\t%{arch}' \
+            --quiet > "${tmp_overridesdir}/pkgs.txt"
+
+        # shellcheck disable=SC2002
+        cat "${tmp_overridesdir}/pkgs.txt" | python3 -c '
 import sys, json
 lockfile = {"packages": {}}
 for line in sys.stdin:
@@ -393,18 +447,38 @@ for line in sys.stdin:
     lockfile["packages"][name] = {"evra": f"{evr}.{arch}"}
 json.dump(lockfile, sys.stdout)' > "${local_overrides_lockfile}"
 
+        # for all the repo packages in the manifest for which we have an
+        # override, create a new repo-packages entry to make sure our overrides
+        # win.
+        # shellcheck disable=SC2002
+        cat "${tmp_overridesdir}/pkgs.txt" | python3 -c "
+import sys, yaml
+flattened = yaml.safe_load(open('${flattened_manifest}'))
+all_overrides = set()
+for line in sys.stdin:
+    all_overrides.add(line.strip().split('\t')[0])
+repo_overrides = set()
+for repopkg in flattened.get('repo-packages', []):
+    repo_overrides.update(all_overrides.intersection(set(repopkg['packages'])))
+manifest = {
+    'repos': ['coreos-assembler-local-overrides'],
+    'repo-packages': [{
+        'repo': 'coreos-assembler-local-overrides',
+        'packages': list(repo_overrides)
+    }]
+}
+yaml.dump(manifest, sys.stdout)" >> "${override_manifest}"
+        rm "${tmp_overridesdir}/pkgs.txt"
+
         echo "Using RPM overrides from: ${overridesdir}/rpm"
         touch "${overrides_active_stamp}"
-        cat >> "${override_manifest}" <<EOF
-repos:
-  - coreos-assembler-local-overrides
-EOF
         cat > "${tmp_overridesdir}"/coreos-assembler-local-overrides.repo <<EOF
 [coreos-assembler-local-overrides]
 name=coreos-assembler-local-overrides
 baseurl=file://${workdir}/overrides/rpm
 gpgcheck=0
 cost=500
+module_hotfixes=true
 EOF
     else
         rm -vf "${local_overrides_lockfile}"
@@ -440,14 +514,11 @@ EOF
 
     rootfs_overrides="${overridesdir}/rootfs"
     if [[ -d "${rootfs_overrides}" && -n $(ls -A "${rootfs_overrides}") ]]; then
-        echo -n "Committing ${rootfs_overrides}... "
         touch "${overrides_active_stamp}"
-        ostree commit --repo="${tmprepo}" --tree=dir="${rootfs_overrides}" -b cosa-overrides-rootfs \
-          --owner-uid 0 --owner-gid 0 --no-xattrs --no-bindings --parent=none \
-          --timestamp "${git_timestamp}"
+        commit_overlay cosa-overrides-rootfs "${rootfs_overrides}"
           cat >> "${override_manifest}" << EOF
 ostree-override-layers:
-  - cosa-overrides-rootfs
+  - overlay/cosa-overrides-rootfs
 EOF
     fi
 }
@@ -462,30 +533,40 @@ runcompose_tree() {
         # we need our overrides to be at the end of the list
         set - "$@" --ex-lockfile="${tmp_overridesdir}/local-overrides.json"
     fi
-    impl_rpmostree_compose tree --unified-core "${manifest}" "$@"
-    if has_privileges; then
-        sudo chown -R -h "${USER}":"${USER}" "${tmprepo}"
-    fi
-}
 
-runcompose_extensions() {
-    local outputdir=$1; shift
-    impl_rpmostree_compose extensions "$@" --output-dir "$outputdir"
-    if has_privileges; then
-        sudo chown -R -h "${USER}":"${USER}" "${outputdir}"
-    fi
-}
-
-impl_rpmostree_compose() {
-    local cmd=$1; shift
     local workdir=${workdir:-$(pwd)}
     local repo=${tmprepo:-${workdir}/tmp/repo}
 
     rm -f "${changed_stamp}"
     # shellcheck disable=SC2086
-    set - ${COSA_RPMOSTREE_GDB:-} rpm-ostree compose "${cmd}" --repo="${repo}" \
+    set - ${COSA_RPMOSTREE_GDB:-} rpm-ostree compose tree \
             --touch-if-changed "${changed_stamp}" --cachedir="${workdir}"/cache \
-            ${COSA_RPMOSTREE_ARGS:-} "$@"
+            ${COSA_RPMOSTREE_ARGS:-} --unified-core "${manifest}" "$@"
+
+    echo "Running: $*"
+
+    # this is the heart of the privs vs no privs dual path
+    if has_privileges; then
+        set - "$@" --repo "${repo}" --write-composejson-to "${composejson}"
+        # we hardcode a umask of 0022 here to make sure that composes are run
+        # with a consistent value, regardless of the environment
+        (umask 0022 && sudo -E "$@")
+        sudo chown -R -h "${USER}":"${USER}" "${tmprepo}"
+    else
+        runvm_with_cache -- "$@" --repo "${repo}" --write-composejson-to "${composejson}"
+    fi
+}
+
+runcompose_extensions() {
+    local outputdir=$1; shift
+    local workdir=${workdir:-$(pwd)}
+    local repo=${tmprepo:-${workdir}/tmp/repo}
+
+    rm -f "${changed_stamp}"
+    # shellcheck disable=SC2086
+    set - ${COSA_RPMOSTREE_GDB:-} rpm-ostree compose extensions --repo="${repo}" \
+            --touch-if-changed "${changed_stamp}" --cachedir="${workdir}"/cache \
+            ${COSA_RPMOSTREE_ARGS:-} "$@" --output-dir "$outputdir"
 
     echo "Running: $*"
 
@@ -494,22 +575,28 @@ impl_rpmostree_compose() {
         # we hardcode a umask of 0022 here to make sure that composes are run
         # with a consistent value, regardless of the environment
         (umask 0022 && sudo -E "$@")
+        sudo chown -R -h "${USER}":"${USER}" "${outputdir}"
     else
-        # "cache2" has an explicit label so we can find it in qemu easily
-        if [ ! -f "${workdir}"/cache/cache2.qcow2 ]; then
-            qemu-img create -f qcow2 cache2.qcow2.tmp 10G
-            (
-             # shellcheck source=src/libguestfish.sh
-             source /usr/lib/coreos-assembler/libguestfish.sh
-             virt-format --filesystem=xfs --label=cosa-cache -a cache2.qcow2.tmp)
-            mv -T cache2.qcow2.tmp "${workdir}"/cache/cache2.qcow2
-        fi
-        # And remove the old one
-        rm -vf "${workdir}"/cache/cache.qcow2
-        compose_qemu_args+=("-drive" "if=none,id=cache,discard=unmap,file=${workdir}/cache/cache2.qcow2" \
-                            "-device" "virtio-blk,drive=cache")
-        runvm "${compose_qemu_args[@]}" -- "$@"
+        runvm_with_cache -- "$@"
     fi
+}
+
+runvm_with_cache() {
+    # "cache2" has an explicit label so we can find it in qemu easily
+    if [ ! -f "${workdir}"/cache/cache2.qcow2 ]; then
+        qemu-img create -f qcow2 cache2.qcow2.tmp 10G
+        (
+         # shellcheck source=src/libguestfish.sh
+         source /usr/lib/coreos-assembler/libguestfish.sh
+         virt-format --filesystem=xfs --label=cosa-cache -a cache2.qcow2.tmp)
+        mv -T cache2.qcow2.tmp "${workdir}"/cache/cache2.qcow2
+    fi
+    # And remove the old one
+    rm -vf "${workdir}"/cache/cache.qcow2
+    local cachedriveargs="discard=unmap"
+    cache_args+=("-drive" "if=none,id=cache,$cachedriveargs,file=${workdir}/cache/cache2.qcow2" \
+                        "-device" "virtio-blk,drive=cache")
+    runvm "${cache_args[@]}" "$@"
 }
 
 # Strips out the digest field from lockfiles since they subtly conflict with
@@ -590,7 +677,11 @@ runvm() {
     # tmp_builddir is set in prepare_build, but some stages may not
     # know that it exists.
     # shellcheck disable=SC2086
-    export tmp_builddir="${tmp_builddir:-$(mktemp -p ${workdir}/tmp -d supermin.XXXX)}"
+    if [ -z "${tmp_builddir:-}" ]; then
+        tmp_builddir="$(mktemp -p ${workdir}/tmp -d supermin.XXXX)"
+        export tmp_builddir
+        local cleanup_tmpdir=1
+    fi
 
     # shellcheck disable=SC2155
     local vmpreparedir="${tmp_builddir}/supermin.prepare"
@@ -614,6 +705,9 @@ runvm() {
 
     # include COSA in the image
     find /usr/lib/coreos-assembler/ -type f > "${vmpreparedir}/hostfiles"
+
+    # and include all GPG keys
+    find /etc/pki/rpm-gpg/ -type f >> "${vmpreparedir}/hostfiles"
 
     # the reason we do a heredoc here is so that the var substition takes
     # place immediately instead of having to proxy them through to the VM
@@ -650,12 +744,16 @@ EOF
         cat "${tmp_builddir}/supermin.out"
         fatal "Failed to run: supermin --build"
     fi
+    superminrootfsuuid=$(blkid --output=value --match-tag=UUID "${vmbuilddir}/root")
 
     # this is the command run in the supermin container
     # we hardcode a umask of 0022 here to make sure that composes are run
     # with a consistent value, regardless of the environment
     echo "umask 0022" > "${tmp_builddir}"/cmd.sh
-    echo "$@" >> "${tmp_builddir}"/cmd.sh
+    for arg in "$@"; do
+        # escape it appropriately so that spaces in args survive
+        printf '%q ' "$arg" >> "${tmp_builddir}"/cmd.sh
+    done
 
     touch "${runvm_console}"
 
@@ -670,15 +768,14 @@ EOF
     esac
 
     kola_args=(kola qemuexec -m "${COSA_SUPERMIN_MEMORY:-${memory_default}}" --auto-cpus -U --workdir none \
-               --console-to-file "${runvm_console}")
+               --console-to-file "${runvm_console}" --bind-rw "${workdir},workdir")
 
     base_qemu_args=(-drive 'if=none,id=root,format=raw,snapshot=on,file='"${vmbuilddir}"'/root,index=1' \
-                    -device 'virtio-blk,drive=root'
+                    -device 'virtio-blk,drive=root' \
                     -kernel "${vmbuilddir}/kernel" -initrd "${vmbuilddir}/initrd" \
                     -no-reboot -nodefaults \
                     -device virtio-serial \
-                    -virtfs 'local,id=workdir,path='"${workdir}"',security_model=none,mount_tag=workdir' \
-                    -append "root=/dev/vda console=${DEFAULT_TERMINAL} selinux=1 enforcing=0 autorelabel=1" \
+                    -append "root=UUID=${superminrootfsuuid} console=${DEFAULT_TERMINAL} selinux=1 enforcing=0 autorelabel=1" \
                    )
 
     # support local dev cases where src/config is a symlink.  Note if you change or extend to this set,
@@ -713,6 +810,12 @@ EOF
         fatal "Couldn't find rc file; failure inside supermin init?"
     fi
     rc="$(cat "${rc_file}")"
+
+    if [ -n "${cleanup_tmpdir:-}" ]; then
+        rm -rf "${tmp_builddir}"
+        unset tmp_builddir
+    fi
+
     return "${rc}"
 }
 
@@ -791,9 +894,6 @@ prepare_git_artifacts() {
         is_dirty="true"
     fi
 
-    tar -C "${gitd}" -czf "${tarball}" --exclude-vcs .
-    chmod 0444 "${tarball}"
-
     local rev
     local branch
     # shellcheck disable=SC2086
@@ -818,10 +918,6 @@ prepare_git_artifacts() {
 
     info "Directory ${gitd}, is from branch ${branch}, commit ${rev}"
 
-    local checksum name size
-    checksum=$(sha256sum "${tarball}" | awk '{print$1}')
-    name=$(basename "${tarball}")
-    size=$(find "${tarball}" -printf %s)
     # shellcheck disable=SC2046 disable=SC2086
     cat > "${json}" <<EOC
 {
@@ -831,7 +927,22 @@ prepare_git_artifacts() {
         "origin": "${head_url}",
         "branch": "${branch}",
         "dirty": "${is_dirty}"
-    },
+    }
+}
+EOC
+
+    if [ -n "$tarball" ]; then
+        tar -C "${gitd}" -czf "${tarball}" --exclude-vcs .
+        chmod 0444 "${tarball}"
+
+        local checksum name size
+        checksum=$(sha256sum "${tarball}" | awk '{print$1}')
+        name=$(basename "${tarball}")
+        size=$(find "${tarball}" -printf %s)
+
+        # Add file entry to json
+        jq -s add "${json}" - > "${json}.new" <<EOC
+{
     "file": {
         "checksum": "${checksum}",
         "checksum_type": "sha256",
@@ -841,6 +952,9 @@ prepare_git_artifacts() {
     }
 }
 EOC
+        mv "${json}.new" "${json}"
+    fi
+
     chmod 0444 "${json}"
 }
 
