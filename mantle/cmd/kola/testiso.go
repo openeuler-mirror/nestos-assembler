@@ -172,8 +172,8 @@ StandardError=kmsg+console
 ExecStart=/bin/sh -c "journalctl -t nestos-installer-service | /usr/bin/awk '/[Dd]ownload/ {exit 1}'"
 ExecStart=/bin/sh -c "/usr/bin/udevadm settle"
 ExecStart=/bin/sh -c "/usr/bin/mount /dev/disk/by-label/root /mnt"
-ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"build\"] == \"%s\"' /mnt/.coreos-aleph-version.json"
-ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"ostree-commit\"] == \"%s\"' /mnt/.coreos-aleph-version.json"
+ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"build\"] == \"%s\"' /mnt/.nestos-aleph-version.json"
+ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"ostree-commit\"] == \"%s\"' /mnt/.nestos-aleph-version.json"
 [Install]
 RequiredBy=nestos-installer.target
 `

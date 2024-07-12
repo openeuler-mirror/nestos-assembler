@@ -28,11 +28,14 @@ from tenacity import (
 gi.require_version("RpmOstree", "1.0")
 from gi.repository import RpmOstree
 
-from datetime import datetime, timezone
+import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s - %(message)s")
+
+# there's no way to say "forever", so just use a huge number
+LOCK_DEFAULT_LIFETIME = datetime.timedelta(weeks=52)
 
 retry_stop = (stop_after_delay(10) | stop_after_attempt(5))
 retry_boto_exception = (retry_if_exception_type(ConnectionClosedError) |
@@ -100,6 +103,9 @@ def merge_dicts(x, y):
             elif type(x[k]) == dict and type(y[k]) == dict:
                 # recursively merge
                 ret.update({k: merge_dicts(x[k], y[k])})
+            elif type(x[k]) == list and type(y[k]) == list:
+                ret.update({k: x[k]})
+                merge_lists(ret, y, k)
             else:
                 # first dictionary always takes precedence
                 ret.update({k: x[k]})
@@ -125,7 +131,7 @@ def write_json(path, data, lock_path=None, merge_func=None):
     if not lock_path:
         lock_path = get_lock_path(path)
 
-    with Lock(lock_path):
+    with Lock(lock_path, lifetime=LOCK_DEFAULT_LIFETIME):
         if callable(merge_func):
             try:
                 disk_data = load_json(path, require_exclusive=False)
@@ -161,7 +167,7 @@ def load_json(path, require_exclusive=True, lock_path=None):
     if require_exclusive:
         if not lock_path:
             lock_path = get_lock_path(path)
-        lock = Lock(lock_path)
+        lock = Lock(lock_path, lifetime=LOCK_DEFAULT_LIFETIME)
         lock.lock()
     try:
         with open(path) as f:
@@ -218,7 +224,7 @@ def rfc3339_time(t=None):
     :rtype: str
     """
     if t is None:
-        t = datetime.utcnow()
+        t = datetime.datetime.utcnow()
     else:
         # if the need arises, we can convert to UTC, but let's just enforce
         # this doesn't slip by for now
@@ -272,44 +278,48 @@ def extract_image_json(workdir, commit):
 #
 # Call this function to ensure that the ostree commit for a given build is in tmp/repo.
 def import_ostree_commit(workdir, buildpath, buildmeta, extract_json=1):
-	repo = os.path.join(tmpdir, 'repo')
-    commit = buildmeta['ostree-commit']
-    tarfile = os.path.join(buildpath, buildmeta['images']['ostree']['path'])
-    # create repo in case e.g. tmp/ was cleared out; idempotent
-    subprocess.check_call(['ostree', 'init', '--repo', repo, '--mode=archive'])
+    tmpdir = os.path.join(workdir, 'tmp')
+    with Lock(os.path.join(workdir, 'tmp/repo.import.lock'),
+              lifetime=LOCK_DEFAULT_LIFETIME):
+        repo = os.path.join(tmpdir, 'repo')
+        commit = buildmeta['ostree-commit']
+        tarfile = os.path.join(buildpath, buildmeta['images']['ostree']['path'])
+        # create repo in case e.g. tmp/ was cleared out; idempotent
+        subprocess.check_call(['ostree', 'init', '--repo', repo, '--mode=archive'])
 
-    # in the common case where we're operating on a recent build, the OSTree
-    # commit should already be in the tmprepo
-    commitpartial = os.path.join(repo, f'state/{commit}.commitpartial')
-    if (subprocess.call(['ostree', 'show', '--repo', repo, commit],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL) == 0
-            and not os.path.isfile(commitpartial)):
-        if extract_json == 1:
-            extract_image_json(workdir, commit)
-        return
+        # in the common case where we're operating on a recent build, the OSTree
+        # commit should already be in the tmprepo
+        commitpartial = os.path.join(repo, f'state/{commit}.commitpartial')
+        if (subprocess.call(['ostree', 'show', '--repo', repo, commit],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL) == 0
+                and not os.path.isfile(commitpartial)):
+            if extract_json == 1:
+                extract_image_json(workdir, commit)
+            return
 
-    print(f"Extracting {commit}")
-    assert tarfile.endswith('.ociarchive')
-    # We do this in two stages, because right now ex-container only writes to
-    # non-archive repos.  Also, in the privileged case we need sudo to write
-    # to `repo-build`, though it might be good to change this by default.
-    if os.environ.get('COSA_PRIVILEGED', '') == '1':
-        build_repo = os.path.join(repo, '../../cache/repo-build')
-        subprocess.check_call(['sudo', 'ostree', 'container', 'import', '--repo', build_repo,
-                               '--write-ref', buildmeta['buildid'],
-                               'ostree-unverified-image:oci-archive:' + tarfile])
-        subprocess.check_call(['sudo', 'ostree', f'--repo={repo}', 'pull-local', build_repo, buildmeta['buildid']])
-        uid = os.getuid()
-        gid = os.getgid()
-        subprocess.check_call(['sudo', 'chown', '-hR', f"{uid}:{gid}", repo])
-    else:
-        with tempfile.TemporaryDirectory(dir=tmpdir) as tmpd:
-            subprocess.check_call(['ostree', 'init', '--repo', tmpd, '--mode=bare-user'])
-            subprocess.check_call(['ostree', 'container', 'import', '--repo', tmpd,
+        print(f"Extracting {commit}")
+        assert tarfile.endswith('.ociarchive')
+        # We do this in two stages, because right now ex-container only writes to
+        # non-archive repos.  Also, in the privileged case we need sudo to write
+        # to `repo-build`, though it might be good to change this by default.
+        if os.environ.get('COSA_PRIVILEGED', '') == '1':
+            build_repo = os.path.join(repo, '../../cache/repo-build')
+            subprocess.check_call(['sudo', 'ostree', 'container', 'import', '--repo', build_repo,
                                    '--write-ref', buildmeta['buildid'],
                                    'ostree-unverified-image:oci-archive:' + tarfile])
-            subprocess.check_call(['ostree', f'--repo={repo}', 'pull-local', tmpd, buildmeta['buildid']])
+            subprocess.check_call(['sudo', 'ostree', f'--repo={repo}', 'pull-local', build_repo, buildmeta['buildid']])
+            uid = os.getuid()
+            gid = os.getgid()
+            subprocess.check_call(['sudo', 'chown', '-hR', f"{uid}:{gid}", repo])
+        else:
+            with tempfile.TemporaryDirectory(dir=tmpdir) as tmpd:
+                subprocess.check_call(['ostree', 'init', '--repo', tmpd, '--mode=bare-user'])
+                subprocess.check_call(['ostree', 'container', 'import', '--repo', tmpd,
+                                       '--write-ref', buildmeta['buildid'],
+                                       'ostree-unverified-image:oci-archive:' + tarfile])
+                subprocess.check_call(['ostree', f'--repo={repo}', 'pull-local', tmpd, buildmeta['buildid']])
+
         # Also extract image.json since it's commonly needed by image builds
         if extract_json == 1:
             extract_image_json(workdir, commit)
@@ -333,8 +343,8 @@ def parse_date_string(date_string):
     :rtype: datetime.datetime
     :raises: ValueError, TypeError
     """
-    dt = datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%SZ')
-    return dt.replace(tzinfo=timezone.utc)
+    dt = datetime.datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%SZ')
+    return dt.replace(tzinfo=datetime.timezone.utc)
 
 
 def get_timestamp(entry):
@@ -401,12 +411,14 @@ def write_image_json(srcfile, outfile):
         json.dump(r, f, sort_keys=True)
 
 
+# Merge two lists, avoiding duplicates. Exact duplicate kargs could be valid
+# but we have no use case for them right now in our official images.
 def merge_lists(x, y, k):
     x[k] = x.get(k, [])
     assert type(x[k]) == list
     y[k] = y.get(k, [])
     assert type(y[k]) == list
-    x[k].extend(y[k])
+    x[k].extend([i for i in y[k] if i not in x[k]])
 
 
 def flatten_image_yaml(srcfile, base=None):
@@ -418,7 +430,6 @@ def flatten_image_yaml(srcfile, base=None):
 
     # first, special-case list values
     merge_lists(base, srcyaml, 'extra-kargs')
-    merge_lists(base, srcyaml, 'ignition-network-kcmdline')
 
     # then handle all the non-list values
     base = merge_dicts(base, srcyaml)
@@ -437,6 +448,7 @@ def ensure_glob(pathname, **kwargs):
     if not ret:
         raise Exception(f'No matches for {pathname}')
     return ret
+
 
 def ncpu():
     '''Return the number of usable CPUs we have for parallelism.'''
