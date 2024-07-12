@@ -78,14 +78,14 @@ VARIANTS = {
         "image_format": "qcow2",
         "image_suffix": "qcow2.gz",
         "platform": "digitalocean",
-        "gzip": True
+        "compression": "gzip"
     },
     "gcp": {
         # See https://cloud.google.com/compute/docs/import/import-existing-image#requirements_for_the_image_file
         "image_format": "raw",
         "platform": "gcp",
         "image_suffix": "tar.gz",
-        "gzip": True,
+        "compression": "gzip",
         "convert_options": {
             '-o': 'preallocation=off'
         },
@@ -116,12 +116,16 @@ VARIANTS = {
     "nutanix": {
         "image_format": "qcow2",
         "platform": "nutanix",
+        "compression": "skip",
+        "convert_options": {
+            '-c': None
+        }
     },
     "vmware_vmdk": {
         "image_format": "vmdk",
         "image_suffix": "vmdk",
         "platform": "vmware",
-        "convert_options":  {
+        "convert_options": {
             '-o': 'adapter_type=lsilogic,subformat=streamOptimized,compat6'
         }
     },
@@ -186,7 +190,7 @@ class QemuVariantImage(_Build):
         self.compress = kwargs.get("compress", False)
         self.tar_members = kwargs.pop("tar_members", None)
         self.tar_flags = kwargs.pop("tar_flags", [DEFAULT_TAR_FLAGS])
-        self.gzip = kwargs.pop("gzip", False)
+        self.compression = kwargs.pop("compression", None)
         self.virtual_size = kwargs.pop("virtual_size", None)
         self.mutate_callback_creates_final_image = False
 
@@ -202,13 +206,13 @@ class QemuVariantImage(_Build):
         """
         Return the path of the Qemu QCOW2 image from the meta-data
         """
-        qemu_meta = self.meta.get_artifact_meta("metal", unmerged=True)
+        qemu_meta = self.meta.get_artifact_meta("qemu", unmerged=True)
         qimage = os.path.join(
             self.build_dir,
-            qemu_meta.get('images', {}).get('metal', {}).get('path', None)
+            qemu_meta.get('images', {}).get('qemu', {}).get('path', None)
         )
         if not qimage:
-            raise ImageError("metal image has not be built yet")
+            raise ImageError("qemu image has not be built yet")
         elif not os.path.exists(qimage):
             raise ImageError(f"{qimage} does not exist")
         return qimage
@@ -230,8 +234,8 @@ class QemuVariantImage(_Build):
             return None
 
     def set_platform(self):
-        runcmd(['/usr/lib/coreos-assembler/gf-platformid',
-                     self.image_qemu, self.tmp_image, self.platform])
+        runcmd(['/usr/lib/coreos-assembler/gf-set-platform',
+               self.image_qemu, self.tmp_image, self.platform])
 
     def mutate_image(self):
         """
@@ -264,10 +268,12 @@ class QemuVariantImage(_Build):
                           self.tmp_image, self.virtual_size]
             runcmd(resize_cmd)
 
-        cmd = ['qemu-img', 'convert', '-f', 'raw', '-O',
+        cmd = ['qemu-img', 'convert', '-f', 'qcow2', '-O',
                self.image_format, self.tmp_image]
         for k, v in self.convert_options.items():
-            cmd.extend([k, v])
+            cmd.extend([k])
+            if v is not None:
+                cmd.extend([v])
         cmd.extend([work_img])
         runcmd(cmd)
 
@@ -305,19 +311,36 @@ class QemuVariantImage(_Build):
             log.info(f"Moving {work_img} to {final_img}")
             shutil.move(work_img, final_img)
 
-        if self.gzip:
+        if self.compression == "skip":
+            meta_patch.update({
+                'skip-compression': True
+            })
+        elif self.compression is not None:
             sha256 = sha256sum_file(final_img)
             size = os.stat(final_img).st_size
-            temp_path = f"{final_img}.tmp"
-            with open(temp_path, "wb") as fh:
-                runcmd(['gzip', '-9c', final_img], stdout=fh)
-            shutil.move(temp_path, final_img)
+
+            # gzip and zip both embed the input filename in the output
+            # archive.  For gzip this is harmless, since gunzip ignores it
+            # unless -N is specified, but zip is a container format (like
+            # tar) so we need to care.  Strip the .gz or .zip filename
+            # extension from the uncompressed file before compressing.
+            uncompressed_path = os.path.splitext(final_img)[0]
+            os.rename(final_img, uncompressed_path)
+            match self.compression:
+                case "gzip":
+                    rc = ['gzip', '-9c', uncompressed_path]
+                case "zip":
+                    rc = ['zip', '-9j', "-", uncompressed_path]
+                case _:
+                    raise ImageError(f"unsupported compression type: {self.compression}")
+            with open(final_img, "wb") as fh:
+                runcmd(rc, stdout=fh)
+            os.unlink(uncompressed_path)
             meta_patch.update({
                 'skip-compression': True,
                 'uncompressed-sha256': sha256,
                 'uncompressed-size': size,
             })
-
         return meta_patch
 
     def _build_artifacts(self, *args, **kwargs):

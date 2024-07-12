@@ -645,7 +645,7 @@ EOF
     chmod a+x "${vmpreparedir}"/init
     (cd "${vmpreparedir}" && tar -czf init.tar.gz --remove-files init)
     # put the supermin output in a separate file since it's noisy
-    if ! supermin --build "${vmpreparedir}" --size 5G -f ext2 -o "${vmbuilddir}" \
+    if ! supermin --build "${vmpreparedir}" --size 10G -f ext2 -o "${vmbuilddir}" \
             &> "${tmp_builddir}/supermin.out"; then
         cat "${tmp_builddir}/supermin.out"
         fatal "Failed to run: supermin --build"
@@ -681,11 +681,15 @@ EOF
                     -append "root=/dev/vda console=${DEFAULT_TERMINAL} selinux=1 enforcing=0 autorelabel=1" \
                    )
 
-    # support local dev cases where src/config is a symlink
-    if [ -L "${workdir}/src/config" ]; then
-        # qemu follows symlinks
-        base_qemu_args+=("-virtfs" 'local,id=source,path='"${workdir}"'/src/config,security_model=none,mount_tag=source')
-    fi
+    # support local dev cases where src/config is a symlink.  Note if you change or extend to this set,
+    # you also need to update supermin-init-prelude.sh to mount it inside the VM.
+    for maybe_symlink in "${workdir}"/{src/config,src/yumrepos}; do
+        if [ -L "${maybe_symlink}" ]; then
+            local bn
+            bn=$(basename "${maybe_symlink}")
+            kola_args+=("--bind-ro" "${maybe_symlink},/cosa/src/${bn}")
+        fi
+    done
 
     if [ -z "${RUNVM_SHELL:-}" ]; then
         if ! "${kola_args[@]}" -- "${base_qemu_args[@]}" \

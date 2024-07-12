@@ -19,6 +19,12 @@ if [ "$arch" = "ppc64le" ] ; then
     fi
 fi
 
+# Hack to give ppc64le more memory inside the libguestfs VM.
+# The compiled in default I see when running `guestfish get-memsize`
+# is 1280. We need this because we are seeing issues from
+# buildextend-live when running gf-mksquashfs.
+[ "$arch" = "ppc64le" ] && export LIBGUESTFS_MEMSIZE=3072
+
 # http://libguestfs.org/guestfish.1.html#using-remote-control-robustly-from-shell-scripts
 GUESTFISH_PID=
 coreos_gf_launch() {
@@ -26,7 +32,7 @@ coreos_gf_launch() {
         return
     fi
 
-    eval "$(guestfish --listen --format=raw -a "$@")"
+    eval "$(guestfish --listen -a "$@")"
     if [ -z "$GUESTFISH_PID" ]; then
         fatal "guestfish didn't start up, see error messages above"
     fi
@@ -47,6 +53,8 @@ coreos_gf_run() {
         return
     fi
     coreos_gf_launch "$@"
+    # Allow mksquashfs to parallelize
+    coreos_gf set-smp "$(kola ncpu)"
     coreos_gf run
     GUESTFISH_RUNNING=1
 }

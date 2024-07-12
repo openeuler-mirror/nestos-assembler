@@ -5,6 +5,7 @@
 
 mount -t proc /proc /proc
 mount -t sysfs /sys /sys
+mount -t cgroup2 cgroup2 -o rw,nosuid,nodev,noexec,relatime,seclabel,nsdelegate,memory_recursiveprot /sys/fs/cgroup
 mount -t devtmpfs devtmpfs /dev
 
 # need /dev/shm for podman
@@ -18,9 +19,11 @@ LANG=C /sbin/load_policy  -i
 # need fuse module for rofiles-fuse/bwrap during post scripts run
 /sbin/modprobe fuse
 
-# we want /dev/disk symlinks for nestos-installer
+# we want /dev/disk symlinks for coreos-installer
 /usr/lib/systemd/systemd-udevd --daemon
-/usr/sbin/udevadm trigger --settle
+# We've seen this hang before, so add a timeout. This is best-effort anyway, so
+# let's not fail on it.
+timeout 30s /usr/sbin/udevadm trigger --settle || :
 
 # set up networking
 if [ -z "${RUNVM_NONET:-}" ]; then
