@@ -25,8 +25,10 @@ make git rpm-build
 # virt dependencies
 libguestfs-tools libguestfs-tools-c virtiofsd /usr/bin/qemu-img qemu-kvm swtpm
 # And the main arch emulators for cross-arch testing
-#qemu-system-aarch64-core qemu-system-ppc-core qemu-system-s390x-core qemu-system-x86-core
-qemu-system-aarch64 qemu-system-x86
+# qemu-system-aarch64-core qemu-system-ppc-core qemu-system-s390x-core qemu-system-x86-core
+qemu-system-aarch64 qemu-system-x86_64
+# cross-arch emulators need these,but openEuler did not provide these packages in every repo currently.
+# edk2-ovmf edk2-aarch64
 
 # Useful for moving files around
 rsync
@@ -41,10 +43,8 @@ podman buildah skopeo
 jq
 
 # For interacting with AWS/Aliyun/HTTP
+# awscli golang-github-aliyun-cli python3-boto3 python3-requests
 python3-boto3 python3-requests
-
-# For metadata versioning
-python3-semver
 
 # For python retries
 python3-tenacity
@@ -62,10 +62,13 @@ python3-libvirt
 openssl
 
 # Support for Koji uploads.
-#krb5-libs krb5-workstation
+# krb5-libs krb5-workstation koji-utils python3-koji python3-koji-cli-plugins
 
 # LUKS support
 cryptsetup
+
+# For communicating with RoboSignatory for signing requests
+# fedora-messaging
 
 # For debugging running processes in the pipelines
 strace
@@ -82,14 +85,10 @@ nestos-installer
 butane
 
 # Support for meta.json file locking
-#python3-flufl-lock
+python3-flufl.lock
 
 # entrypoint uses bsdtar for automatic compression detection
 bsdtar
 
 # For pulling from the prod OSTree repo, e.g. during release jobs
 #fedora-repos-ostree
-
-python3-flufl.lock python3-pyyaml
-
-#guestfs-tools

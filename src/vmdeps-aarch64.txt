@@ -5,6 +5,7 @@ bootupd
 # For creating bootable UEFI media on aarch64
 shim-aa64 grub2-efi-aa64
 
-qemu-system-aarch64
-
+# openEuler qemu package does not specify the requirement for edk2-aarch64, but it must be needed.
+# Due to improper placement of the edk2 package in the openEuler repo, it is temporarily placed here. 
+# After waiting for the openEuler repo to be fixed, move it into deps.txt or after qemu-system-aarch64 explicitly require edk2-aarch64, remove it here.
 edk2-aarch64

@@ -7,5 +7,3 @@ shim-x64 grub2-efi-x64
 
 # For pxe install kola testing (uses grub2-mknetdir)
 grub2-tools-extra
-
-qemu-system-x86_64
