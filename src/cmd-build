@@ -502,7 +502,7 @@ if [ "${SKIP_PRUNE}" == 1 ]; then
 else
   "${dn}"/cmd-prune --workdir "${workdir}"
 fi
-rm builds/.build-commit
+rm -f builds/.build-commit
 
 if [ -n "${TAG}" ]; then
     # ideally, we'd do this atomically before moving to builds/latest, but
