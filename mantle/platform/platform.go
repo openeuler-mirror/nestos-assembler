@@ -469,14 +469,13 @@ func CheckMachine(ctx context.Context, m Machine) error {
 	}
 
 	// NestOS don't want to check '/etc/os-release' to check if it is supported
-	
 
 	// check systemd version on host to see if we can use `busctl --json=short`
 	var systemdVer int
 	var systemdCmd, failedUnitsCmd, activatingUnitsCmd string
 	var systemdFailures bool
 	minSystemdVer := 240
-	out, stderr, err = m.SSH("rpm -q --queryformat='%{VERSION}\n' systemd")
+	out, stderr, err := m.SSH("rpm -q --queryformat='%{VERSION}\n' systemd")
 	if err != nil {
 		return fmt.Errorf("failed to query systemd RPM for version: %s: %v: %s", out, err, stderr)
 	}

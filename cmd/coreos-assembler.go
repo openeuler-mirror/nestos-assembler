@@ -13,11 +13,15 @@ import (
 
 // commands we'd expect to use in the local dev path
 var buildCommands = []string{"init", "fetch", "build", "run", "prune", "clean", "list"}
-var advancedBuildCommands = []string{"buildfetch", "buildupload", "oc-adm-release", "push-container", "upload-oscontainer", "buildextend-extensions"}
-var buildextendCommands = []string{"aliyun", "applehv", "aws", "azure", "digitalocean", "exoscale", "extensions", "extensions-container", "gcp", "hashlist-experimental", "hyperv", "ibmcloud", "kubevirt", "legacy-oscontainer", "live", "metal", "metal4k", "nutanix", "openstack", "qemu", "secex", "virtualbox", "vmware", "vultr"}
+var advancedBuildCommands = []string{"push-container", "upload-oscontainer", "buildextend-extensions"}
+var buildextendCommands = []string{"extensions", "extensions-container", "legacy-oscontainer", "live", "metal", "metal4k", "openstack", "qemu", "secex"}
 
-var utilityCommands = []string{"aws-replicate", "compress", "copy-container", "koji-upload", "kola", "push-container-manifest", "remote-build-container", "remote-prune", "remote-session", "sign", "tag", "update-variant"}
+var utilityCommands = []string{"compress", "copy-container", "kola", "push-container-manifest", "remote-build-container", "remote-prune", "remote-session", "tag", "virt-install"}
 var otherCommands = []string{"shell", "meta"}
+
+var nestos_unsupport_advanced_build_commands = []string{"buildfetch", "buildupload", "oc-adm-release"}
+var nestos_unsupport_buildextend_commands = []string{"aliyun", "applehv", "aws", "azure", "digitalocean", "exoscale", "gcp", "hashlist-experimental", "hyperv", "ibmcloud", "kubevirt", "nutanix", "virtualbox", "vmware", "vultr"}
+var nestos_unsupport_utility_commands = []string{"aws-replicate", "koji-upload", "sign", "update-variant"}
 
 func init() {
 	// Note buildCommands is intentionally listed in frequency order
@@ -57,6 +61,22 @@ func printUsage() {
 	printCommands("Other commands", otherCommands)
 }
 
+func contains(slice []string, str string) bool {
+	for _, item := range slice {
+		if item == str {
+			return true
+		}
+	}
+	return false
+}
+
+func stripPrefix(str, prefix string) string {
+	if strings.HasPrefix(str, prefix) {
+		return str[len(prefix):]
+	}
+	return str // or panic, or return an error
+}
+
 func run(argv []string) error {
 	if err := initializeGlobalState(argv); err != nil {
 		return fmt.Errorf("failed to initialize global state: %w", err)
@@ -70,6 +90,16 @@ func run(argv []string) error {
 
 	if cmd == "" || cmd == "--help" {
 		printUsage()
+		os.Exit(1)
+	}
+
+	// Determine if the function is currently not supported by NestOS
+	if contains(nestos_unsupport_advanced_build_commands, cmd) ||
+		contains(nestos_unsupport_utility_commands, cmd) ||
+		(strings.HasPrefix(cmd, "buildextend-") &&
+			contains(nestos_unsupport_buildextend_commands, stripPrefix(cmd, "buildextend-"))) {
+
+		fmt.Printf("Command %s is not applicable to NestOS\n", cmd)
 		os.Exit(1)
 	}
 
