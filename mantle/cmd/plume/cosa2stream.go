@@ -134,7 +134,7 @@ func runCosaBuildToStream(cmd *cobra.Command, args []string) error {
 		cosaArgs = append(cosaArgs, "--url="+arg)
 		cosaArgs = append(cosaArgs, "--stream-name="+streamName)
 		cosaArgs = append(cosaArgs, "--output="+releaseTmpf.Name())
-		c := exec.Command("cosa", cosaArgs...)
+		c := exec.Command("nosa", cosaArgs...)
 		c.Stderr = os.Stderr
 		if err := c.Run(); err != nil {
 			return err

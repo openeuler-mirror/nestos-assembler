@@ -7,7 +7,7 @@ import (
 )
 
 func runUpdateVariant(argv []string) error {
-	const updateVariantUsage = `Usage: coreos-assembler update-variant --help <variant> <version>
+	const updateVariantUsage = `Usage: nestos-assembler update-variant --help <variant> <version>
 
 Update symlinks for manifests in the config repo to use the specified version
 for the given variant.

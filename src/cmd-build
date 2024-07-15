@@ -7,8 +7,8 @@ dn=$(dirname "$0")
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler build --help
-       coreos-assembler build [OPTIONS]... [TARGET]...
+Usage: nestos-assembler build --help
+       nestos-assembler build [OPTIONS]... [TARGET]...
 
   Build bootable container (ostree) and image base artifacts from previously fetched packages.
   Accepted TARGET arguments:

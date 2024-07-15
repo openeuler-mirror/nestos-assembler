@@ -9,8 +9,8 @@ import (
 )
 
 func runClean(argv []string) error {
-	const cleanUsage = `Usage: coreos-assembler clean --help
-coreos-assembler clean [--all]
+	const cleanUsage = `Usage: nestos-assembler clean --help
+nestos-assembler clean [--all]
 
 Delete all build artifacts.  Use --all to also clean the cache/ directory.
 `

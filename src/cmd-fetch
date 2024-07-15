@@ -19,8 +19,8 @@ fi
 
 print_help() {
     cat 1>&2 <<'EOF'
-Usage: coreos-assembler fetch --help
-       coreos-assembler fetch [OPTIONS]...
+Usage: nestos-assembler fetch --help
+       nestos-assembler fetch [OPTIONS]...
 
   Fetch and import the latest packages.
 

@@ -26,8 +26,8 @@ esac
 
 print_help() {
     cat 1>&2 <<EOF
-Usage: coreos-assembler buildextend-${image_type} --help
-       coreos-assembler buildextend-${image_type} [--build ID]
+Usage: nestos-assembler buildextend-${image_type} --help
+       nestos-assembler buildextend-${image_type} [--build ID]
 
   Build a bare metal image.
 EOF
