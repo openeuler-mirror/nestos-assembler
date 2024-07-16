@@ -11,7 +11,7 @@ nav_order: 1
 
 ## Quick Start
 
-1. Fork and clone the [`coreos-assembler` repository](https://github.com/coreos/coreos-aasembler/)
+1. Fork and clone the [`coreos-assembler` repository](https://github.com/coreos/coreos-assembler/)
 2. Move into `mantle/kola/tests/` and look for the package your test would best fit
 3. Edit the file and add your test(s), ensuring that you register your new test(s) in the packages `init()`
 4. Commit, push, and PR your result
@@ -49,6 +49,7 @@ func init() {
         ClusterSize: 1,
         Name:        `podman.noop`,
         Distros:     []string{"rhcos"},
+        Description: "Simple NOOP test for podman",
     })
 <snip/>
 $ popd
@@ -84,6 +85,7 @@ Continuing with the look at the `podman` package we can see that `podman.base` i
             ClusterSize: 1,
             Name:        `podman.base`,
             Distros:     []string{"rhcos"},
+            Description: "Verifies podman info and running with various options",
     })
 ```
 
@@ -110,18 +112,18 @@ As an example, let's say you want to add a new test package called `foo`.
 
 1. First create `mantle/kola/tests/foo/`
 2. Then `echo "package foo" > mantle/kola/tests/foo/foo.go`
-3. Next, edit `mantle/kola/registry/registry.go` and add this to the imports `_ "github.com/coreos/mantle/kola/tests/foo"`
+3. Next, edit `mantle/kola/registry/registry.go` and add this to the imports `_ "github.com/coreos/coreos-assembler/mantle/kola/tests/foo"`
 
 ```golang
 package registry
 
 // Tests imported for registration side effects. These make up the OS test suite and is explicitly imported from the main package.
 import (
-        _ "github.com/coreos/mantle/kola/tests/coretest"
-        _ "github.com/coreos/mantle/kola/tests/crio"
-        _ "github.com/coreos/mantle/kola/tests/docker"
-        _ "github.com/coreos/mantle/kola/tests/etcd"
-        _ "github.com/coreos/mantle/kola/tests/foo"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/coretest"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/crio"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/docker"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/etcd"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/foo"
 <snip/>
 ```
 
@@ -148,19 +150,20 @@ import (
 package foo
 
 import (
-        "github.com/coreos/mantle/kola/cluster"
-        "github.com/coreos/mantle/kola/register"
+        "github.com/coreos/coreos-assembler/mantle/kola/cluster"
+        "github.com/coreos/coreos-assembler/mantle/kola/register"
 )
 
 // init runs when the package is imported and takes care of registering tests
 func init() {
-    register.RegisterTest(&register.Test{ // See: https://godoc.org/github.com/coreos/mantle/kola/register#Test
+    register.RegisterTest(&register.Test{ // See: https://godoc.org/github.com/coreos/coreos-assembler/mantle/kola/register#Test
             Run:         exampleTestGroup,
             ClusterSize: 1,
             Name:        `example.example`,
-            Flags:       []register.Flag{}, // See: https://godoc.org/github.com/coreos/mantle/kola/register#Flag
+            Flags:       []register.Flag{}, // See: https://godoc.org/github.com/coreos/coreos-assembler/mantle/kola/register#Flag
             Distros:     []string{"rhcos"},
             FailFast:    true,
+            Description: "Example test group",
     })
 }
 
@@ -193,22 +196,22 @@ package registry
 
 // Tests imported for registration side effects. These make up the OS test suite and is explicitly imported from the main package.
 import (
-        _ "github.com/coreos/mantle/kola/tests/coretest"
-        _ "github.com/coreos/mantle/kola/tests/crio"
-        _ "github.com/coreos/mantle/kola/tests/docker"
-        _ "github.com/coreos/mantle/kola/tests/etcd"
-        _ "github.com/coreos/mantle/kola/tests/flannel"
-        _ "github.com/coreos/mantle/kola/tests/foo"
-        _ "github.com/coreos/mantle/kola/tests/ignition"
-        _ "github.com/coreos/mantle/kola/tests/kubernetes"
-        _ "github.com/coreos/mantle/kola/tests/locksmith"
-        _ "github.com/coreos/mantle/kola/tests/metadata"
-        _ "github.com/coreos/mantle/kola/tests/misc"
-        _ "github.com/coreos/mantle/kola/tests/ostree"
-        _ "github.com/coreos/mantle/kola/tests/packages"
-        _ "github.com/coreos/mantle/kola/tests/podman"
-        _ "github.com/coreos/mantle/kola/tests/rkt"
-        _ "github.com/coreos/mantle/kola/tests/rpmostree"
-        _ "github.com/coreos/mantle/kola/tests/update"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/coretest"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/crio"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/docker"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/etcd"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/flannel"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/foo"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/ignition"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/kubernetes"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/locksmith"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/metadata"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/misc"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/ostree"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/packages"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/podman"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/rkt"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/rpmostree"
+        _ "github.com/coreos/coreos-assembler/mantle/kola/tests/update"
 )
 ```

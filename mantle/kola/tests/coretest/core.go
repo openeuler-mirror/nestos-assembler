@@ -11,8 +11,9 @@ import (
 
 	"github.com/pborman/uuid"
 
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 const (
@@ -23,9 +24,6 @@ const (
 // RHCOS services we expect disabled/inactive
 var offServices = []string{
 	"dnsmasq.service",
-	"iscsid.service",
-	"iscsid.socket",
-	"iscsiuio.service",
 	"nfs-blkmap.service",
 	"nfs-idmapd.service",
 	"nfs-mountd.service",
@@ -42,6 +40,7 @@ var offServices = []string{
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:        "basic",
+		Description: "Verify basic functionalities like SSH, systemd services, useradd, etc.",
 		Run:         LocalTests,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
@@ -56,13 +55,14 @@ func init() {
 		},
 	})
 	// TODO: Enable DockerPing/DockerEcho once fixed
-	// TODO: Only enable PodmanPing on non qemu-unpriv. Needs:
+	// TODO: Only enable PodmanPing on non qemu. Needs:
 	// https://github.com/coreos/mantle/issues/1132
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.internet",
+		Description: "Verify that docker echo and get head work.",
 		Run:         InternetTests,
 		ClusterSize: 1,
-		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Tags:        []string{kola.NeedsInternetTag},
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"DockerEcho":     register.CreateNativeFuncWrap(TestDockerEcho),
 			"DockerWgetHead": register.CreateNativeFuncWrap(TestDockerWgetHead),
@@ -71,6 +71,7 @@ func init() {
 	})
 	register.RegisterTest(&register.Test{
 		Name:        "rootfs.uuid",
+		Description: "Verify that the root disk's GUID was set to a random one on first boot.",
 		Run:         LocalTests,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
@@ -81,6 +82,7 @@ func init() {
 	})
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.services-disabled",
+		Description: "Verify the specific services are disabled/inactive",
 		Run:         LocalTests,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
@@ -337,8 +339,13 @@ func checkService(unit string) error {
 	// https://github.com/systemd/systemd/blob/master/src/systemd/sd-messages.h
 	// For oneshot type services that remain after exit, STARTED being "done"
 	// should imply that the service ran and exited successfully.
-	c := exec.Command("journalctl", "-o", "json", "MESSAGE_ID=39f53479d3a045ac8e11786248231fbf",
-		"UNIT="+unit)
+	//
+	// We add `--directory=/var/log/journal` here because we were seeing a race
+	// condition starting on systemd 254 on s390x/ppc64le where we would get
+	// two duplicate entries (one each from {/var,/run}log/journal/) returned
+	// and it would break the json.Unmarshal below.
+	c := exec.Command("journalctl", "-o", "json", "--directory=/var/log/journal",
+		"MESSAGE_ID=39f53479d3a045ac8e11786248231fbf", "UNIT="+unit)
 	out, err := c.Output()
 	if err != nil {
 		return fmt.Errorf("journalctl: %s", err)

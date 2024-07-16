@@ -22,9 +22,9 @@ import (
 
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/api/gcloud"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/api/gcloud"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 type cluster struct {
@@ -37,20 +37,17 @@ func (gc *cluster) NewMachine(userdata *conf.UserData) (platform.Machine, error)
 }
 
 func (gc *cluster) NewMachineWithOptions(userdata *conf.UserData, options platform.MachineOptions) (platform.Machine, error) {
-	if len(options.AdditionalDisks) > 0 {
-		return nil, errors.New("platform gce does not yet support additional disks")
-	}
 	if options.MultiPathDisk {
-		return nil, errors.New("platform gce does not support multipathed disks")
+		return nil, errors.New("platform gcp does not support multipathed disks")
 	}
 	if options.AdditionalNics > 0 {
-		return nil, errors.New("platform gce does not support additional nics")
+		return nil, errors.New("platform gcp does not support additional nics")
 	}
 	if options.AppendKernelArgs != "" {
-		return nil, errors.New("platform gce does not support appending kernel arguments")
+		return nil, errors.New("platform gcp does not support appending kernel arguments")
 	}
 	if options.AppendFirstbootKernelArgs != "" {
-		return nil, errors.New("platform gce does not support appending firstboot kernel arguments")
+		return nil, errors.New("platform gcp does not support appending firstboot kernel arguments")
 	}
 
 	conf, err := gc.RenderUserData(userdata, map[string]string{
@@ -69,7 +66,7 @@ func (gc *cluster) NewMachineWithOptions(userdata *conf.UserData, options platfo
 		}
 	}
 
-	instance, err := gc.flight.api.CreateInstance(conf.String(), keys, !gc.RuntimeConf().NoInstanceCreds)
+	instance, err := gc.flight.api.CreateInstance(conf.String(), keys, options, !gc.RuntimeConf().NoInstanceCreds)
 	if err != nil {
 		return nil, err
 	}

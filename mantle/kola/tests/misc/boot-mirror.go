@@ -20,14 +20,14 @@ import (
 
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/platform/machine/unprivqemu"
-	ut "github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
+	ut "github.com/coreos/coreos-assembler/mantle/util"
 )
 
 var (
@@ -60,7 +60,8 @@ func init() {
 		Run:         runBootMirrorTest,
 		ClusterSize: 0,
 		Name:        `nestos.boot-mirror`,
-		Platforms:   []string{"qemu-unpriv"},
+		Description: "Verify the boot-mirror RAID1 flow works properly in both BIOS and UEFI mode.",
+		Platforms:   []string{"qemu"},
 		//ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x
 		ExcludeArchitectures: []string{"s390x"},
@@ -75,7 +76,8 @@ func init() {
 		Run:         runBootMirrorLUKSTest,
 		ClusterSize: 0,
 		Name:        `nestos.boot-mirror.luks`,
-		Platforms:   []string{"qemu-unpriv"},
+		Description: "Verify the boot-mirror+LUKS RAID1 flow works properly in both BIOS and UEFI modes.",
+		Platforms:   []string{"qemu"},
 		//ExcludeDistros: []string{"nestos"},
 		// Can't mirror boot disk on s390x, and qemu s390x doesn't
 		// support TPM
@@ -96,14 +98,19 @@ func runBootMirrorTest(c cluster.TestCluster) {
 	var err error
 	options := platform.QemuMachineOptions{
 		MachineOptions: platform.MachineOptions{
-			AdditionalDisks: []string{"5120M", "5120M"},
+			AdditionalDisks: []string{"5G", "5G"},
 			MinMemory:       4096,
 		},
+	}
+	// ppc64le uses 64K pages; see similar logic in harness.go and luks.go
+	switch coreosarch.CurrentRpmArch() {
+	case "ppc64le":
+		options.MinMemory = 8192
 	}
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
 	userdata := bootmirror.Subst("LAYOUT", coreosarch.CurrentRpmArch())
-	m, err = c.Cluster.(*unprivqemu.Cluster).NewMachineWithQemuOptions(userdata, options)
+	m, err = c.Cluster.(*qemu.Cluster).NewMachineWithQemuOptions(userdata, options)
 	if err != nil {
 		c.Fatal(err)
 	}
@@ -143,14 +150,19 @@ func runBootMirrorLUKSTest(c cluster.TestCluster) {
 	var err error
 	options := platform.QemuMachineOptions{
 		MachineOptions: platform.MachineOptions{
-			AdditionalDisks: []string{"5120M"},
+			AdditionalDisks: []string{"5G"},
 			MinMemory:       4096,
 		},
+	}
+	// ppc64le uses 64K pages; see similar logic in harness.go and luks.go
+	switch coreosarch.CurrentRpmArch() {
+	case "ppc64le":
+		options.MinMemory = 8192
 	}
 	// FIXME: for QEMU tests kola currently assumes the host CPU architecture
 	// matches the one under test
 	userdata := bootmirrorluks.Subst("LAYOUT", coreosarch.CurrentRpmArch())
-	m, err = c.Cluster.(*unprivqemu.Cluster).NewMachineWithQemuOptions(userdata, options)
+	m, err = c.Cluster.(*qemu.Cluster).NewMachineWithQemuOptions(userdata, options)
 	if err != nil {
 		c.Fatal(err)
 	}
@@ -230,6 +242,15 @@ func detachPrimaryBlockDevice(c cluster.TestCluster, m platform.Machine) {
 		}); err != nil {
 			c.Fatalf("Failed to retrieve boot ID: %v", err)
 		}
+
+		// Give some time to the host before doing the reboot. Without it, we've noticed
+		// that rebooting too quickly after ripping out the primary device can trigger
+		// a kernel panic on ppc64le. This may be memory-related since the same panic
+		// happens more easily if memory is lowered to 4G.
+		if coreosarch.CurrentRpmArch() == "ppc64le" {
+			time.Sleep(60 * time.Second)
+		}
+
 		err := m.Reboot()
 		if err != nil {
 			c.Fatalf("Failed to reboot the machine: %v", err)

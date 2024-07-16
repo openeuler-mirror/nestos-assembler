@@ -15,14 +15,15 @@
 package ignition
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.systemd.enable-service",
+		Description: "Verify that Ignition supports enabling an existing service.",
 		Run:         enableSystemdService,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},

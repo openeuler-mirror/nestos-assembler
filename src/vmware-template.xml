@@ -16,7 +16,7 @@
   <VirtualSystem ovf:id="image">
     <Info>A virtual machine</Info>
     <Name>{vsphere_image_name}</Name>
-    <OperatingSystemSection ovf:id="80" ovf:version="6" vmw:osType="{vsphere_os_type}">
+    <OperatingSystemSection ovf:id="100" vmw:osType="{vsphere_os_type}">
       <Info>The kind of installed guest operating system</Info>
     </OperatingSystemSection>
     <VirtualHardwareSection ovf:transport="com.vmware.guestInfo">
@@ -56,7 +56,7 @@
         <rasd:Description>SCSI Controller</rasd:Description>
         <rasd:ElementName>SCSI Controller 0</rasd:ElementName>
         <rasd:InstanceID>3</rasd:InstanceID>
-	<rasd:ResourceSubType>{vsphere_scsi_controller_type}</rasd:ResourceSubType>
+	<rasd:ResourceSubType>VirtualSCSI</rasd:ResourceSubType>
         <rasd:ResourceType>6</rasd:ResourceType>
       </Item>
       <Item>
@@ -75,11 +75,13 @@
         <rasd:Description>VmxNet3 ethernet adapter on "VM Network"</rasd:Description>
         <rasd:ElementName>Network adapter 1</rasd:ElementName>
         <rasd:InstanceID>5</rasd:InstanceID>
-	<rasd:ResourceSubType>{vsphere_network_controller_type}</rasd:ResourceSubType>
+	<rasd:ResourceSubType>VmxNet3</rasd:ResourceSubType>
         <rasd:ResourceType>10</rasd:ResourceType>
         <vmw:Config ovf:required="false" vmw:key="connectable.allowGuestControl" vmw:value="true"/>
         <vmw:Config ovf:required="false" vmw:key="wakeOnLanEnabled" vmw:value="false"/>
       </Item>
+      <vmw:Config ovf:required="false" vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="{secure_boot}"/>
+      <vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="efi"/>
     </VirtualHardwareSection>
     <ProductSection>
       <Info>Information about the installed software</Info>

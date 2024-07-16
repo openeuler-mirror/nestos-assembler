@@ -17,7 +17,7 @@ package crio
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -25,12 +25,13 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/context"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/lang/worker"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/lang/worker"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 // simplifiedCrioInfo represents the results from crio info
@@ -189,22 +190,25 @@ func init() {
 		Run:         crioBaseTests,
 		ClusterSize: 1,
 		Name:        `crio.base`,
-		// crio pods require fetching a kubernetes pause image
-		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Description: "Verify cri-o basic funcions work, include storage driver is overlay, storage root is /varlib/containers/storage, cgroup driver is systemd, and cri-o containers have reliable networking",
 		Distros:     []string{"rhcos", "nestos"},
 		UserData:    enableCrioIgn,
 		RequiredTag: "crio",
+		// crio pods require fetching a kubernetes pause image
+		Tags: []string{"crio", kola.NeedsInternetTag},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         crioNetwork,
 		ClusterSize: 2,
 		Name:        "crio.network",
-		Flags:       []register.Flag{register.RequiresInternetAccess},
+		Description: "Verify crio containers can make network connections outside of the host.",
 		Distros:     []string{"rhcos", "nestos"},
 		UserData:    enableCrioIgn,
 		RequiredTag: "crio",
-		// qemu-unpriv machines cannot communicate between each other
-		ExcludePlatforms: []string{"qemu-unpriv"},
+		// this test requires net connections outside the host
+		Tags: []string{"crio", kola.NeedsInternetTag},
+		// qemu machines cannot communicate between each other
+		ExcludePlatforms: []string{"qemu"},
 	})
 }
 
@@ -220,7 +224,7 @@ func crioBaseTests(c cluster.TestCluster) {
 func generateCrioConfig(podName, imageName string, command []string) (string, string, error) {
 	fileContentsPod := fmt.Sprintf(crioPodTemplate, podName, imageName)
 
-	tmpFilePod, err := ioutil.TempFile("", podName+"Pod")
+	tmpFilePod, err := os.CreateTemp("", podName+"Pod")
 	if err != nil {
 		return "", "", err
 	}
@@ -231,7 +235,7 @@ func generateCrioConfig(podName, imageName string, command []string) (string, st
 	cmd := strings.Join(command, " ")
 	fileContentsContainer := fmt.Sprintf(crioContainerTemplate, imageName, imageName, cmd)
 
-	tmpFileContainer, err := ioutil.TempFile("", imageName+"Container")
+	tmpFileContainer, err := os.CreateTemp("", imageName+"Container")
 	if err != nil {
 		return "", "", err
 	}
@@ -367,12 +371,7 @@ func crioNetwork(c cluster.TestCluster) {
 // crioNetworksReliably verifies that crio containers have a reliable network
 func crioNetworksReliably(c cluster.TestCluster) {
 	m := c.Machines()[0]
-
-	// Figure out the host IP address on the crio default bridge. This is
-	// required as the default subnet was changed in 1.18 to avoid a conflict
-	// with the default podman bridge.
-	subnet := c.MustSSH(m, "jq --raw-output '.ipam.ranges[0][0].subnet' /usr/etc/cni/net.d/100-crio-bridge.conf")
-	hostIP := fmt.Sprintf("%s.1", strings.TrimSuffix(string(subnet), ".0/16"))
+	hostIP := "127.0.0.1"
 
 	// Here we generate 10 pods, each will run a container responsible for
 	// pinging to host

@@ -19,14 +19,14 @@ package ibmcloud
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
 
-	"github.com/coreos/mantle/cli"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/api/ibmcloud"
+	"github.com/coreos/coreos-assembler/mantle/cli"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/api/ibmcloud"
 	"github.com/coreos/pkg/capnslog"
 	"github.com/spf13/cobra"
 )
@@ -39,7 +39,7 @@ type apiKeyFile struct {
 }
 
 var (
-	plog = capnslog.NewPackageLogger("github.com/coreos/mantle", "ore/ibmcloud")
+	plog = capnslog.NewPackageLogger("github.com/coreos/coreos-assembler/mantle", "ore/ibmcloud")
 
 	IbmCloud = &cobra.Command{
 		Use:   "ibmcloud [command]",
@@ -96,7 +96,7 @@ func preflightCheck(cmd *cobra.Command, args []string) error {
 		defer file.Close()
 
 		var apiKeyValues apiKeyFile
-		bytes, err := ioutil.ReadAll(file)
+		bytes, err := io.ReadAll(file)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "could not read apikey file: %v\n", err)
 			os.Exit(1)

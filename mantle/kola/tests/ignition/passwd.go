@@ -18,15 +18,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.groups",
+		Description: "Verify that we can create user groups through Ignition.",
 		Run:         groups,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},
@@ -55,6 +56,7 @@ func init() {
 	})
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.v2.users",
+		Description: "Verify that we can create users through Ignition.",
 		Run:         users,
 		ClusterSize: 1,
 		Tags:        []string{"ignition"},

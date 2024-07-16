@@ -15,9 +15,9 @@
 package ignition
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
@@ -45,6 +45,7 @@ func init() {
 	// after the machine has booted.
 	register.RegisterTest(&register.Test{
 		Name:             "nestos.ignition.sethostname",
+		Description:      "Verify that Ignition supports setting hostname.",
 		Run:              setHostname,
 		ClusterSize:      1,
 		UserData:         config,

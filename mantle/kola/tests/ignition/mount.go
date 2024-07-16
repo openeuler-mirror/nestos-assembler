@@ -19,18 +19,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 	"github.com/coreos/ignition/v2/config/v3_0/types"
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
 )
 
 func init() {
 	// mount disks to `/var/log` and `/var/lib/containers`
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.mount.disks",
+		Description: "Verify that we can mount two disks through Ignition and write to the mountpoints.",
 		Run:         testMountDisks,
 		ClusterSize: 0,
 		Platforms:   []string{"qemu"},
@@ -39,6 +40,7 @@ func init() {
 	// create new partiitons with disk `vda`
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.mount.partitions",
+		Description: "Verify that we can create new partitions through Ignition.",
 		Run:         testMountPartitions,
 		ClusterSize: 0,
 		Platforms:   []string{"qemu"},
@@ -52,7 +54,7 @@ func testMountDisks(c cluster.TestCluster) {
 	config := setupIgnitionConfig()
 
 	options := platform.MachineOptions{
-		AdditionalDisks: []string{"1024M", "1024M"},
+		AdditionalDisks: []string{"1G", "1G"},
 	}
 
 	ignDisks := []types.Disk{

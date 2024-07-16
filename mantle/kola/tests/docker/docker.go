@@ -27,12 +27,12 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/context"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/lang/worker"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/lang/worker"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 type simplifiedDockerInfo struct {
@@ -60,8 +60,8 @@ func init() {
 		Name:        "docker.network",
 		Distros:     []string{"cl"},
 
-		// qemu-unpriv machines cannot communicate
-		ExcludePlatforms: []string{"qemu-unpriv"},
+		// qemu machines cannot communicate
+		ExcludePlatforms: []string{"qemu"},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         dockerOldClient,
@@ -103,8 +103,8 @@ passwd:
   users:
   - name: dockremap`),
 
-		// qemu-unpriv machines cannot communicate
-		ExcludePlatforms: []string{"qemu-unpriv"},
+		// qemu machines cannot communicate
+		ExcludePlatforms: []string{"qemu"},
 	})
 
 	// This test covers all functionality that should be quick to run and can be
@@ -226,10 +226,10 @@ systemd:
      enable: true`),
 
 		// https://github.com/coreos/mantle/issues/999
-		// On the qemu-unpriv platform the DHCP provides no data, pre-systemd 241 the DHCP server sending
+		// On the qemu platform the DHCP provides no data, pre-systemd 241 the DHCP server sending
 		// no routes to the link to spin in the configuring state. docker.service pulls in the network-online
 		// target which causes the basic machine checks to fail
-		ExcludePlatforms: []string{"qemu-unpriv"},
+		ExcludePlatforms: []string{"qemu"},
 	})
 }
 

@@ -17,7 +17,6 @@ package gcloud
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"strings"
@@ -27,14 +26,14 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/api/storage/v1"
 
-	"github.com/coreos/mantle/platform/api/gcloud"
+	"github.com/coreos/coreos-assembler/mantle/platform/api/gcloud"
 )
 
 var (
 	cmdUpload = &cobra.Command{
 		Use:   "upload",
 		Short: "Upload os image",
-		Long:  "Upload os image to Google Storage bucket and create image in GCE. Intended for use in SDK.",
+		Long:  "Upload os image to Google Storage bucket and create image in GCP. Intended for use in SDK.",
 		Run:   runUpload,
 	}
 
@@ -43,6 +42,7 @@ var (
 	uploadFile             string
 	uploadForce            bool
 	uploadWriteUrl         string
+	uploadImageArch        string
 	uploadImageFamily      string
 	uploadImageDescription string
 	uploadCreateImage      bool
@@ -63,9 +63,9 @@ func init() {
 	if err := cmdUpload.MarkFlagRequired("file"); err != nil {
 		panic(err)
 	}
-	cmdUpload.Flags().BoolVar(&uploadForce, "force", false, "overwrite existing GS and GCE images without prompt")
+	cmdUpload.Flags().BoolVar(&uploadForce, "force", false, "overwrite existing GS and GCP images without prompt")
 	cmdUpload.Flags().StringVar(&uploadWriteUrl, "write-url", "", "output the uploaded URL to the named file")
-	cmdUpload.Flags().StringVar(&uploadImageFamily, "family", "", "GCP image family to attach image to")
+	cmdUpload.Flags().StringVar(&uploadImageArch, "arch", "", "The architecture of the image")
 	cmdUpload.Flags().StringVar(&uploadImageDescription, "description", "", "The description that should be attached to the image")
 	cmdUpload.Flags().BoolVar(&uploadCreateImage, "create-image", true, "Create an image in GCP after uploading")
 	cmdUpload.Flags().BoolVar(&uploadPublic, "public", false, "Set public ACLs on image")
@@ -102,8 +102,8 @@ func runUpload(cmd *cobra.Command, args []string) {
 	uploadBucket = gsURL.Host
 	imageNameGS := strings.TrimPrefix(gsURL.Path+"/"+uploadImageName, "/") + ".tar.gz"
 
-	// Sanitize the image name for GCE
-	imageNameGCE := gceSanitize(uploadImageName)
+	// Sanitize the image name for GCP
+	imageNameGCP := gcpSanitize(uploadImageName)
 
 	ctx := context.Background()
 	storageAPI, err := storage.NewService(ctx, option.WithHTTPClient(api.Client()))
@@ -144,12 +144,13 @@ func runUpload(cmd *cobra.Command, args []string) {
 	imageStorageURL := fmt.Sprintf("https://storage.googleapis.com/%v/%v", uploadBucket, imageNameGS)
 
 	if uploadCreateImage {
-		fmt.Printf("Creating image in GCE: %v...\n", imageNameGCE)
+		fmt.Printf("Creating image in GCP: %v...\n", imageNameGCP)
 		spec := &gcloud.ImageSpec{
-			Name:        imageNameGCE,
-			Family:      uploadImageFamily,
-			SourceImage: imageStorageURL,
-			Description: uploadImageDescription,
+			Architecture: uploadImageArch,
+			Name:         imageNameGCP,
+			Family:       uploadImageFamily,
+			SourceImage:  imageStorageURL,
+			Description:  uploadImageDescription,
 		}
 		if len(uploadImageLicenses) > 0 {
 			spec.Licenses = uploadImageLicenses
@@ -162,7 +163,7 @@ func runUpload(cmd *cobra.Command, args []string) {
 		// if image already exists ask to delete and try again
 		if err != nil && strings.HasSuffix(err.Error(), "alreadyExists") {
 			var ans string
-			fmt.Printf("Image %v already exists on GCE. Overwrite? (y/n):", imageNameGCE)
+			fmt.Printf("Image %v already exists on GCP. Overwrite? (y/n):", imageNameGCP)
 			if _, err = fmt.Scan(&ans); err != nil {
 				fmt.Fprintf(os.Stderr, "Scanning overwrite input: %v", err)
 				os.Exit(1)
@@ -175,32 +176,32 @@ func runUpload(cmd *cobra.Command, args []string) {
 					err = pending.Wait()
 				}
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Creating GCE image failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "Creating GCP image failed: %v\n", err)
 					os.Exit(1)
 				}
-				fmt.Printf("Image %v sucessfully created in GCE\n", imageNameGCE)
+				fmt.Printf("Image %v sucessfully created in GCP\n", imageNameGCP)
 			default:
-				fmt.Println("Skipped GCE image creation")
+				fmt.Println("Skipped GCP image creation")
 			}
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Creating GCE image failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Creating GCP image failed: %v\n", err)
 			os.Exit(1)
 		}
 
 		// If requested, set the image ACL to public
 		if uploadPublic {
-			fmt.Printf("Setting image to have public access: %v\n", imageNameGCE)
-			err = api.SetImagePublic(imageNameGCE)
+			fmt.Printf("Setting image to have public access: %v\n", imageNameGCP)
+			err = api.SetImagePublic(imageNameGCP)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Marking GCE image with public ACLs failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Marking GCP image with public ACLs failed: %v\n", err)
 				os.Exit(1)
 			}
 		}
 	}
 
 	if uploadWriteUrl != "" {
-		err = ioutil.WriteFile(uploadWriteUrl, []byte(imageStorageURL), 0644)
+		err = os.WriteFile(uploadWriteUrl, []byte(imageStorageURL), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Writing file (%v) failed: %v\n", uploadWriteUrl, err)
 			os.Exit(1)
@@ -209,11 +210,11 @@ func runUpload(cmd *cobra.Command, args []string) {
 
 }
 
-// Converts an image name from Google Storage to an equivalent GCE image
-// name. NOTE: Not a fully generlized sanitizer for GCE. Designed for
+// Converts an image name from Google Storage to an equivalent GCP image
+// name. NOTE: Not a fully generlized sanitizer for GCP. Designed for
 // the default version.txt name (ex: 633.1.0+2015-03-31-1538). See:
 // https://godoc.org/google.golang.org/api/compute/v1#Image
-func gceSanitize(name string) string {
+func gcpSanitize(name string) string {
 	if name == "" {
 		return name
 	}

@@ -16,7 +16,6 @@ package util
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,13 +66,13 @@ func GetLocalFastBuildQemu() (string, error) {
 		}
 		return "", err
 	}
-	ents, err := ioutil.ReadDir(fastBuildCosaDir)
+	ents, err := os.ReadDir(fastBuildCosaDir)
 	if err != nil {
 		return "", err
 	}
 	for _, ent := range ents {
 		if strings.HasSuffix(ent.Name(), ".qcow2") {
-			return filepath.Join(".cosa", ent.Name()), nil
+			return filepath.Join(fastBuildCosaDir, ent.Name()), nil
 		}
 	}
 	return "", nil

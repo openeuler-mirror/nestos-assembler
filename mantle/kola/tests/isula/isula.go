@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	tutil "github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	tutil "github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
 )
 
 func init() {
@@ -16,17 +17,17 @@ func init() {
 		ClusterSize: 1,
 		Name:        `isula.base`,
 		Distros:     []string{"nestos"},
-		Flags:       []register.Flag{register.RequiresInternetAccess},
 		RequiredTag: "isula",
+		Tags:        []string{"isula", kola.NeedsInternetTag},
 	})
 	register.RegisterTest(&register.Test{
 		Run:         isulaWorkflow,
 		ClusterSize: 1,
 		Name:        `isula.workflow`,
 		Distros:     []string{"nestos"},
-		Flags:       []register.Flag{register.RequiresInternetAccess},
 		FailFast:    true,
 		RequiredTag: "isula",
+		Tags:        []string{"isula", kola.NeedsInternetTag},
 	})
 }
 

@@ -21,12 +21,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	tutil "github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	tutil "github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 // init runs when the package is imported and takes care of registering tests
@@ -35,6 +35,7 @@ func init() {
 		Run:         podmanBaseTest,
 		ClusterSize: 1,
 		Name:        `podman.base`,
+		Description: "Verify podman info and running with various options work.",
 		RequiredTag: "podman",
 	})
 	// These remaining tests use networking, and hence don't work reliably on RHCOS
@@ -43,7 +44,8 @@ func init() {
 		Run:         podmanWorkflow,
 		ClusterSize: 1,
 		Name:        `podman.workflow`,
-		Flags:       []register.Flag{register.RequiresInternetAccess}, // For pulling nginx
+		Description: "Verify container can run with volume mount and port forwarding.",
+		Tags:        []string{kola.NeedsInternetTag}, // For pulling nginx
 		Distros:     []string{"fcos", "nestos"},
 		FailFast:    true,
 		RequiredTag: "podman",
@@ -52,10 +54,11 @@ func init() {
 		Run:         podmanNetworksReliably,
 		ClusterSize: 1,
 		Name:        `podman.network-single`,
+		Description: "Verify basic container network connectivity.",
 		// Not really but podman blows up if there's no /etc/resolv.conf
-		Tags:        []string{kola.NeedsInternetTag},
+		Tags:    []string{kola.NeedsInternetTag},
 		Distros:     []string{"fcos", "nestos"},
-		Timeout:     20 * time.Minute,
+		Timeout: 20 * time.Minute,
 		RequiredTag: "podman",
 	})
 	// https://github.com/coreos/mantle/pull/1080
@@ -130,7 +133,6 @@ func podmanWorkflow(c cluster.TestCluster) {
 
 	// Test: Verify container can run with volume mount and port forwarding
 	image := "atomhub.openatom.cn/library/nginx"
-	container_name := "nginx"
 	wwwRoot := "/usr/share/nginx/html"
 	var id string
 
@@ -139,7 +141,7 @@ func podmanWorkflow(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("echo TEST PAGE > %s/index.html", string(dir))
 		c.RunCmdSync(m, cmd)
 
-		cmd = fmt.Sprintf("sudo podman run --name %s -d -p 80:80 -v %s/index.html:%s/index.html:z %s", container_name, string(dir), wwwRoot, image)
+		cmd = fmt.Sprintf("sudo podman run -d -p 80:80 -v %s/index.html:%s/index.html:z %s", string(dir), wwwRoot, image)
 		out := c.MustSSH(m, cmd)
 		id = string(out)[0:64]
 
@@ -163,48 +165,6 @@ func podmanWorkflow(c cluster.TestCluster) {
 	c.Run("exec", func(c cluster.TestCluster) {
 		cmd := fmt.Sprintf("sudo podman exec %s echo hello", id)
 		c.AssertCmdOutputContains(m, cmd, "hello")
-	})
-
-	// Test: Cp local files to container
-	c.Run("cp", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo touch example.txt && sudo podman cp example.txt nginx:/home")
-		if err != nil {
-			c.Fatal(err)
-		}
-	})
-
-	// Test: Export container to tar
-	c.Run("export", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo podman export -o local_nginx.tar nginx")
-		if err != nil {
-			c.Fatal(err)
-		}
-	})
-
-	// Test: Import
-	c.Run("import", func(c cluster.TestCluster) {
-		_, err := c.SSH(m, "sudo podman import local_nginx.tar local_nginx && sudo podman images | grep local_nginx")
-		if err != nil {
-			c.Fatal(err)
-		}
-	})
-
-	// Test: Save tar
-	c.Run("save", func(c cluster.TestCluster) {
-		cmd := fmt.Sprintf("sudo podman save -o local_nginx2.tar %s", image)
-		_, err := c.SSH(m, cmd)
-		if err != nil {
-			c.Fatal(err)
-		}
-	})
-
-	// Test: Load tar
-	c.Run("load", func(c cluster.TestCluster) {
-		cmd := fmt.Sprintf("sudo podman load --input local_nginx2.tar && sudo podman images | grep %s", image)
-		_, err := c.SSH(m, cmd)
-		if err != nil {
-			c.Fatal(err)
-		}
 	})
 
 	// Test: Stop container

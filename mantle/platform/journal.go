@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,8 +26,8 @@ import (
 	"github.com/coreos/pkg/multierror"
 	"github.com/pkg/errors"
 
-	"github.com/coreos/mantle/network/journal"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/network/journal"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 // Journal manages recording the journal of a Machine.
@@ -134,7 +133,7 @@ func (j *Journal) Read() ([]byte, error) {
 		return nil, errors.Wrapf(err, "reading journal")
 	}
 	defer f.Close()
-	return ioutil.ReadAll(f)
+	return io.ReadAll(f)
 }
 
 func (j *Journal) Destroy() {

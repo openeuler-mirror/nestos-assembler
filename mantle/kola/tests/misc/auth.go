@@ -15,8 +15,8 @@
 package misc
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
 )
 
 func init() {
@@ -24,6 +24,7 @@ func init() {
 		Run:         AuthVerify,
 		ClusterSize: 1,
 		Name:        "nestos.auth.verify",
+		Description: "Verify that invalid password prevents access to the host.",
 	})
 }
 

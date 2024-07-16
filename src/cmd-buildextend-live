@@ -15,10 +15,11 @@ import sys
 import tarfile
 import tempfile
 import time
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cosalib.builds import Builds
-from cosalib.cmdlib import run_verbose, sha256sum_file, flatten_image_yaml
+from cosalib.cmdlib import runcmd, sha256sum_file
 from cosalib.cmdlib import import_ostree_commit, get_basearch, ensure_glob
 from cosalib.meta import GenericBuildMeta
 
@@ -46,9 +47,6 @@ if not args.build:
     args.build = builds.get_latest()
 print(f"Targeting build: {args.build}")
 
-image_yaml = flatten_image_yaml('src/config/image.yaml')
-squashfs_compression = 'lz4' if args.fast else image_yaml.get('squashfs-compression', 'zstd')
-
 srcdir_prefix = "src/config/live/"
 
 if not os.path.isdir(srcdir_prefix):
@@ -58,6 +56,15 @@ workdir = os.path.abspath(os.getcwd())
 builddir = builds.get_build_dir(args.build)
 buildmeta_path = os.path.join(builddir, 'meta.json')
 buildmeta = GenericBuildMeta(workdir=workdir, build=args.build)
+repo = os.path.join(workdir, 'tmp/repo')
+
+# Grab the commit hash for this build
+buildmeta_commit = buildmeta['ostree-commit']
+
+import_ostree_commit(workdir, builddir, buildmeta)
+with open(os.path.join(workdir, 'tmp/image.json')) as f:
+    image_json = json.load(f)
+squashfs_compression = 'lz4' if args.fast else image_json['squashfs-compression']
 
 base_name = buildmeta['name']
 if base_name == "rhcos" and args.fast:
@@ -70,12 +77,6 @@ build_semaphore = os.path.join(buildmeta.build_dir, ".live.building")
 if os.path.exists(build_semaphore):
     raise Exception(
         f"{build_semaphore} exists: another process is building live")
-
-
-# Grab the commit hash for this build
-buildmeta_commit = buildmeta['ostree-commit']
-
-repo = os.path.join(workdir, 'tmp/repo')
 
 # Don't run if it's already been done, unless forced
 if 'live-iso' in buildmeta['images'] and not args.force:
@@ -133,26 +134,28 @@ def align_initrd_for_uncompressed_append(destf):
 
 
 # Return OS features table for features.json, which is read by
-# nestos-installer {iso|pxe} customize
+# coreos-installer {iso|pxe} customize
 def get_os_features():
-    features = {}
+    features = {
+        # coreos-installer >= 0.12.0
+        'installer-config': True,
+        # coreos/fedora-coreos-config@3edd2f28
+        'live-initrd-network': True,
+    }
 
-    f = run_verbose(['/usr/bin/ostree', 'cat', '--repo', repo,
-            buildmeta_commit, '/usr/libexec/nestos-installer-service'],
-            capture_output=True).stdout.decode()
-    # eventually we can assume nestos-installer >= 0.12.0, delete this check,
-    # and hardcode the feature flag
-    if '--config-file' in f:
-        features['installer-config'] = True
-
-    f = run_verbose(['/usr/bin/ostree', 'cat', '--repo', repo,
-            buildmeta_commit,
-            '/usr/lib/dracut/modules.d/35nestos-network/nestos-copy-firstboot-network.sh'],
-            capture_output=True).stdout.decode()
-    # eventually we can assume /etc/coreos-firstboot-network support and
-    # hardcode the feature flag
-    if 'etc_firstboot_network_dir' in f:
-        features['live-initrd-network'] = True
+    # coreos-installer >= 0.16.0
+    try:
+        f = runcmd(['/usr/bin/ostree', 'cat', '--repo', repo, buildmeta_commit,
+                    '/usr/share/nestos-installer/example-config.yaml'],
+                   capture_output=True).stdout.decode()
+        features['installer-config-directives'] = {
+            k: True for k in yaml.safe_load(f)
+        }
+    except subprocess.CalledProcessError as e:
+        if e.returncode == 1:
+            print('nestos-installer example-config.yaml not found.  Not setting feature.')
+        else:
+            raise
 
     return features
 
@@ -197,7 +200,7 @@ def cp_reflink(src, dest):
 
 
 # Make stream hash for `rdcore stream-hash`
-# https://github.com/coreos/nestos-installer/blob/a8d6f50dea6e/src/bin/rdcore/stream_hash.rs#L26-L41
+# https://github.com/coreos/coreos-installer/blob/a8d6f50dea6e/src/bin/rdcore/stream_hash.rs#L26-L41
 def make_stream_hash(src, dest):
     bufsize = 2 * 1024 * 1024
     with open(src, 'rb') as inf:
@@ -216,8 +219,8 @@ def generate_iso():
     initrd_img = 'initrd.img'
     # other files
     rootfs_img = 'rootfs.img'
-    ignition_img = 'ignition.img'
     kargs_file = 'kargs.json'
+    igninfo_file = 'igninfo.json'
 
     tmpisofile = os.path.join(tmpdir, iso_name)
 
@@ -239,17 +242,17 @@ def generate_iso():
     # Find the directory under `/usr/lib/modules/<kver>` where the
     # kernel/initrd live. It will be the 2nd entity output by
     # `ostree ls <commit> /usr/lib/modules`
-    process = run_verbose(['/usr/bin/ostree', 'ls', '--repo', repo,
-                           '--nul-filenames-only', f"{buildmeta_commit}",
-                           '/usr/lib/modules'], capture_output=True)
+    process = runcmd(['/usr/bin/ostree', 'ls', '--repo', repo,
+                     '--nul-filenames-only', f"{buildmeta_commit}",
+                     '/usr/lib/modules'], capture_output=True)
     moduledir = process.stdout.decode().split('\0')[1]
 
     # copy those files out of the ostree into the iso root dir
     initramfs_img = 'initramfs.img'
     for file in [kernel_img, initramfs_img]:
-        run_verbose(['/usr/bin/ostree', 'checkout', '--force-copy', '--repo', repo,
-                     '--user-mode', '--subpath', os.path.join(moduledir, file),
-                     f"{buildmeta_commit}", tmpisoimagespxe])
+        runcmd(['/usr/bin/ostree', 'checkout', '--force-copy', '--repo', repo,
+                '--user-mode', '--subpath', os.path.join(moduledir, file),
+                f"{buildmeta_commit}", tmpisoimagespxe])
         # initramfs isn't world readable by default so let's open up perms
         os.chmod(os.path.join(tmpisoimagespxe, file), 0o644)
         if file == initramfs_img:
@@ -260,7 +263,6 @@ def generate_iso():
 
     # Generate initramfs stamp file indicating that this is a live
     # initramfs.  Store the build ID in it.
-    
     stamppath = os.path.join(tmpinitrd_base, 'etc/nestos-live-initramfs')
     os.makedirs(os.path.dirname(stamppath), exist_ok=True)
     with open(stamppath, 'w') as fh:
@@ -275,14 +277,18 @@ def generate_iso():
         fh.write(args.build + '\n')
 
     # Add placeholder for Ignition CPIO file.  This allows an external tool,
-    # `nestos-installer iso ignition embed`, to modify an existing ISO image
+    # `coreos-installer iso ignition embed`, to modify an existing ISO image
     # to embed a user's custom Ignition config.  The tool wraps the Ignition
     # config in a cpio.xz and write it directly into this file in the ISO
     # image.  The cpio.xz will be read into the initramfs filesystem at
     # runtime and the Ignition Dracut module will ensure that the config is
-    # moved where Ignition will see it.
-    with open(os.path.join(tmpisoimages, ignition_img), 'wb') as fdst:
-        fdst.write(bytes(ignition_img_size))
+    # moved where Ignition will see it. We only handle !s390x here since that's
+    # the simple case (where layered initrds are supported). The s390x case is
+    # handled lower down
+    if basearch != 's390x':
+        with open(os.path.join(tmpisoimages, 'ignition.img'), 'wb') as fdst:
+            fdst.write(bytes(ignition_img_size))
+        igninfo_json = {'file': 'images/ignition.img'}
 
     # Generate JSON file that lists OS features available to
     # coreos-installer {iso|pxe} customize.  Put it in the initramfs for
@@ -295,26 +301,39 @@ def generate_iso():
     with open(os.path.join(tmpisocoreos, 'features.json'), 'w') as fh:
         fh.write(features)
 
+    # Get PRETTY_NAME
+    with tempfile.TemporaryDirectory() as tmpd:
+        runcmd(['/usr/bin/ostree', 'checkout', '--repo', repo, '--user-mode',
+                '--subpath', "/usr/lib/os-release", buildmeta_commit, tmpd])
+        pretty_name = subprocess.check_output(['sh', '-euc', '. ./os-release; echo -n $PRETTY_NAME'],
+                                              encoding='utf-8', cwd=tmpd)
+
     # Add osmet files
     tmp_osmet = os.path.join(tmpinitrd_rootfs, img_metal_obj['path'] + '.osmet')
+    fast_arg = []
+    if args.fast:
+        fast_arg = ['--fast']
     print('Generating osmet file for 512b metal image')
-    run_verbose(['/usr/lib/coreos-assembler/osmet-pack',
-                 img_metal, '512', tmp_osmet, img_metal_checksum,
-                 'fast' if args.fast else 'normal'])
+    runcmd(['/usr/lib/coreos-assembler/runvm-coreos-installer', img_metal,
+            tmp_osmet, 'pack', 'osmet', '/dev/disk/by-id/virtio-coreos',
+            '--description', pretty_name, '--checksum', img_metal_checksum,
+            '--output', '/var/tmp/coreos-installer-output'] + fast_arg)
     if img_metal4k_obj:
         tmp_osmet4k = os.path.join(tmpinitrd_rootfs, img_metal4k_obj['path'] + '.osmet')
         print('Generating osmet file for 4k metal image')
-        run_verbose(['/usr/lib/coreos-assembler/osmet-pack',
-                     img_metal4k, '4096', tmp_osmet4k, img_metal4k_checksum,
-                     'fast' if args.fast else 'normal'])
+        runcmd(['/usr/lib/coreos-assembler/runvm-coreos-installer',
+                img_metal4k, tmp_osmet4k, 'pack', 'osmet',
+                '/dev/disk/by-id/virtio-coreos', '--description', pretty_name,
+                '--checksum', img_metal4k_checksum, '--output',
+                '/var/tmp/coreos-installer-output'] + fast_arg)
 
     # Generate root squashfs
     print(f'Compressing squashfs with {squashfs_compression}')
     # Name must be exactly "root.squashfs" because the 20live dracut module
     # makes assumptions about the length of the name in sysroot.mount
     tmp_squashfs = os.path.join(tmpinitrd_rootfs, 'root.squashfs')
-    run_verbose(['/usr/lib/coreos-assembler/gf-mksquashfs',
-                img_metal, tmp_squashfs, squashfs_compression])
+    runcmd(['/usr/lib/coreos-assembler/gf-mksquashfs',
+           img_metal, tmp_squashfs, squashfs_compression])
 
     # Generate rootfs image
     iso_rootfs = os.path.join(tmpisoimagespxe, rootfs_img)
@@ -341,8 +360,8 @@ def generate_iso():
     cp_reflink(iso_initramfs, pxe_initramfs)
 
     # Read and filter kernel arguments for substituting into ISO bootloader
-    result = run_verbose(['/usr/lib/coreos-assembler/gf-get-kargs',
-            img_metal], stdout=subprocess.PIPE, text=True)
+    result = runcmd(['/usr/lib/coreos-assembler/gf-get-kargs',
+                    img_metal], stdout=subprocess.PIPE, text=True)
     kargs_array = [karg for karg in result.stdout.split()
             if karg.split('=')[0] not in live_exclude_kargs]
     kargs_array.append(f"nestos.liveiso={volid}")
@@ -384,6 +403,8 @@ def generate_iso():
                     kargs_json['files'].append({
                         'path': os.path.join(dir_suffix, filename),
                         'offset': karg_area_start.start(),
+                        'pad': '#',
+                        'end': '\n',
                     })
                     if karg_embed_area_length == 0:
                         karg_embed_area_length = length
@@ -395,7 +416,7 @@ def generate_iso():
             print(f'{srcfile} -> {dstfile}')
 
     if karg_embed_area_length > 0:
-        assert(karg_embed_area_length > len(cmdline))
+        assert (karg_embed_area_length > len(cmdline))
         kargs_json.update(
             size=karg_embed_area_length,
             default=cmdline.strip(),
@@ -446,7 +467,7 @@ def generate_iso():
 
         # safely remove things we don't need in the final ISO tree
         for d in ['EFI', 'isolinux', 'zipl.prm']:
-            run_verbose(['rm', '-rf', os.path.join(tmpisoroot, d)])
+            runcmd(['rm', '-rf', os.path.join(tmpisoroot, d)])
 
         # grub2-mkrescue is a wrapper around xorriso
         genisoargs = ['grub2-mkrescue', '-volid', volid]
@@ -461,10 +482,8 @@ def generate_iso():
                 [fp2.write(line.replace('@INITRD_LOAD_ADDRESS@', INITRD_ADDRESS)) for line in fp1]
         for prmfile in ['cdboot.prm', 'genericdvd.prm', 'generic.prm']:
             with open(os.path.join(tmpisoimages, prmfile), 'w') as fp1:
-                line1 = 'cio_ignore=all,!condev rd.cmdline=ask'
                 with open(os.path.join(tmpisoroot, 'zipl.prm'), 'r') as fp2:
-                    line1 += ' ' + ' '.join([line2.strip('\n') for line2 in fp2])
-                fp1.write(line1)
+                    fp1.write(fp2.read().strip())
 
         # s390x's z/VM CMS files are limited to 8 char for filenames and extensions
         # Also it is nice to keep naming convetion with Fedora/RHEL for existing users and code
@@ -472,12 +491,62 @@ def generate_iso():
         shutil.move(os.path.join(tmpisoimagespxe, kernel_img), kernel_dest)
         kernel_img = 'kernel.img'
 
+        if args.fixture:
+            # truncate it to 128k so it includes the offsets to the initrd and kargs
+            # https://github.com/ibm-s390-linux/s390-tools/blob/032304d5034e/netboot/mk-s390image#L21-L24
+            with open(kernel_dest, 'rb+') as f:
+                f.truncate(128 * 1024)
+            with open(iso_initramfs, 'rb+') as f:
+                f.truncate(1024)
+
+        # On s390x, we reserve space for the Ignition config in the initrd
+        # image directly since the bootloader doesn't support multiple initrds.
+        # We do this by inflating the initramfs just for the duration of the
+        # `mk-s390image` call.
+        initramfs_size = os.stat(iso_initramfs).st_size
+        # sanity-check it's 4-byte aligned (see align_initrd_for_uncompressed_append)
+        assert initramfs_size % 4 == 0
+
         # combine kernel, initramfs and cmdline using the mk-s390image tool
-        run_verbose(['/usr/bin/mk-s390image',
-                     kernel_dest,
-                     os.path.join(tmpisoimages, 'cdboot.img'),
-                     '-r', iso_initramfs,
-                     '-p', os.path.join(tmpisoimages, 'cdboot.prm')])
+        os.truncate(iso_initramfs, initramfs_size + ignition_img_size)
+        runcmd(['/usr/bin/mk-s390image',
+               kernel_dest,
+               os.path.join(tmpisoimages, 'cdboot.img'),
+               '-r', iso_initramfs,
+               '-p', os.path.join(tmpisoimages, 'cdboot.prm')])
+        os.truncate(iso_initramfs, initramfs_size)
+
+        # Get the kargs and initramfs offsets in the cdboot.img. For more info, see:
+        # https://github.com/ibm-s390-linux/s390-tools/blob/032304d5034e/netboot/mk-s390image#L21-L23
+        CDBOOT_IMG_OFFS_INITRD_START_BYTES = 66568
+        CDBOOT_IMG_OFFS_KARGS_START_BYTES = 66688
+        CDBOOT_IMG_OFFS_KARGS_MAX_SIZE = 896
+        with open(os.path.join(tmpisoimages, 'cdboot.img'), 'rb') as f:
+            f.seek(CDBOOT_IMG_OFFS_INITRD_START_BYTES)
+            offset = struct.unpack(">Q", f.read(8))[0]
+
+            # sanity-check we're at the right spot by comparing a few bytes
+            f.seek(offset)
+            with open(iso_initramfs, 'rb') as canonical:
+                if f.read(1024) != canonical.read(1024):
+                    raise Exception(f"expected initrd at offset {offset}")
+
+            igninfo_json = {
+                'file': 'images/cdboot.img',
+                'offset': offset + initramfs_size,
+                'length': ignition_img_size,
+            }
+
+            # kargs are part of 'images/cdboot.img' blob
+            kargs_json['files'].append({
+                'path': 'images/cdboot.img',
+                'offset': CDBOOT_IMG_OFFS_KARGS_START_BYTES,
+                'pad': '\0',
+                'end': '\0',
+            })
+            kargs_json.update(
+                size=CDBOOT_IMG_OFFS_KARGS_MAX_SIZE,
+            )
         # generate .addrsize file for LPAR
         with open(os.path.join(tmpisoimages, 'initrd.addrsize'), 'wb') as addrsize:
             addrsize_data = struct.pack(">iiii", 0, int(INITRD_ADDRESS, 16), 0,
@@ -486,7 +555,7 @@ def generate_iso():
 
         # safely remove things we don't need in the final ISO tree
         for d in ['EFI', 'isolinux', 'zipl.prm']:
-            run_verbose(['rm', '-rf', os.path.join(tmpisoroot, d)])
+            runcmd(['rm', '-rf', os.path.join(tmpisoroot, d)])
 
         genisoargs = ['/usr/bin/xorrisofs', '-verbose',
                       '-volid', volid,
@@ -515,17 +584,33 @@ def generate_iso():
                 return tarinfo
 
             tmpimageefidir = os.path.join(tmpdir, "efi")
-            run_verbose(['/usr/bin/ostree', 'checkout', '--repo', repo,
-                         '--user-mode', '--subpath',
-                         "/usr/lib/bootupd/updates/EFI",
-                         buildmeta_commit, tmpimageefidir])
+            runcmd(['/usr/bin/ostree', 'checkout', '--repo', repo,
+                   '--user-mode', '--subpath',
+                   "/usr/lib/bootupd/updates/EFI",
+                   buildmeta_commit, tmpimageefidir])
             
             #Reference：https://github.com/coreos/coreos-assembler/pull/2435 
-
             # Find name of vendor directory
             vendor_ids = [n for n in os.listdir(tmpimageefidir) if n != "BOOT"]
             if len(vendor_ids) != 1:
                 raise Exception(f"did not find exactly one EFI vendor ID: {vendor_ids}")
+            vendor_id = vendor_ids[0]
+
+            # Always replace live/EFI/{vendor} to actual live/EFI/{vendor_id}
+            # https://github.com/openshift/os/issues/954
+            dfd = os.open(tmpisoroot, os.O_RDONLY)
+            grubfilepath = ensure_glob('EFI/*/grub.cfg', dir_fd=dfd)
+            if len(grubfilepath) != 1:
+                raise Exception(f'Found != 1 grub.cfg files: {grubfilepath}')
+            srcpath = os.path.dirname(grubfilepath[0])
+            if srcpath != f'EFI/{vendor_id}':
+                print(f"Renaming '{srcpath}' to 'EFI/{vendor_id}'")
+                os.rename(srcpath, f"EFI/{vendor_id}", src_dir_fd=dfd, dst_dir_fd=dfd)
+                # And update kargs.json
+                for file in kargs_json['files']:
+                    if file['path'] == grubfilepath[0]:
+                        file['path'] = f'EFI/{vendor_id}/grub.cfg'
+            os.close(dfd)
 
             # Delete fallback and its CSV file.  Its purpose is to create
             # EFI boot variables, which we don't want when booting from
@@ -540,22 +625,22 @@ def generate_iso():
             for path in ensure_glob(os.path.join(tmpimageefidir, "BOOT", "mm*.efi")):
                 os.unlink(path)
             
-            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "BOOT*.CSV")):
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_id, "BOOT*.CSV")):
                 os.unlink(path)
 
             # Drop vendor copies of shim; we already have it in BOOT*.EFI in
             # BOOT
-            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "shim*.efi")):
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_id, "shim*.efi")):
                 os.unlink(path)
             # openEuler shim package has two fb*.efi that put in "BOOT" and "openEuler" dir, delete them all
-            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "fb*.efi")):
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_id, "fb*.efi")):
                 os.unlink(path)
 
             # Consolidate remaining files into BOOT.  shim needs GRUB to be
             # there, and the rest doesn't hurt.
-            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_ids[0], "*")):
+            for path in ensure_glob(os.path.join(tmpimageefidir, vendor_id, "*")):
                 shutil.move(path, os.path.join(tmpimageefidir, "BOOT"))
-            os.rmdir(os.path.join(tmpimageefidir, vendor_ids[0]))
+            os.rmdir(os.path.join(tmpimageefidir, vendor_id))
 
             # Inject a stub grub.cfg pointing to the one in the main ISO image.
             #
@@ -573,7 +658,7 @@ def generate_iso():
             # pointing to efiboot.img) and needs a grub.cfg there.
             with open(os.path.join(tmpimageefidir, "BOOT", "grub.cfg"), "w") as fh:
                 fh.write(f'''search --label "{volid}" --set root --no-floppy
-set prefix=($root)/EFI/{vendor_ids[0]}
+set prefix=($root)/EFI/{vendor_id}
 echo "Booting via ESP..."
 configfile $prefix/grub.cfg
 boot
@@ -598,8 +683,8 @@ boot
             # so set EFI-SYSTEM for consistency with the metal image.
             # This should not be needed on Fedora or RHEL 9, but seems like
             # a good thing to do anyway.
-            run_verbose(['virt-make-fs', '--type=vfat', '--label=EFI-SYSTEM',
-                         efitarfile.name, efibootfile])
+            runcmd(['virt-make-fs', '--type=vfat', '--label=EFI-SYSTEM',
+                   efitarfile.name, efibootfile])
 
         genisoargs += ['-eltorito-alt-boot',
                        '-efi-boot', 'images/efiboot.img',
@@ -612,10 +697,16 @@ boot
     kargs_json['files'].sort(key=lambda f: f['path'])
     if kargs_json['files']:
         # Store the location of "karg embed areas" for use by
-        # `nestos-installer iso kargs modify`
+        # `coreos-installer iso kargs modify`
         with open(os.path.join(tmpisocoreos, kargs_file), 'w') as fh:
             json.dump(kargs_json, fh, indent=2, sort_keys=True)
             fh.write('\n')
+
+    # Write out the igninfo.json file. This is used by coreos-installer to know
+    # how to embed the Ignition config.
+    with open(os.path.join(tmpisocoreos, igninfo_file), 'w') as fh:
+        json.dump(igninfo_json, fh, indent=2, sort_keys=True)
+        fh.write('\n')
 
     # Define inputs and outputs
     genisoargs_final = genisoargs + ['-o', tmpisofile, tmpisoroot]
@@ -625,7 +716,7 @@ boot
         f.truncate(miniso_data_file_size)
 
     if args.fixture:
-        # Replace or delete anything irrelevant to nestos-installer
+        # Replace or delete anything irrelevant to coreos-installer
         with open(os.path.join(tmpisoimages, 'efiboot.img'), 'w') as fh:
             fh.write('efiboot.img\n')
         with open(os.path.join(tmpisoimagespxe, 'rootfs.img'), 'w') as fh:
@@ -634,39 +725,42 @@ boot
             fh.write('initrd data\n')
         with open(os.path.join(tmpisoimagespxe, 'vmlinuz'), 'w') as fh:
             fh.write('the kernel\n')
-        with open(os.path.join(tmpisoisolinux, 'isolinux.bin'), 'rb+') as fh:
-            flen = fh.seek(0, 2)
-            fh.truncate(0)
-            fh.truncate(flen)
-            fh.seek(64)
-            # isohybrid checks for this magic
-            fh.write(b'\xfb\xc0\x78\x70')
-        for f in ensure_glob(os.path.join(tmpisoisolinux, '*.c32')):
-            os.unlink(f)
-        for f in ensure_glob(os.path.join(tmpisoisolinux, '*.msg')):
-            os.unlink(f)
+        # this directory doesn't exist on s390x
+        if os.path.isdir(tmpisoisolinux):
+            with open(os.path.join(tmpisoisolinux, 'isolinux.bin'), 'rb+') as fh:
+                flen = fh.seek(0, 2)
+                fh.truncate(0)
+                fh.truncate(flen)
+                fh.seek(64)
+                # isohybrid checks for this magic
+                fh.write(b'\xfb\xc0\x78\x70')
+            for f in ensure_glob(os.path.join(tmpisoisolinux, '*.c32')):
+                os.unlink(f)
+            for f in ensure_glob(os.path.join(tmpisoisolinux, '*.msg')):
+                os.unlink(f)
 
-    run_verbose(genisoargs_final)
+    runcmd(genisoargs_final)
 
     # Add MBR, and GPT with ESP, for x86_64 BIOS/UEFI boot when ISO is
     # copied to a USB stick
     if basearch == "x86_64":
-        run_verbose(['/usr/bin/isohybrid', '--uefi', tmpisofile])
+        runcmd(['/usr/bin/isohybrid', '--uefi', tmpisofile])
 
     genisoargs_minimal = genisoargs + ['-o', f'{tmpisofile}.minimal', tmpisoroot]
     # The only difference with the miniso is that we drop these two files.
     # Keep everything else the same to maximize file matching between the
     # two versions so we can get the smallest delta. E.g. we keep the
-    # `nestos.liveiso` karg, even though the miniso doesn't need it.
-    # nestos-installer takes care of removing it.
+    # `coreos.liveiso` karg, even though the miniso doesn't need it.
+    # coreos-installer takes care of removing it.
     os.unlink(iso_rootfs)
     os.unlink(miniso_data)
-    run_verbose(genisoargs_minimal)
+    runcmd(genisoargs_minimal)
     if basearch == "x86_64":
-        run_verbose(['/usr/bin/isohybrid', '--uefi', f'{tmpisofile}.minimal'])
+        runcmd(['/usr/bin/isohybrid', '--uefi', f'{tmpisofile}.minimal'])
     # this consumes the minimal image
-    run_verbose(['nestos-installer', 'pack', 'minimal-iso',
-                 tmpisofile, f'{tmpisofile}.minimal', "--consume"])
+    runcmd(['/usr/lib/coreos-assembler/runvm-coreos-installer', img_metal, '',
+            'pack', 'minimal-iso', tmpisofile, f'{tmpisofile}.minimal',
+            '--consume'])
 
     buildmeta['images'].update({
         'live-iso': {
@@ -707,8 +801,6 @@ boot
     buildmeta.write(artifact_name='live')
     print(f"Updated: {buildmeta_path}")
 
-
-import_ostree_commit(repo, builddir, buildmeta)
 
 # lock and build
 with open(build_semaphore, 'w') as f:

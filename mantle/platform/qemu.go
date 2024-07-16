@@ -17,7 +17,7 @@
 // Why not libvirt?
 // Two main reasons.  First, we really do want to use qemu, and not
 // something else.  We rely on qemu features/APIs and there's a general
-// assumption that the qemu process is local (e.g. we expose 9p filesystem
+// assumption that the qemu process is local (e.g. we expose 9p/virtiofs filesystem
 // sharing).  Second, libvirt runs as a daemon, but we want the
 // VMs "lifecycle bound" to their creating process (e.g. kola),
 // so that e.g. Ctrl-C (SIGINT) kills both reliably.
@@ -34,7 +34,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
@@ -43,13 +42,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
 	"github.com/digitalocean/go-qemu/qmp"
 
-	"github.com/coreos/mantle/system"
-	"github.com/coreos/mantle/system/exec"
+	"github.com/coreos/coreos-assembler/mantle/system"
+	"github.com/coreos/coreos-assembler/mantle/system/exec"
 	"github.com/pkg/errors"
 
 	"golang.org/x/sys/unix"
@@ -91,7 +90,8 @@ type Disk struct {
 	BackingFile   string   // raw disk image to use.
 	BackingFormat string   // qcow2, raw, etc.  If unspecified will be autodetected.
 	Channel       string   // virtio (default), nvme
-	DeviceOpts    []string // extra options to pass to qemu. "serial=XXXX" makes disks show up as /dev/disk/by-id/virtio-<serial>
+	DeviceOpts    []string // extra options to pass to qemu -device. "serial=XXXX" makes disks show up as /dev/disk/by-id/virtio-<serial>
+	DriveOpts     []string // extra options to pass to -drive
 	SectorSize    int      // if not 0, override disk sector size
 	NbdDisk       bool     // if true, the disks should be presented over nbd:unix socket
 	MultiPathDisk bool     // if true, present multiple paths
@@ -101,28 +101,38 @@ type Disk struct {
 	nbdServCmd     exec.Cmd // command to serve the disk
 }
 
-// ParseDiskSpec converts a disk specification into a Disk. The format is:
-// <size>[:<opt1>,<opt2>,...].
-func ParseDiskSpec(spec string) (*Disk, error) {
-	split := strings.Split(spec, ":")
-	var size string
+func ParseDisk(spec string) (*Disk, error) {
+	var channel string
+	sectorSize := 0
+	serialOpt := []string{}
 	multipathed := false
-	if len(split) == 1 {
-		size = split[0]
-	} else if len(split) == 2 {
-		size = split[0]
-		for _, opt := range strings.Split(split[1], ",") {
-			if opt == "mpath" {
-				multipathed = true
-			} else {
-				return nil, fmt.Errorf("unknown disk option %s", opt)
-			}
-		}
-	} else {
-		return nil, fmt.Errorf("invalid disk spec %s", spec)
+
+	size, diskmap, err := util.ParseDiskSpec(spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse disk spec %q: %w", spec, err)
 	}
+
+	for key, value := range diskmap {
+		switch key {
+		case "channel":
+			channel = value
+		case "4k":
+			sectorSize = 4096
+		case "mpath":
+			multipathed = true
+		case "serial":
+			value = "serial=" + value
+			serialOpt = append(serialOpt, value)
+		default:
+			return nil, fmt.Errorf("invalid key %q", key)
+		}
+	}
+
 	return &Disk{
-		Size:          size,
+		Size:          fmt.Sprintf("%dG", size),
+		Channel:       channel,
+		DeviceOpts:    serialOpt,
+		SectorSize:    sectorSize,
 		MultiPathDisk: multipathed,
 	}, nil
 }
@@ -135,10 +145,12 @@ type bootIso struct {
 
 // QemuInstance holds an instantiated VM through its lifecycle.
 type QemuInstance struct {
-	qemu               exec.Cmd
-	tempdir            string
-	swtpm              exec.Cmd
-	nbdServers         []exec.Cmd
+	qemu         exec.Cmd
+	architecture string
+	tempdir      string
+	swtpm        exec.Cmd
+	// Helpers are child processes such as nbd or virtiofsd that should be lifecycle bound to qemu
+	helpers            []exec.Cmd
 	hostForwardedPorts []HostForwardPort
 
 	journalPipe *os.File
@@ -276,12 +288,12 @@ func (inst *QemuInstance) Destroy() {
 		inst.swtpm.Kill() //nolint // Ignore errors
 		inst.swtpm = nil
 	}
-	for _, nbdServ := range inst.nbdServers {
-		if nbdServ != nil {
-			nbdServ.Kill() //nolint // Ignore errors
+	for _, p := range inst.helpers {
+		if p != nil {
+			p.Kill() //nolint // Ignore errors
 		}
 	}
-	inst.nbdServers = nil
+	inst.helpers = nil
 
 	if inst.tempdir != "" {
 		if err := os.RemoveAll(inst.tempdir); err != nil {
@@ -295,7 +307,10 @@ func (inst *QemuInstance) Destroy() {
 // is used to boot from the network device (boot once is not supported). For s390x, the boot ordering was not a problem as it
 // would always read from disk first. For aarch64, the bootindex needs to be switched to boot from disk before a reboot
 func (inst *QemuInstance) SwitchBootOrder() (err2 error) {
-	if coreosarch.CurrentRpmArch() != "s390x" && coreosarch.CurrentRpmArch() != "aarch64" {
+	switch inst.architecture {
+	case "s390x", "aarch64":
+		break
+	default:
 		//Not applicable for other arches
 		return nil
 	}
@@ -309,7 +324,7 @@ func (inst *QemuInstance) SwitchBootOrder() (err2 error) {
 	}
 
 	var bootdev, primarydev, secondarydev string
-	// Get bootdevice for pxe boot
+	// Get boot device for PXE boots
 	for _, dev := range devs.Return {
 		switch dev.Type {
 		case "child<virtio-net-pci>", "child<virtio-net-ccw>":
@@ -318,19 +333,36 @@ func (inst *QemuInstance) SwitchBootOrder() (err2 error) {
 			break
 		}
 	}
-	// Get boot device (for iso-installs) and block device
+	// Get boot device for ISO boots and target block device
 	for _, dev := range blkdevs.Return {
 		devpath := filepath.Clean(strings.TrimSuffix(dev.DevicePath, "virtio-backend"))
 		switch dev.Device {
 		case "installiso":
 			bootdev = devpath
-		case "d1", "mpath10":
+		case "disk-1", "mpath10":
 			primarydev = devpath
 		case "mpath11":
 			secondarydev = devpath
+		case "":
+			if dev.Inserted.NodeName == "installiso" {
+				bootdev = devpath
+			}
 		default:
 			break
 		}
+	}
+
+	if bootdev == "" {
+		return fmt.Errorf("Could not find boot device using QMP.\n"+
+			"Full list of peripherals: %v.\n"+
+			"Full list of block devices: %v.\n",
+			devs.Return, blkdevs.Return)
+	}
+
+	if primarydev == "" {
+		return fmt.Errorf("Could not find target disk using QMP.\n"+
+			"Full list of block devices: %v.\n",
+			blkdevs.Return)
 	}
 
 	// unset bootindex for the boot device
@@ -351,8 +383,8 @@ func (inst *QemuInstance) SwitchBootOrder() (err2 error) {
 }
 
 // RemovePrimaryBlockDevice deletes the primary device from a qemu instance
-// and sets the seconday device as primary. It expects that all block devices
-// are mirrors.
+// and sets the secondary device as primary. It expects that all block devices
+// with device name disk-<N> are mirrors.
 func (inst *QemuInstance) RemovePrimaryBlockDevice() (err2 error) {
 	var primaryDevice string
 	var secondaryDevicePath string
@@ -365,7 +397,7 @@ func (inst *QemuInstance) RemovePrimaryBlockDevice() (err2 error) {
 	// a `BackingFileDepth` parameter of a device and check if
 	// it is a removable and part of `virtio-blk-pci` devices.
 	for _, dev := range blkdevs.Return {
-		if !dev.Removable && strings.Contains(dev.DevicePath, "virtio-backend") {
+		if !dev.Removable && strings.HasPrefix(dev.Device, "disk-") {
 			if dev.Inserted.BackingFileDepth == 1 {
 				primaryDevice = dev.DevicePath
 			} else {
@@ -390,6 +422,13 @@ func (inst *QemuInstance) RemovePrimaryBlockDevice() (err2 error) {
 	return nil
 }
 
+// A directory mounted from the host into the guest, via 9p or virtiofs
+type HostMount struct {
+	src      string
+	dest     string
+	readonly bool
+}
+
 // QemuBuilder is a configurator that can then create a qemu instance
 type QemuBuilder struct {
 	// ConfigFile is a path to Ignition configuration
@@ -401,8 +440,10 @@ type QemuBuilder struct {
 	// File to which to redirect the serial console
 	ConsoleFile string
 
-	// Memory defaults to 1024 on most architectures, others it may be 2048
-	Memory int
+	// If set, use QEMU full emulation for the target architecture
+	architecture string
+	// MemoryMiB defaults to 1024 on most architectures, others it may be 2048
+	MemoryMiB int
 	// Processors < 0 means to use host count, unset means 1, values > 1 are directly used
 	Processors int
 	UUID       string
@@ -437,18 +478,26 @@ type QemuBuilder struct {
 	ignitionRendered bool
 
 	UsermodeNetworking        bool
+	usermodeNetworkingAddr    string
 	RestrictNetworking        bool
 	requestedHostForwardPorts []HostForwardPort
 	additionalNics            int
+	netbootP                  string
+	netbootDir                string
 
 	finalized bool
 	diskID    uint
 	disks     []*Disk
-	fs9pID    uint
 	// virtioSerialID is incremented for each device
 	virtioSerialID uint
+	// hostMounts is an array of directories mounted (via 9p or virtiofs) from the host
+	hostMounts []HostMount
 	// fds is file descriptors we own to pass to qemu
 	fds []*os.File
+
+	// IBM Secure Execution
+	secureExecution bool
+	ignitionPubKey  string
 }
 
 // NewQemuBuilder creates a new build for QEMU with default settings.
@@ -463,10 +512,11 @@ func NewQemuBuilder() *QemuBuilder {
 		defaultFirmware = ""
 	}
 	ret := QemuBuilder{
-		Firmware:  defaultFirmware,
-		Swtpm:     true,
-		Pdeathsig: true,
-		Argv:      []string{},
+		Firmware:     defaultFirmware,
+		Swtpm:        true,
+		Pdeathsig:    true,
+		Argv:         []string{},
+		architecture: coreosarch.CurrentRpmArch(),
 	}
 	return &ret
 }
@@ -475,7 +525,7 @@ func (builder *QemuBuilder) ensureTempdir() error {
 	if builder.tempdir != "" {
 		return nil
 	}
-	tempdir, err := ioutil.TempDir("/var/tmp", "mantle-qemu")
+	tempdir, err := os.MkdirTemp("/var/tmp", "mantle-qemu")
 	if err != nil {
 		return err
 	}
@@ -495,13 +545,13 @@ func (builder *QemuBuilder) SetConfig(config *conf.Conf) {
 	builder.ignitionSet = true
 }
 
-// Small wrapper around ioutil.Tempfile() to avoid leaking our tempdir to
+// Small wrapper around os.CreateTemp() to avoid leaking our tempdir to
 // others.
 func (builder *QemuBuilder) TempFile(pattern string) (*os.File, error) {
 	if err := builder.ensureTempdir(); err != nil {
 		return nil, err
 	}
-	return ioutil.TempFile(builder.tempdir, pattern)
+	return os.CreateTemp(builder.tempdir, pattern)
 }
 
 // renderIgnition lazily renders a parsed config if one is set
@@ -535,24 +585,31 @@ func (builder *QemuBuilder) AddFd(fd *os.File) string {
 }
 
 // virtio returns a virtio device argument for qemu, which is architecture dependent
-func virtio(device, args string) string {
+func virtio(arch, device, args string) string {
 	var suffix string
-	switch coreosarch.CurrentRpmArch() {
+	switch arch {
 	case "x86_64", "ppc64le", "aarch64":
 		suffix = "pci"
 	case "s390x":
 		suffix = "ccw"
 	default:
-		panic(fmt.Sprintf("RpmArch %s unhandled in virtio()", coreosarch.CurrentRpmArch()))
+		panic(fmt.Sprintf("RpmArch %s unhandled in virtio()", arch))
 	}
 	return fmt.Sprintf("virtio-%s-%s,%s", device, suffix, args)
 }
 
 // EnableUsermodeNetworking configure forwarding for all requested ports,
 // via usermode network helpers.
-func (builder *QemuBuilder) EnableUsermodeNetworking(h []HostForwardPort) {
+func (builder *QemuBuilder) EnableUsermodeNetworking(h []HostForwardPort, usernetAddr string) {
 	builder.UsermodeNetworking = true
 	builder.requestedHostForwardPorts = h
+	builder.usermodeNetworkingAddr = usernetAddr
+}
+
+func (builder *QemuBuilder) SetNetbootP(filename, dir string) {
+	builder.UsermodeNetworking = true
+	builder.netbootP = filename
+	builder.netbootDir = dir
 }
 
 func (builder *QemuBuilder) AddAdditionalNics(additionalNics int) {
@@ -582,8 +639,36 @@ func (builder *QemuBuilder) setupNetworking() error {
 	if builder.RestrictNetworking {
 		netdev += ",restrict=on"
 	}
+	if builder.usermodeNetworkingAddr != "" {
+		netdev += ",net=" + builder.usermodeNetworkingAddr
+	}
+	if builder.netbootP != "" {
+		// do an early stat so we fail with a nicer error now instead of in the VM
+		if _, err := os.Stat(filepath.Join(builder.netbootDir, builder.netbootP)); err != nil {
+			return err
+		}
+		tftpDir := ""
+		relpath := ""
+		if builder.netbootDir == "" {
+			absPath, err := filepath.Abs(builder.netbootP)
+			if err != nil {
+				return err
+			}
+			tftpDir = filepath.Dir(absPath)
+			relpath = filepath.Base(absPath)
+		} else {
+			absPath, err := filepath.Abs(builder.netbootDir)
+			if err != nil {
+				return err
+			}
+			tftpDir = absPath
+			relpath = builder.netbootP
+		}
+		netdev += fmt.Sprintf(",tftp=%s,bootfile=/%s", tftpDir, relpath)
+		builder.Append("-boot", "order=n")
+	}
 
-	builder.Append("-netdev", netdev, "-device", virtio("net", "netdev=eth0"))
+	builder.Append("-netdev", netdev, "-device", virtio(builder.architecture, "net", "netdev=eth0"))
 	return nil
 }
 
@@ -596,7 +681,7 @@ func (builder *QemuBuilder) setupAdditionalNetworking() error {
 		macSuffix := fmt.Sprintf("%02x", macCounter)
 
 		netdev := fmt.Sprintf("user,id=eth%s,dhcpstart=10.0.2.%s", idSuffix, netSuffix)
-		device := virtio("net", fmt.Sprintf("netdev=eth%s,mac=52:55:00:d1:56:%s", idSuffix, macSuffix))
+		device := virtio(builder.architecture, "net", fmt.Sprintf("netdev=eth%s,mac=52:55:00:d1:56:%s", idSuffix, macSuffix))
 		builder.Append("-netdev", netdev, "-device", device)
 		macCounter++
 	}
@@ -604,31 +689,106 @@ func (builder *QemuBuilder) setupAdditionalNetworking() error {
 	return nil
 }
 
-// Mount9p sets up a mount point from the host to guest.  To be replaced
-// with https://virtio-fs.gitlab.io/ once it lands everywhere.
-func (builder *QemuBuilder) Mount9p(source, destHint string, readonly bool) {
-	builder.fs9pID++
-	readonlyStr := ""
-	if readonly {
-		readonlyStr = ",readonly=on"
+// SetArchitecture enables qemu full emulation for the target architecture.
+func (builder *QemuBuilder) SetArchitecture(arch string) error {
+	switch arch {
+	//case "x86_64", "aarch64", "s390x", "ppc64le":
+	case "x86_64", "aarch64":
+		builder.architecture = arch
+		return nil
 	}
-	builder.Append("--fsdev", fmt.Sprintf("local,id=fs%d,path=%s,security_model=mapped%s", builder.fs9pID, source, readonlyStr))
-	builder.Append("-device", virtio("9p", fmt.Sprintf("fsdev=fs%d,mount_tag=%s", builder.fs9pID, destHint)))
+	return fmt.Errorf("architecture %s not supported by nestos-assembler qemu", arch)
+}
+
+// SetSecureExecution enables qemu confidential guest support and adds hostkey to ignition config.
+func (builder *QemuBuilder) SetSecureExecution(gpgkey string, hostkey string, config *conf.Conf) error {
+	if supports, err := builder.supportsSecureExecution(); err != nil {
+		return err
+	} else if !supports {
+		return fmt.Errorf("Secure Execution was requested but isn't supported/enabled")
+	}
+	if gpgkey == "" {
+		return fmt.Errorf("Secure Execution was requested, but we don't have a GPG Public Key to encrypt the config")
+	}
+
+	if config != nil {
+		if hostkey == "" {
+			// dummy hostkey; this is good enough at least for the first boot (to prevent genprotimg from failing)
+			dummy, err := builder.TempFile("hostkey.*")
+			if err != nil {
+				return fmt.Errorf("creating hostkey: %v", err)
+			}
+			c := exec.Command("openssl", "req", "-x509", "-sha512", "-nodes", "-days", "1", "-subj", "/C=US/O=IBM/CN=secex",
+				"-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:secp521r1", "-out", dummy.Name())
+			if err := c.Run(); err != nil {
+				return fmt.Errorf("generating hostkey: %v", err)
+			}
+			hostkey = dummy.Name()
+		}
+		if contents, err := os.ReadFile(hostkey); err != nil {
+			return fmt.Errorf("reading hostkey: %v", err)
+		} else {
+			config.AddFile("/etc/se-hostkeys/ibm-z-hostkey-1", string(contents), 0644)
+		}
+	}
+	builder.secureExecution = true
+	builder.ignitionPubKey = gpgkey
+	builder.Append("-object", "s390-pv-guest,id=pv0", "-machine", "confidential-guest-support=pv0")
+	return nil
+}
+
+func (builder *QemuBuilder) encryptIgnitionConfig() error {
+	crypted, err := builder.TempFile("ignition_crypted.*")
+	if err != nil {
+		return fmt.Errorf("creating crypted config: %v", err)
+	}
+	c := exec.Command("gpg", "--recipient-file", builder.ignitionPubKey, "--yes", "--output", crypted.Name(), "--armor", "--encrypt", builder.ConfigFile)
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("encrypting %s: %v", crypted.Name(), err)
+	}
+	builder.ConfigFile = crypted.Name()
+	return nil
+}
+
+// MountHost sets up a mount point from the host to guest.
+// Note that virtiofs does not currently support read-only mounts (which is really surprising!).
+// We do mount it read-only by default in the guest, however.
+func (builder *QemuBuilder) MountHost(source, dest string, readonly bool) {
+	builder.hostMounts = append(builder.hostMounts, HostMount{src: source, dest: dest, readonly: readonly})
 }
 
 // supportsFwCfg if the target system supports injecting
 // Ignition via the qemu -fw_cfg option.
 func (builder *QemuBuilder) supportsFwCfg() bool {
-	switch coreosarch.CurrentRpmArch() {
+	switch builder.architecture {
 	case "s390x", "ppc64le":
 		return false
 	}
 	return true
 }
 
+// supportsSecureExecution if s390x host (zKVM/LPAR) has "Secure Execution for Linux" feature enabled
+func (builder *QemuBuilder) supportsSecureExecution() (bool, error) {
+	if builder.architecture != "s390x" {
+		return false, nil
+	}
+	content, err := os.ReadFile("/sys/firmware/uv/prot_virt_host")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading protvirt flag: %v", err)
+	}
+	if len(content) < 1 {
+		return false, nil
+	}
+	enabled := content[0] == '1'
+	return enabled, nil
+}
+
 // supportsSwtpm if the target system supports a virtual TPM device
 func (builder *QemuBuilder) supportsSwtpm() bool {
-	switch coreosarch.CurrentRpmArch() {
+	switch builder.architecture {
 	case "s390x":
 		// s390x does not support a backend for TPM
 		return false
@@ -664,7 +824,7 @@ type coreosGuestfish struct {
 	remote string
 }
 
-func newGuestfish(diskImagePath string, diskSectorSize int) (*coreosGuestfish, error) {
+func newGuestfish(arch, diskImagePath string, diskSectorSize int) (*coreosGuestfish, error) {
 	// Set guestfish backend to direct in order to avoid libvirt as backend.
 	// Using libvirt can lead to permission denied issues if it does not have access
 	// rights to the qcow image
@@ -677,7 +837,7 @@ func newGuestfish(diskImagePath string, diskSectorSize int) (*coreosGuestfish, e
 	cmd.Env = append(os.Environ(), "LIBGUESTFS_BACKEND=direct")
 
 	// Hack to run with a wrapper on older P8 hardware running RHEL7
-	switch coreosarch.CurrentRpmArch() {
+	switch arch {
 	case "ppc64le":
 		u := unix.Utsname{}
 		if err := unix.Uname(&u); err != nil {
@@ -700,7 +860,7 @@ func newGuestfish(diskImagePath string, diskSectorSize int) (*coreosGuestfish, e
 	if err := cmd.Start(); err != nil {
 		return nil, errors.Wrapf(err, "running guestfish")
 	}
-	buf, err := ioutil.ReadAll(stdout)
+	buf, err := io.ReadAll(stdout)
 	if err != nil {
 		return nil, errors.Wrapf(err, "reading guestfish output")
 	}
@@ -723,12 +883,20 @@ func newGuestfish(diskImagePath string, diskSectorSize int) (*coreosGuestfish, e
 		return nil, errors.Wrapf(err, "guestfish launch failed")
 	}
 
+	rootfs, err := findLabel("root", pid)
+	if err != nil {
+		return nil, errors.Wrapf(err, "guestfish command failed to find root label")
+	}
+	if err := exec.Command("guestfish", remote, "mount", rootfs, "/").Run(); err != nil {
+		return nil, errors.Wrapf(err, "guestfish root mount failed")
+	}
+
 	bootfs, err := findLabel("boot", pid)
 	if err != nil {
 		return nil, errors.Wrapf(err, "guestfish command failed to find boot label")
 	}
 
-	if err := exec.Command("guestfish", remote, "mount", bootfs, "/").Run(); err != nil {
+	if err := exec.Command("guestfish", remote, "mount", bootfs, "/boot").Run(); err != nil {
 		return nil, errors.Wrapf(err, "guestfish boot mount failed")
 	}
 
@@ -745,33 +913,37 @@ func (gf *coreosGuestfish) destroy() {
 }
 
 // setupPreboot performs changes necessary before the disk is booted
-func setupPreboot(confPath, firstbootkargs, kargs string, diskImagePath string, diskSectorSize int) error {
-	gf, err := newGuestfish(diskImagePath, diskSectorSize)
+func setupPreboot(arch, confPath, firstbootkargs, kargs string, diskImagePath string, diskSectorSize int) error {
+	gf, err := newGuestfish(arch, diskImagePath, diskSectorSize)
 	if err != nil {
 		return err
 	}
 	defer gf.destroy()
 
 	if confPath != "" {
-		if err := exec.Command("guestfish", gf.remote, "mkdir-p", "/ignition").Run(); err != nil {
+		if err := exec.Command("guestfish", gf.remote, "mkdir-p", "/boot/ignition").Run(); err != nil {
 			return errors.Wrapf(err, "guestfish directory creation failed")
 		}
 
-		if err := exec.Command("guestfish", gf.remote, "upload", confPath, fileRemoteLocation).Run(); err != nil {
+		if err := exec.Command("guestfish", gf.remote, "upload", confPath, "/boot"+fileRemoteLocation).Run(); err != nil {
 			return errors.Wrapf(err, "guestfish upload failed")
 		}
 	}
 
 	// See /boot/grub2/grub.cfg
 	if firstbootkargs != "" {
-		grubStr := fmt.Sprintf("set ignition_network_kcmdline='%s'\n", firstbootkargs)
-		if err := exec.Command("guestfish", gf.remote, "write", "/ignition.firstboot", grubStr).Run(); err != nil {
+		grubStr := fmt.Sprintf("set ignition_network_kcmdline=\"%s\"\n", firstbootkargs)
+		if err := exec.Command("guestfish", gf.remote, "write", "/boot/ignition.firstboot", grubStr).Run(); err != nil {
 			return errors.Wrapf(err, "guestfish write")
 		}
 	}
-
-	if kargs != "" {
-		confpathout, err := exec.Command("guestfish", gf.remote, "glob-expand", "/loader/entries/ostree*conf").Output()
+	// Parsing BLS
+	var linux string
+	var initrd string
+	var allkargs string
+	zipl_sync := arch == "s390x" && (firstbootkargs != "" || kargs != "")
+	if kargs != "" || zipl_sync {
+		confpathout, err := exec.Command("guestfish", gf.remote, "glob-expand", "/boot/loader/entries/ostree*conf").Output()
 		if err != nil {
 			return errors.Wrapf(err, "finding bootloader config path")
 		}
@@ -780,7 +952,6 @@ func setupPreboot(confPath, firstbootkargs, kargs string, diskImagePath string, 
 			return fmt.Errorf("Multiple values for bootloader config: %v", confpathout)
 		}
 		confpath := confs[0]
-
 		origconf, err := exec.Command("guestfish", gf.remote, "read-file", confpath).Output()
 		if err != nil {
 			return errors.Wrapf(err, "reading bootloader config")
@@ -789,17 +960,66 @@ func setupPreboot(confPath, firstbootkargs, kargs string, diskImagePath string, 
 		for _, line := range strings.Split(string(origconf), "\n") {
 			if strings.HasPrefix(line, "options ") {
 				line += " " + kargs
+				allkargs = strings.TrimPrefix(line, "options ")
+			} else if strings.HasPrefix(line, "linux ") {
+				linux = "/boot" + strings.TrimPrefix(line, "linux ")
+			} else if strings.HasPrefix(line, "initrd ") {
+				initrd = "/boot" + strings.TrimPrefix(line, "initrd ")
 			}
 			buf.Write([]byte(line))
 			buf.Write([]byte("\n"))
 		}
-		if err := exec.Command("guestfish", gf.remote, "write", confpath, buf.String()).Run(); err != nil {
-			return errors.Wrapf(err, "writing bootloader config")
+		if kargs != "" {
+			if err := exec.Command("guestfish", gf.remote, "write", confpath, buf.String()).Run(); err != nil {
+				return errors.Wrapf(err, "writing bootloader config")
+			}
+		}
+	}
+
+	// s390x requires zipl to update low-level data on block device
+	if zipl_sync {
+		allkargs = strings.TrimSpace(allkargs + " ignition.firstboot " + firstbootkargs)
+		if err := runZipl(gf, linux, initrd, allkargs); err != nil {
+			return errors.Wrapf(err, "running zipl")
 		}
 	}
 
 	if err := exec.Command("guestfish", gf.remote, "umount-all").Run(); err != nil {
 		return errors.Wrapf(err, "guestfish umount failed")
+	}
+	return nil
+}
+
+func runZipl(gf *coreosGuestfish, linux string, initrd string, options string) error {
+	// Detecting ostree commit
+	deploy, err := exec.Command("guestfish", gf.remote, "glob-expand", "/ostree/deploy/*/deploy/*.0").Output()
+	if err != nil {
+		return errors.Wrapf(err, "finding deploy path")
+	}
+	sysroot := strings.TrimSpace(string(deploy))
+	// Saving cmdline
+	if err := exec.Command("guestfish", gf.remote, "write", "/boot/zipl.cmdline", options+"\n").Run(); err != nil {
+		return errors.Wrapf(err, "writing zipl cmdline")
+	}
+	// Bind-mounting for chroot
+	if err := exec.Command("guestfish", gf.remote, "debug", "sh", fmt.Sprintf("'mount -t devtmpfs none /sysroot/%s/dev'", sysroot)).Run(); err != nil {
+		return errors.Wrapf(err, "bind-mounting devtmpfs")
+	}
+	if err := exec.Command("guestfish", gf.remote, "debug", "sh", fmt.Sprintf("'mount -t proc none /sysroot/%s/proc'", sysroot)).Run(); err != nil {
+		return errors.Wrapf(err, "bind-mounting /proc")
+	}
+	if err := exec.Command("guestfish", gf.remote, "debug", "sh", fmt.Sprintf("'mount -o bind /sysroot/boot /sysroot/%s/boot'", sysroot)).Run(); err != nil {
+		return errors.Wrapf(err, "bind-mounting /boot")
+	}
+	// chroot zipl
+	cmd := exec.Command("guestfish", gf.remote, "debug", "sh", fmt.Sprintf("'chroot /sysroot/%s /sbin/zipl -i %s -r %s -p /boot/zipl.cmdline -t /boot'", sysroot, linux, initrd))
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return errors.Wrapf(err, "running zipl")
+	}
+	// clean-up
+	if err := exec.Command("guestfish", gf.remote, "rm-f", "/boot/zipl.cmdline").Run(); err != nil {
+		return errors.Wrapf(err, "writing zipl cmdline")
 	}
 	return nil
 }
@@ -827,7 +1047,7 @@ func (disk *Disk) prepare(builder *QemuBuilder) error {
 	if err := builder.ensureTempdir(); err != nil {
 		return err
 	}
-	tmpf, err := ioutil.TempFile(builder.tempdir, "disk")
+	tmpf, err := os.CreateTemp(builder.tempdir, "disk")
 	if err != nil {
 		return err
 	}
@@ -900,18 +1120,22 @@ func (builder *QemuBuilder) addDiskImpl(disk *Disk, primary bool) error {
 		return err
 	}
 	if primary {
-		// If the board doesn't support -fw_cfg or we were explicitly
-		// requested, inject via libguestfs on the primary disk.
-		if err := builder.renderIgnition(); err != nil {
-			return errors.Wrapf(err, "rendering ignition")
-		}
-		requiresInjection := builder.ConfigFile != "" && builder.ForceConfigInjection
-		if requiresInjection || builder.AppendFirstbootKernelArgs != "" || builder.AppendKernelArgs != "" {
-			if err := setupPreboot(builder.ConfigFile, builder.AppendFirstbootKernelArgs, builder.AppendKernelArgs,
-				disk.dstFileName, disk.SectorSize); err != nil {
-				return errors.Wrapf(err, "ignition injection with guestfs failed")
+		// Only try to inject config if it hasn't already been injected somewhere
+		// else, which can happen when running an ISO install.
+		if !builder.configInjected {
+			// If the board doesn't support -fw_cfg or we were explicitly
+			// requested, inject via libguestfs on the primary disk.
+			if err := builder.renderIgnition(); err != nil {
+				return errors.Wrapf(err, "rendering ignition")
 			}
-			builder.configInjected = true
+			requiresInjection := builder.ConfigFile != "" && builder.ForceConfigInjection
+			if requiresInjection || builder.AppendFirstbootKernelArgs != "" || builder.AppendKernelArgs != "" {
+				if err := setupPreboot(builder.architecture, builder.ConfigFile, builder.AppendFirstbootKernelArgs, builder.AppendKernelArgs,
+					disk.dstFileName, disk.SectorSize); err != nil {
+					return errors.Wrapf(err, "ignition injection with guestfs failed")
+				}
+				builder.configInjected = true
+			}
 		}
 	}
 	diskOpts := disk.DeviceOpts
@@ -946,11 +1170,14 @@ func (builder *QemuBuilder) addDiskImpl(disk *Disk, primary bool) error {
 		opts = "," + strings.Join(diskOpts, ",")
 	}
 
-	id := fmt.Sprintf("d%d", builder.diskID)
+	id := fmt.Sprintf("disk-%d", builder.diskID)
 
 	// Avoid file locking detection, and the disks we create
 	// here are always currently ephemeral.
 	defaultDiskOpts := "auto-read-only=off,cache=unsafe"
+	if len(disk.DriveOpts) > 0 {
+		defaultDiskOpts += "," + strings.Join(disk.DriveOpts, ",")
+	}
 
 	if disk.MultiPathDisk {
 		// Fake a NVME device with a fake WWN. All these attributes are needed in order
@@ -961,13 +1188,13 @@ func (builder *QemuBuilder) addDiskImpl(disk *Disk, primary bool) error {
 		wwn := rand.Uint64()
 
 		var bus string
-		switch coreosarch.CurrentRpmArch() {
+		switch builder.architecture {
 		case "x86_64", "ppc64le", "aarch64":
 			bus = "pci"
 		case "s390x":
 			bus = "ccw"
 		default:
-			panic(fmt.Sprintf("Mantle doesn't know which bus type to use on %s", coreosarch.CurrentRpmArch()))
+			panic(fmt.Sprintf("Mantle doesn't know which bus type to use on %s", builder.architecture))
 		}
 
 		for i := 0; i < 2; i++ {
@@ -993,7 +1220,7 @@ func (builder *QemuBuilder) addDiskImpl(disk *Disk, primary bool) error {
 		disk.dstFileName = ""
 		switch channel {
 		case "virtio":
-			builder.Append("-device", virtio("blk", fmt.Sprintf("drive=%s%s", id, opts)))
+			builder.Append("-device", virtio(builder.architecture, "blk", fmt.Sprintf("drive=%s%s", id, opts)))
 		case "nvme":
 			builder.Append("-device", fmt.Sprintf("nvme,drive=%s%s", id, opts))
 		default:
@@ -1036,7 +1263,7 @@ func (builder *QemuBuilder) AddDisk(disk *Disk) error {
 // AddDisksFromSpecs adds multiple secondary disks from their specs.
 func (builder *QemuBuilder) AddDisksFromSpecs(specs []string) error {
 	for _, spec := range specs {
-		if disk, err := ParseDiskSpec(spec); err != nil {
+		if disk, err := ParseDisk(spec); err != nil {
 			return errors.Wrapf(err, "parsing additional disk spec '%s'", spec)
 		} else if err = builder.AddDisk(disk); err != nil {
 			return errors.Wrapf(err, "adding additional disk '%s'", spec)
@@ -1062,7 +1289,7 @@ func (builder *QemuBuilder) finalize() {
 	if builder.finalized {
 		return
 	}
-	if builder.Memory == 0 {
+	if builder.MemoryMiB == 0 {
 		// FIXME; Required memory should really be a property of the tests, and
 		// let's try to drop these arch-specific overrides.  ARM was bumped via
 		// commit 09391907c0b25726374004669fa6c2b161e3892f
@@ -1076,11 +1303,11 @@ func (builder *QemuBuilder) finalize() {
 
 		// Then later, other non-x86_64 seemed to just copy that.
 		memory := 1024
-		switch coreosarch.CurrentRpmArch() {
+		switch builder.architecture {
 		case "aarch64", "s390x", "ppc64le":
 			memory = 2048
 		}
-		builder.Memory = memory
+		builder.MemoryMiB = memory
 	}
 	builder.finalized = true
 }
@@ -1092,49 +1319,61 @@ func (builder *QemuBuilder) Append(args ...string) {
 
 // baseQemuArgs takes a board and returns the basic qemu
 // arguments needed for the current architecture.
-func baseQemuArgs() []string {
-	accel := "accel=kvm"
+func baseQemuArgs(arch string, memoryMiB int) ([]string, error) {
+	// memoryDevice is the object identifier we use for the backing RAM
+	const memoryDevice = "mem"
+
 	kvm := true
-	if _, ok := os.LookupEnv("COSA_NO_KVM"); ok {
+	hostArch := coreosarch.CurrentRpmArch()
+	// The machine argument needs to reference our memory device; see below
+	machineArg := "memory-backend=" + memoryDevice
+	accel := "accel=kvm"
+	if _, ok := os.LookupEnv("COSA_NO_KVM"); ok || hostArch != arch {
 		accel = "accel=tcg"
 		kvm = false
 	}
+	machineArg += "," + accel
 	var ret []string
-	switch coreosarch.CurrentRpmArch() {
+	switch arch {
 	case "x86_64":
 		ret = []string{
 			"qemu-system-x86_64",
-			"-machine", accel,
+			"-machine", machineArg,
 		}
 	case "aarch64":
 		ret = []string{
 			"qemu-system-aarch64",
-			"-machine", "virt,gic-version=max," + accel,
+			"-machine", "virt,gic-version=max," + machineArg,
 		}
 	case "s390x":
 		ret = []string{
 			"qemu-system-s390x",
-			"-machine", "s390-ccw-virtio," + accel,
+			"-machine", "s390-ccw-virtio," + machineArg,
 		}
 	case "ppc64le":
 		ret = []string{
 			"qemu-system-ppc64",
-			"-machine", "pseries,kvm-type=HV,vsmt=8,cap-fwnmi=off," + accel,
+			// kvm-type=HV ensures we use bare metal KVM and not "user mode"
+			// https://qemu.readthedocs.io/en/latest/system/ppc/pseries.html#switching-between-the-kvm-pr-and-kvm-hv-kernel-module
+			"-machine", "pseries,kvm-type=HV," + machineArg,
 		}
 	default:
-		panic(fmt.Sprintf("RpmArch %s combo not supported for qemu ", coreosarch.CurrentRpmArch()))
+		return nil, fmt.Errorf("architecture %s not supported for qemu", arch)
 	}
 	if kvm {
 		ret = append(ret, "-cpu", "host")
 	} else {
-		if coreosarch.CurrentRpmArch() == "x86_64" {
+		if arch == "x86_64" {
 			// the default qemu64 CPU model does not support x86_64_v2
 			// causing crashes on EL9+ kernels
 			// see https://bugzilla.redhat.com/show_bug.cgi?id=2060839
 			ret = append(ret, "-cpu", "Nehalem")
 		}
 	}
-	return ret
+	// And define memory using a memfd (in shared mode), which is needed for virtiofs
+	ret = append(ret, "-object", fmt.Sprintf("memory-backend-memfd,id=%s,size=%dM,share=on", memoryDevice, memoryMiB))
+	ret = append(ret, "-m", fmt.Sprintf("%d", memoryMiB))
+	return ret, nil
 }
 
 func (builder *QemuBuilder) setupUefi(secureBoot bool) error {
@@ -1149,7 +1388,7 @@ func (builder *QemuBuilder) setupUefi(secureBoot bool) error {
 			return err
 		}
 		defer varsSrc.Close()
-		vars, err := ioutil.TempFile("", "mantle-qemu")
+		vars, err := os.CreateTemp("", "mantle-qemu")
 		if err != nil {
 			return err
 		}
@@ -1169,7 +1408,7 @@ func (builder *QemuBuilder) setupUefi(secureBoot bool) error {
 		if secureBoot {
 			return fmt.Errorf("architecture %s doesn't have support for secure boot in kola", coreosarch.CurrentRpmArch())
 		}
-		vars, err := ioutil.TempFile("", "mantle-qemu")
+		vars, err := os.CreateTemp("", "mantle-qemu")
 		if err != nil {
 			return err
 		}
@@ -1252,6 +1491,7 @@ func (builder *QemuBuilder) setupIso() error {
 			if len(builder.AppendKernelArgs) > 0 {
 				return errors.Wrapf(err, "running `nestos-installer iso kargs modify`; old NestOS ISO?")
 			}
+			// Only actually emit a warning if we expected it to be supported
 			stderr := stderrb.String()
 			plog.Warningf("running nestos-installer iso kargs modify: %v: %q", err, stderr)
 			plog.Warning("likely targeting an old NestOS ISO; ignoring...")
@@ -1285,7 +1525,14 @@ func (builder *QemuBuilder) setupIso() error {
 	// primary disk is selected. This allows us to have "boot once" functionality on
 	// both UEFI and BIOS (`-boot once=d` OTOH doesn't work with OVMF).
 	switch coreosarch.CurrentRpmArch() {
-	case "s390x", "ppc64le", "aarch64":
+	case "s390x":
+		if builder.isoAsDisk {
+			// we could do it, but boot would fail
+			return errors.New("cannot attach ISO as disk; no hybrid ISO on this arch")
+		}
+		builder.Append("-blockdev", "file,node-name=installiso,filename="+builder.iso.path,
+			"-device", "virtio-scsi", "-device", "scsi-cd,drive=installiso,bootindex=2")
+	case "ppc64le", "aarch64":
 		if builder.isoAsDisk {
 			// we could do it, but boot would fail
 			return errors.New("cannot attach ISO as disk; no hybrid ISO on this arch")
@@ -1298,7 +1545,7 @@ func (builder *QemuBuilder) setupIso() error {
 		}
 		builder.Append("-drive", "file="+builder.iso.path+",format=raw,if=none,readonly=on,id=installiso")
 		if builder.isoAsDisk {
-			builder.Append("-device", virtio("blk", "drive=installiso"+bootindexStr))
+			builder.Append("-device", virtio(builder.architecture, "blk", "drive=installiso"+bootindexStr))
 		} else {
 			builder.Append("-device", "ide-cd,drive=installiso"+bootindexStr)
 		}
@@ -1370,6 +1617,30 @@ func (builder *QemuBuilder) VirtioJournal(config *conf.Conf, queryArguments stri
 	return stream, nil
 }
 
+// createVirtiofsCmd returns a new command instance configured to launch virtiofsd.
+func createVirtiofsCmd(directory, socketPath string) exec.Cmd {
+	args := []string{"--sandbox", "none", "--socket-path", socketPath, "--shared-dir", "."}
+	// Work around https://gitlab.com/virtio-fs/virtiofsd/-/merge_requests/197
+	if os.Getuid() == 0 {
+		args = append(args, "--modcaps=-mknod:-setfcap")
+	}
+	// We don't need seccomp filtering; we trust our workloads. This incidentally
+	// works around issues like https://gitlab.com/virtio-fs/virtiofsd/-/merge_requests/200.
+	args = append(args, "--seccomp=none")
+	cmd := exec.Command("/usr/libexec/virtiofsd", args...)
+	// This sets things up so that the `.` we passed in the arguments is the target directory
+	cmd.Dir = directory
+	// Quiet the daemon by default
+	cmd.Env = append(cmd.Env, "RUST_LOG=ERROR")
+	// But we do want to see errors
+	cmd.Stderr = os.Stderr
+	// Like other processes, "lifecycle bind" it to us
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Pdeathsig: syscall.SIGTERM,
+	}
+	return cmd
+}
+
 // Exec tries to run a QEMU instance with the given settings.
 func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 	builder.finalize()
@@ -1387,8 +1658,10 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 		}
 	}()
 
-	argv := baseQemuArgs()
-	argv = append(argv, "-m", fmt.Sprintf("%d", builder.Memory))
+	argv, err := baseQemuArgs(builder.architecture, builder.MemoryMiB)
+	if err != nil {
+		return nil, err
+	}
 
 	if builder.Processors < 0 {
 		nproc, err := system.GetProcessors()
@@ -1429,7 +1702,7 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 
 	// We always provide a random source
 	argv = append(argv, "-object", "rng-random,filename=/dev/urandom,id=rng0",
-		"-device", virtio("rng", "rng=rng0"))
+		"-device", virtio(builder.architecture, "rng", "rng=rng0"))
 	if builder.UUID != "" {
 		argv = append(argv, "-uuid", builder.UUID)
 	}
@@ -1455,16 +1728,24 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 			argv = append(argv, "-boot", "order=c,strict=on")
 		}
 	}
-
 	// Handle Ignition if it wasn't already injected above
 	if builder.ConfigFile != "" && !builder.configInjected {
 		if builder.supportsFwCfg() {
 			builder.Append("-fw_cfg", "name=opt/com.coreos/config,file="+builder.ConfigFile)
 		} else {
+			serial := "ignition"
+			if builder.secureExecution {
+				// SE case: we have to encrypt the config and attach it with 'serial=ignition_crypted'
+				if err := builder.encryptIgnitionConfig(); err != nil {
+					return nil, err
+				}
+				serial = "ignition_crypted"
+			}
 			// Alternative to fw_cfg, should be generally usable on all arches,
 			// especially those without fw_cfg support.
 			// See https://github.com/coreos/ignition/pull/905
-			builder.Append("-drive", fmt.Sprintf("if=none,id=ignition,format=raw,file=%s,readonly=on", builder.ConfigFile), "-device", "virtio-blk,serial=ignition,drive=ignition")
+			builder.Append("-drive", fmt.Sprintf("if=none,id=ignition,format=raw,file=%s,readonly=on", builder.ConfigFile),
+				"-device", fmt.Sprintf("virtio-blk,serial=%s,drive=ignition", serial))
 		}
 	}
 
@@ -1476,7 +1757,7 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 			if err := cmd.Start(); err != nil {
 				return nil, errors.Wrapf(err, "spawing nbd server")
 			}
-			inst.nbdServers = append(inst.nbdServers, cmd)
+			inst.helpers = append(inst.helpers, cmd)
 		}
 	}
 
@@ -1531,7 +1812,7 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 		}
 		argv = append(argv, "-chardev", fmt.Sprintf("socket,id=chrtpm,path=%s", swtpmSock), "-tpmdev", "emulator,id=tpm0,chardev=chrtpm")
 		// There are different device backends on each architecture
-		switch coreosarch.CurrentRpmArch() {
+		switch builder.architecture {
 		case "x86_64":
 			argv = append(argv, "-device", "tpm-tis,tpmdev=tpm0")
 		case "aarch64":
@@ -1556,6 +1837,61 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 		return nil, err
 	}
 
+	// Process virtiofs mounts
+	if len(builder.hostMounts) > 0 {
+		if err := builder.ensureTempdir(); err != nil {
+			return nil, err
+		}
+
+		plog.Debug("creating virtiofs helpers")
+
+		// Spawn off a virtiofsd helper per mounted path
+		virtiofsHelpers := make(map[string]exec.Cmd)
+		for i, hostmnt := range builder.hostMounts {
+			// By far the most common failure to spawn virtiofsd will be a typo'd source directory,
+			// so let's synchronously check that ourselves here.
+			if _, err := os.Stat(hostmnt.src); err != nil {
+				return nil, fmt.Errorf("failed to access virtiofs source directory %s", hostmnt.src)
+			}
+			virtiofsChar := fmt.Sprintf("virtiofschar%d", i)
+			virtiofsdSocket := filepath.Join(builder.tempdir, fmt.Sprintf("virtiofsd-%d.sock", i))
+			builder.Append("-chardev", fmt.Sprintf("socket,id=%s,path=%s", virtiofsChar, virtiofsdSocket))
+			builder.Append("-device", fmt.Sprintf("vhost-user-fs-pci,queue-size=1024,chardev=%s,tag=%s", virtiofsChar, hostmnt.dest))
+			plog.Debugf("creating virtiofs helper for %s", hostmnt.src)
+			// TODO: Honor hostmnt.readonly somehow here (add an option to virtiofsd)
+			p := createVirtiofsCmd(hostmnt.src, virtiofsdSocket)
+			if err := p.Start(); err != nil {
+				return nil, fmt.Errorf("failed to start virtiofsd")
+			}
+			virtiofsHelpers[virtiofsdSocket] = p
+		}
+		// Loop waiting for the sockets to appear
+		err := util.RetryUntilTimeout(10*time.Minute, 1*time.Second, func() error {
+			found := []string{}
+			for sockpath := range virtiofsHelpers {
+				if _, err := os.Stat(sockpath); err == nil {
+					found = append(found, sockpath)
+				}
+			}
+			for _, sockpath := range found {
+				helper := virtiofsHelpers[sockpath]
+				inst.helpers = append(inst.helpers, helper)
+				delete(virtiofsHelpers, sockpath)
+			}
+			if len(virtiofsHelpers) == 0 {
+				return nil
+			}
+			waitingFor := []string{}
+			for socket := range virtiofsHelpers {
+				waitingFor = append(waitingFor, socket)
+			}
+			return fmt.Errorf("waiting for virtiofsd sockets: %s", strings.Join(waitingFor, " "))
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	fdnum := 3 // first additional file starts at position 3
 	for i := range builder.fds {
 		fdset := i + 1 // Start at 1
@@ -1573,6 +1909,7 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 	argv = append(argv, builder.Argv...)
 
 	inst.qemu = exec.Command(argv[0], argv[1:]...)
+	inst.architecture = builder.architecture
 
 	cmd := inst.qemu.(*exec.ExecCmd)
 	cmd.Stderr = os.Stderr
@@ -1618,6 +1955,43 @@ func (builder *QemuBuilder) Exec() (*QemuInstance, error) {
 	}
 	if err := inst.qmpSocket.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect over qmp to qemu instance")
+	}
+
+	// Hacky code to test https://github.com/openshift/os/pull/1346
+	if timeout, ok := os.LookupEnv("COSA_TEST_CDROM_UNPLUG"); ok {
+		val, err := time.ParseDuration(timeout)
+		if err != nil {
+			return nil, err
+		}
+		go func() {
+			devs, err := inst.listDevices()
+			if err != nil {
+				plog.Error("failed to list devices")
+				return
+			}
+
+			var cdrom string
+			for _, dev := range devs.Return {
+				switch dev.Type {
+				case "child<scsi-cd>":
+					cdrom = filepath.Join("/machine/peripheral-anon", dev.Name)
+				default:
+					break
+				}
+			}
+			if cdrom == "" {
+				plog.Errorf("failed to get scsi-cd id")
+				return
+			}
+
+			plog.Debugf("get cdrom id %s", cdrom)
+			time.Sleep(val)
+			if err := inst.deleteBlockDevice(cdrom); err != nil {
+				plog.Errorf("failed to delete block device: %s", cdrom)
+				return
+			}
+			plog.Info("delete cdrom")
+		}()
 	}
 
 	return &inst, nil

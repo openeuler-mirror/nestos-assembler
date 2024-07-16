@@ -15,10 +15,10 @@
 package rhcos
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
@@ -26,6 +26,7 @@ func init() {
 		Run:         verifySSSD,
 		ClusterSize: 1,
 		Name:        `rhcos.sssd`,
+		Description: "Verify nss-altfiles and pam configs are expected.",
 		Flags:       []register.Flag{},
 		Distros:     []string{"rhcos", "nestos"},
 		Platforms:   []string{"qemu"},

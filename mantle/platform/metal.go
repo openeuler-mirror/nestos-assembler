@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -30,9 +29,9 @@ import (
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/system/exec"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/system/exec"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 const (
@@ -48,7 +47,7 @@ var baseKargs = []string{"rd.neednet=1", "ip=dhcp", "ignition.firstboot", "ignit
 var (
 	// TODO expose this as an API that can be used by cosa too
 	consoleKernelArgument = map[string]string{
-		"x86_64":  "ttyS0",
+		"x86_64":  "ttyS0,115200n8",
 		"ppc64le": "hvc0",
 		"aarch64": "ttyAMA0",
 		"s390x":   "ttysclp0",
@@ -74,7 +73,7 @@ func NewMetalQemuBuilderDefault() *QemuBuilder {
 	builder := NewQemuBuilder()
 	// https://github.com/coreos/fedora-coreos-tracker/issues/388
 	// https://github.com/coreos/fedora-coreos-docs/pull/46
-	builder.Memory = 4096
+	builder.MemoryMiB = 4096
 	return builder
 }
 
@@ -121,6 +120,20 @@ func (inst *Install) PXE(kargs []string, liveIgnition, ignition conf.Conf, offli
 	artifacts := []string{"live-kernel", "live-rootfs"}
 	if err := inst.checkArtifactsExist(artifacts); err != nil {
 		return nil, err
+	}
+
+	installerConfig := installerConfig{
+		Console: []string{consoleKernelArgument[coreosarch.CurrentRpmArch()]},
+	}
+	installerConfigData, err := yaml.Marshal(installerConfig)
+	if err != nil {
+		return nil, err
+	}
+	mode := 0644
+
+	// XXX: https://github.com/coreos/coreos-installer/issues/1171
+	if coreosarch.CurrentRpmArch() != "s390x" {
+		liveIgnition.AddFile("/etc/nestos/installer.d/mantle.yaml", string(installerConfigData), mode)
 	}
 
 	inst.kargs = kargs
@@ -211,7 +224,7 @@ func (inst *Install) setup(kern *kernelSetup) (*installerRun, error) {
 
 	builder := inst.Builder
 
-	tempdir, err := ioutil.TempDir("/var/tmp", "mantle-pxe")
+	tempdir, err := os.MkdirTemp("/var/tmp", "mantle-pxe")
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +381,7 @@ func (t *installerRun) completePxeSetup(kargs []string) error {
 	case "pxe":
 		pxeconfigdir := filepath.Join(t.tftpdir, "pxelinux.cfg")
 		if err := os.Mkdir(pxeconfigdir, 0777); err != nil {
-			return err
+			return errors.Wrapf(err, "creating dir %s", pxeconfigdir)
 		}
 		pxeimages := []string{"pxelinux.0", "ldlinux.c32"}
 		pxeconfig := []byte(fmt.Sprintf(`
@@ -382,8 +395,9 @@ func (t *installerRun) completePxeSetup(kargs []string) error {
 		if coreosarch.CurrentRpmArch() == "s390x" {
 			pxeconfig = []byte(kargsStr)
 		}
-		if err := ioutil.WriteFile(filepath.Join(pxeconfigdir, "default"), pxeconfig, 0777); err != nil {
-			return err
+		pxeconfig_path := filepath.Join(pxeconfigdir, "default")
+		if err := os.WriteFile(pxeconfig_path, pxeconfig, 0777); err != nil {
+			return errors.Wrapf(err, "writing file %s", pxeconfig_path)
 		}
 
 		// this is only for s390x where the pxe image has to be created;
@@ -394,28 +408,34 @@ func (t *installerRun) completePxeSetup(kargs []string) error {
 			err := exec.Command("/usr/bin/mk-s390image", kernelpath, "-r", initrdpath,
 				"-p", filepath.Join(pxeconfigdir, "default"), filepath.Join(t.tftpdir, pxeimages[0])).Run()
 			if err != nil {
-				return err
+				return errors.Wrap(err, "running mk-s390image")
 			}
 		} else {
 			for _, img := range pxeimages {
 				srcpath := filepath.Join("/usr/share/syslinux", img)
-				if err := exec.Command("/usr/lib/coreos-assembler/cp-reflink", srcpath, t.tftpdir).Run(); err != nil {
-					return err
+				cp_cmd := exec.Command("/usr/lib/coreos-assembler/cp-reflink", srcpath, t.tftpdir)
+				cp_cmd.Stderr = os.Stderr
+				if err := cp_cmd.Run(); err != nil {
+					return errors.Wrapf(err, "running cp-reflink %s %s", srcpath, t.tftpdir)
 				}
 			}
 		}
 		t.pxe.bootfile = "/" + pxeimages[0]
 	case "grub":
-		if err := exec.Command("grub2-mknetdir", "--net-directory="+t.tftpdir).Run(); err != nil {
-			return err
+		grub2_mknetdir_cmd := exec.Command("grub2-mknetdir", "--net-directory="+t.tftpdir)
+		grub2_mknetdir_cmd.Stderr = os.Stderr
+		if err := grub2_mknetdir_cmd.Run(); err != nil {
+			return errors.Wrap(err, "running grub2-mknetdir")
 		}
 		if t.pxe.pxeimagepath != "" {
 			dstpath := filepath.Join(t.tftpdir, "boot/grub2")
-			if err := exec.Command("/usr/lib/coreos-assembler/cp-reflink", t.pxe.pxeimagepath, dstpath).Run(); err != nil {
-				return err
+			cp_cmd := exec.Command("/usr/lib/coreos-assembler/cp-reflink", t.pxe.pxeimagepath, dstpath)
+			cp_cmd.Stderr = os.Stderr
+			if err := cp_cmd.Run(); err != nil {
+				return errors.Wrapf(err, "running cp-reflink %s %s", t.pxe.pxeimagepath, dstpath)
 			}
 		}
-		if err := ioutil.WriteFile(filepath.Join(t.tftpdir, "boot/grub2/grub.cfg"), []byte(fmt.Sprintf(`
+		if err := os.WriteFile(filepath.Join(t.tftpdir, "boot/grub2/grub.cfg"), []byte(fmt.Sprintf(`
 			default=0
 			timeout=1
 			menuentry "CoreOS (BIOS/UEFI)" {
@@ -425,7 +445,7 @@ func (t *installerRun) completePxeSetup(kargs []string) error {
 				initrd %s
 			}
 		`, t.kern.kernel, kargsStr, t.kern.initramfs)), 0777); err != nil {
-			return err
+			return errors.Wrap(err, "writing grub.cfg")
 		}
 	default:
 		panic("Unhandled boottype " + t.pxe.boottype)
@@ -519,7 +539,7 @@ func (t *installerRun) run() (*QemuInstance, error) {
 func (inst *Install) runPXE(kern *kernelSetup, offline bool) (*InstalledMachine, error) {
 	t, err := inst.setup(kern)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "setting up install")
 	}
 	defer func() {
 		err = t.destroy()
@@ -527,7 +547,7 @@ func (inst *Install) runPXE(kern *kernelSetup, offline bool) (*InstalledMachine,
 
 	bootStartedChan, err := inst.Builder.VirtioChannelRead("bootstarted")
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "setting up bootstarted virtio-serial channel")
 	}
 
 	kargs := renderBaseKargs()
@@ -536,11 +556,11 @@ func (inst *Install) runPXE(kern *kernelSetup, offline bool) (*InstalledMachine,
 
 	kargs = append(kargs, renderInstallKargs(t, offline)...)
 	if err := t.completePxeSetup(kargs); err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "completing PXE setup")
 	}
 	qinst, err := t.run()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "running PXE install")
 	}
 	tempdir := t.tempdir
 	t.tempdir = "" // Transfer ownership
@@ -558,7 +578,8 @@ type installerConfig struct {
 	Insecure     bool     `yaml:",omitempty"`
 	AppendKargs  []string `yaml:"append-karg,omitempty"`
 	CopyNetwork  bool     `yaml:"copy-network,omitempty"`
-	DestDevice   string   `yaml:"dest-device"`
+	DestDevice   string   `yaml:"dest-device,omitempty"`
+	Console      []string `yaml:"console,omitempty"`
 }
 
 func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgnition conf.Conf, outdir string, offline, minimal bool) (*InstalledMachine, error) {
@@ -578,14 +599,14 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 		return nil, fmt.Errorf("Cannot use `--add-nm-keyfile` with offline mode")
 	}
 
-	// XXX: we do support this now, via `coreos-installer iso kargs`
-	if len(inst.kargs) > 0 {
-		return nil, errors.New("injecting kargs is not supported yet, see https://github.com/coreos/coreos-installer/issues/164")
-	}
-
 	installerConfig := installerConfig{
 		IgnitionFile: "/var/opt/pointer.ign",
 		DestDevice:   "/dev/vda",
+	}
+
+	// XXX: https://github.com/coreos/coreos-installer/issues/1171
+	if coreosarch.CurrentRpmArch() != "s390x" {
+		installerConfig.Console = []string{consoleKernelArgument[coreosarch.CurrentRpmArch()]}
 	}
 
 	if inst.MultiPathDisk {
@@ -598,7 +619,7 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 	inst.ignition = targetIgnition
 	inst.liveIgnition = liveIgnition
 
-	tempdir, err := ioutil.TempDir("/var/tmp", "mantle-metal")
+	tempdir, err := os.MkdirTemp("/var/tmp", "mantle-metal")
 	if err != nil {
 		return nil, err
 	}
@@ -619,6 +640,20 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 
 	builddir := inst.CosaBuild.Dir
 	srcisopath := filepath.Join(builddir, inst.CosaBuild.Meta.BuildArtifacts.LiveIso.Path)
+
+	// Copy the ISO to a new location for modification.
+	// This is a bit awkward; we copy here, but QemuBuilder will also copy
+	// again (in `setupIso()`). I didn't want to lower the NM keyfile stuff
+	// into QemuBuilder. And plus, both tempdirs should be in /var/tmp so
+	// the `cp --reflink=auto` that QemuBuilder does should just reflink.
+	newIso := filepath.Join(tempdir, "install.iso")
+	cmd := exec.Command("cp", "--reflink=auto", srcisopath, newIso)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return nil, errors.Wrapf(err, "copying iso")
+	}
+	srcisopath = newIso
+
 	var metalimg string
 	if inst.Native4k {
 		metalimg = inst.CosaBuild.Meta.BuildArtifacts.Metal4KNative.Path
@@ -700,24 +735,14 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 	var keyfileArgs []string
 	for nmName, nmContents := range inst.NmKeyfiles {
 		path := filepath.Join(tempdir, nmName)
-		if err := ioutil.WriteFile(path, []byte(nmContents), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(nmContents), 0600); err != nil {
 			return nil, err
 		}
 		keyfileArgs = append(keyfileArgs, "--keyfile", path)
 	}
 	if len(keyfileArgs) > 0 {
-		// This is a bit awkward; we copy here, but QemuBuilder will also copy
-		// again (in `setupIso()`). I didn't want to lower the NM keyfile stuff
-		// into QemuBuilder. And plus, both tempdirs should be in /var/tmp so
-		// the `cp --reflink=auto` that QemuBuilder does should just reflink.
-		newIso := filepath.Join(tempdir, "install.iso")
-		cmd := exec.Command("cp", "--reflink=auto", srcisopath, newIso)
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return nil, errors.Wrapf(err, "copying iso")
-		}
 
-		args := []string{"iso", "network", "embed", newIso}
+		args := []string{"iso", "network", "embed", srcisopath}
 		args = append(args, keyfileArgs...)
 		cmd = exec.Command("nestos-installer", args...)
 		cmd.Stderr = os.Stderr
@@ -725,14 +750,22 @@ func (inst *Install) InstallViaISOEmbed(kargs []string, liveIgnition, targetIgni
 			return nil, errors.Wrapf(err, "running nestos-installer iso network embed")
 		}
 
+		installerConfig.CopyNetwork = true
+
 		// force networking on in the initrd to verify the keyfile was used
-		cmd = exec.Command("nestos-installer", "iso", "kargs", "modify", newIso, "--append", "rd.neednet=1")
+		inst.kargs = append(inst.kargs, "rd.neednet=1")
+	}
+
+	if len(inst.kargs) > 0 {
+		args := []string{"iso", "kargs", "modify", srcisopath}
+		for _, karg := range inst.kargs {
+			args = append(args, "--append", karg)
+		}
+		cmd = exec.Command("nestos-installer", args...)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return nil, errors.Wrapf(err, "running nestos-installer iso kargs modify")
+			return nil, errors.Wrapf(err, "running nestos-installer iso kargs")
 		}
-		srcisopath = newIso
-		installerConfig.CopyNetwork = true
 	}
 
 	if inst.Insecure {

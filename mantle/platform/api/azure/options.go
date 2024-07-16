@@ -1,3 +1,4 @@
+// Copyright 2023 Red Hat
 // Copyright 2016 CoreOS, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +16,13 @@
 package azure
 
 import (
-	"github.com/coreos/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform"
 )
 
 type Options struct {
 	*platform.Options
 
-	AzureProfile      string
-	AzureAuthLocation string
+	AzureCredentials  string
 	AzureSubscription string
 
 	DiskURI   string

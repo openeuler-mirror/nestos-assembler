@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -30,8 +29,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/mantle/harness/reporters"
-	"github.com/coreos/mantle/harness/testresult"
+	"github.com/coreos/coreos-assembler/mantle/harness/reporters"
+	"github.com/coreos/coreos-assembler/mantle/harness/testresult"
 )
 
 const DefaultTimeoutFlag = 0
@@ -77,8 +76,10 @@ type H struct {
 
 	isParallel               bool
 	nonExclusiveTestsStarted bool
+	warningOnFailure         bool
 
 	timeout   time.Duration // Duration for which the test will be allowed to run
+	timedout  bool          // A timeout was reached
 	execTimer *time.Timer   // Used to interrupt the test after timeout
 	// To signal that a timeout has occured to observers
 	timeoutContext context.Context
@@ -101,6 +102,7 @@ func (t *H) runTimeoutCheck(ctx context.Context, timeout time.Duration, f func()
 	// Timeout if call to function f takes too long
 	select {
 	case <-ctx.Done():
+		t.timedout = true
 		t.Fatalf("TIMEOUT[%v]: %s\n", timeout, errMsg)
 	case <-ioCompleted:
 		// Finish the test
@@ -166,6 +168,9 @@ func (h *H) Verbose() bool {
 
 func (c *H) status() testresult.TestResult {
 	if c.Failed() {
+		if c.warningOnFailure {
+			return testresult.Warn
+		}
 		return testresult.Fail
 	} else if c.Skipped() {
 		return testresult.Skip
@@ -275,6 +280,10 @@ func (c *H) NonExclusiveTestStarted() {
 	c.nonExclusiveTestsStarted = true
 }
 
+func (c *H) WarningOnFailure() {
+	c.warningOnFailure = true
+}
+
 // Fail marks the function as having failed but continues execution.
 func (c *H) Fail() {
 	if c.parent != nil {
@@ -294,6 +303,11 @@ func (c *H) Failed() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.failed
+}
+
+// Reports if the test was stopped because a timeout was reached.
+func (c *H) TimedOut() bool {
+	return c.timedout
 }
 
 // FailNow marks the function as having failed and stops its execution.
@@ -437,7 +451,7 @@ func (h *H) TempDir(prefix string) string {
 		h.log(err.Error())
 		h.FailNow()
 	}
-	tmp, err := ioutil.TempDir(dir, prefix)
+	tmp, err := os.MkdirTemp(dir, prefix)
 	if err != nil {
 		h.log(fmt.Sprintf("Failed to create temp dir: %v", err))
 		h.FailNow()
@@ -453,7 +467,7 @@ func (h *H) TempFile(prefix string) *os.File {
 		h.log(err.Error())
 		h.FailNow()
 	}
-	tmp, err := ioutil.TempFile(dir, prefix)
+	tmp, err := os.CreateTemp(dir, prefix)
 	if err != nil {
 		h.log(fmt.Sprintf("Failed to create temp file: %v", err))
 		h.FailNow()
@@ -610,7 +624,7 @@ func (t *H) report() {
 
 	status := t.status()
 	if status == testresult.Fail || t.suite.opts.Verbose {
-		t.flushToParent(format, status, t.name, dstr)
+		t.flushToParent(format, status.Display(), t.name, dstr)
 	}
 
 	// TODO: store multiple buffers for subtests without indentation

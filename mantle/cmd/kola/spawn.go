@@ -17,7 +17,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/user"
@@ -30,10 +29,10 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/platform/machine/unprivqemu"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
 )
 
 var (
@@ -41,7 +40,7 @@ var (
 		RunE:         runSpawn,
 		PreRunE:      preRun,
 		Use:          "spawn",
-		Short:        "spawn a CoreOS instance",
+		Short:        "spawn a NestOS instance",
 		SilenceUsage: true,
 	}
 
@@ -99,7 +98,7 @@ func runSpawn(cmd *cobra.Command, args []string) error {
 
 	var userdata *conf.UserData
 	if spawnUserData != "" {
-		userbytes, err := ioutil.ReadFile(spawnUserData)
+		userbytes, err := os.ReadFile(spawnUserData)
 		if err != nil {
 			return errors.Wrapf(err, "Reading userdata failed")
 		}
@@ -167,7 +166,7 @@ func runSpawn(cmd *cobra.Command, args []string) error {
 				DisablePDeathSig: !spawnRemove,
 			}
 			if spawnMachineOptions != "" {
-				b, err := ioutil.ReadFile(spawnMachineOptions)
+				b, err := os.ReadFile(spawnMachineOptions)
 				if err != nil {
 					return errors.Wrapf(err, "Could not read machine options")
 				}
@@ -179,7 +178,7 @@ func runSpawn(cmd *cobra.Command, args []string) error {
 			}
 
 			switch qc := cluster.(type) {
-			case *unprivqemu.Cluster:
+			case *qemu.Cluster:
 				mach, err = qc.NewMachineWithQemuOptions(userdata, machineOpts)
 			default:
 				plog.Fatalf("unreachable: qemu cluster %v unknown type", qc)
@@ -272,7 +271,7 @@ func addSSHKeys(userdata *conf.UserData) (*conf.UserData, error) {
 
 	// read key files, failing if any are missing
 	for _, path := range spawnSSHKeys {
-		keybytes, err := ioutil.ReadFile(path)
+		keybytes, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}

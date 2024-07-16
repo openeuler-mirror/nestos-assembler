@@ -19,10 +19,11 @@ import (
 	"reflect"
 	"regexp"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
@@ -30,6 +31,7 @@ func init() {
 		Run:         rpmOstreeUpgradeRollback,
 		ClusterSize: 1,
 		Name:        "rpmostree.upgrade-rollback",
+		Description: "Verify an upgrade and rollback with a simulated update works.",
 		FailFast:    true,
 		Tags:        []string{"rpm-ostree", "upgrade"},
 		// remove this testcase for iso,becase ro mount 'error: Remounting /sysroot read-write: Permission denied'
@@ -39,7 +41,8 @@ func init() {
 		Run:         rpmOstreeInstallUninstall,
 		ClusterSize: 1,
 		Name:        "rpmostree.install-uninstall",
-		Tags:        []string{"rpm-ostree"},
+		Description: "Verify rpm-ostree supports installing and uninstalling rpms.",
+		Tags:        []string{"rpm-ostree", kola.NeedsInternetTag}, // these need network to retrieve bits
 		// this Ignition config lands the dummy RPM
 		UserData: conf.Ignition(`{
 			"ignition": {
@@ -64,7 +67,6 @@ func init() {
 			}
 		  }
 		  `),
-		Flags: []register.Flag{register.RequiresInternetAccess}, // these need network to retrieve bits
 	})
 }
 
@@ -190,7 +192,7 @@ func rpmOstreeUpgradeRollback(c cluster.TestCluster) {
 // This uses a dummy RPM that was originally created for the atomic-host-tests;
 // see: https://github.com/projectatomic/atomic-host-tests
 func rpmOstreeInstallUninstall(c cluster.TestCluster) {
-	var ahtRpmPath = "/var/home/nest/aht-dummy-1.0-1.noarch.rpm"
+	var ahtRpmPath = "/var/home/nest/aht-dummy.rpm"
 	var installPkgName = "aht-dummy-1.0-1.noarch"
 	var installBinName = "aht-dummy"
 	var installBinPath string
@@ -202,11 +204,6 @@ func rpmOstreeInstallUninstall(c cluster.TestCluster) {
 	}
 
 	m := c.Machines()[0]
-
-	_, err := c.SSH(m, `bash -c 'cd ${HOME} && curl -L -O https://www.nestos.org.cn/kola/aht-dummy-1.0-1.noarch.rpm'`)
-	if err != nil {
-		c.Fatal(err)
-	}
 
 	originalStatus, err := util.GetRpmOstreeStatusJSON(c, m)
 	if err != nil {

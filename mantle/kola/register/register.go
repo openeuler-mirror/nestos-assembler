@@ -18,19 +18,18 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 type Flag int
 
 const (
-	NoSSHKeyInUserData     Flag = iota // don't inject SSH key into Ignition/cloud-config
-	NoSSHKeyInMetadata                 // don't add SSH key to platform metadata
-	NoInstanceCreds                    // don't grant credentials (AWS instance profile, GCP service account) to the instance
-	NoEmergencyShellCheck              // don't check console output for emergency shell invocation
-	RequiresInternetAccess             // run the test only if the platform supports Internet access
-	AllowConfigWarnings                // ignore Ignition and Butane warnings instead of failing
+	NoSSHKeyInUserData    Flag = iota // don't inject SSH key into Ignition/cloud-config
+	NoSSHKeyInMetadata                // don't add SSH key to platform metadata
+	NoInstanceCreds                   // don't grant credentials (AWS instance profile, GCP service account) to the instance
+	NoEmergencyShellCheck             // don't check console output for emergency shell invocation
+	AllowConfigWarnings               // ignore Ignition and Butane warnings instead of failing
 )
 
 // NativeFuncWrap is a wrapper for the NativeFunc which includes an optional string of arches and/or distributions to
@@ -69,6 +68,7 @@ type Test struct {
 	Tags                 []string      // list of tags that can be matched against -- defaults to none
 	Timeout              time.Duration // the duration for which a test will be allowed to run
 	RequiredTag          string        // if specified, test is filtered by default unless tag is provided -- defaults to none
+	Description          string        // test description
 
 	// Whether the primary disk is multipathed.
 	MultiPathDisk bool

@@ -8,7 +8,7 @@ import urllib
 import os.path
 import sys
 from cosalib.cmdlib import (
-    run_verbose
+    runcmd
 )
 from tenacity import (
     retry,
@@ -37,7 +37,7 @@ VARIANTS = {
         "image_format": "raw",
         "image_suffix": "ova.gz",
         "platform": "powervs",
-        "gzip": True,
+        "compression": "gzip",
         "tar_members": [
             "disk.raw"
         ]
@@ -143,7 +143,7 @@ def ibmcloud_run_ore(build, args):
     if args.force:
         ore_args.extend(['--force'])
 
-    run_verbose(ore_args)
+    runcmd(ore_args)
     url_path = urllib.parse.quote((
         f"s3.{region}.cloud-object-storage.appdomain.cloud/"
         f"{args.bucket}/{ibmcloud_object_name}"
@@ -173,7 +173,7 @@ def ibmcloud_run_ore_replicate(build, args):
     # PowerVS insatnces are supported in all the regions where cloud object storage can be created. This list is common for
     # both IBMCloud and PowerVS.
     if not args.region:
-        args.region = ['au-syd', 'br-sao', 'ca-tor', 'eu-de', 'eu-gb', 'jp-osa', 'jp-tok', 'us-east', 'us-south']
+        args.region = ['au-syd', 'br-sao', 'ca-tor', 'eu-de', 'eu-es', 'eu-gb', 'jp-osa', 'jp-tok', 'us-east', 'us-south']
         log.info(("default: replicating to all regions. If this is not "
                  " desirable, use '--regions'"))
 

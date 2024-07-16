@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,10 +30,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coreos/mantle/network"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/network"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 	"github.com/pkg/errors"
 	"golang.org/x/term"
 )
@@ -51,7 +50,10 @@ func stripControlCharacters(s string) string {
 	}, s)
 }
 
-func displayStatusMsg(status, msg string, termMaxWidth int) {
+func displayStatusMsg(ontty bool, status, msg string, termMaxWidth int) {
+	if !ontty {
+		return
+	}
 	s := strings.TrimSpace(msg)
 	if s == "" {
 		return
@@ -64,15 +66,18 @@ func displayStatusMsg(status, msg string, termMaxWidth int) {
 }
 
 func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *conf.Conf, sshCommand string) error {
-	if !term.IsTerminal(0) {
-		return fmt.Errorf("stdin is not a tty")
+	ontty := term.IsTerminal(0)
+	if sshCommand == "" {
+		if !ontty {
+			return fmt.Errorf("stdin is not a tty")
+		}
 	}
 	termMaxWidth, _, err := term.GetSize(0)
 	if err != nil {
 		termMaxWidth = 100
 	}
 
-	tmpd, err := ioutil.TempDir("", "kola-devshell")
+	tmpd, err := os.MkdirTemp("", "kola-devshell")
 	if err != nil {
 		return err
 	}
@@ -109,9 +114,19 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 	if err != nil {
 		return err
 	}
-	serialLog, err := ioutil.TempFile(tmpd, "cosa-run-serial")
-	if err != nil {
-		return err
+
+	// Save console logs
+	var serialLog *os.File
+	if builder.ConsoleFile != "" {
+		serialLog, err = os.Create(builder.ConsoleFile)
+		if err != nil {
+			return err
+		}
+	} else {
+		serialLog, err = os.CreateTemp(tmpd, "cosa-run-serial")
+		if err != nil {
+			return err
+		}
 	}
 
 	builder.InheritConsole = false
@@ -171,6 +186,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 
 	// Start the SSH client
 	sc := newSshClient(ip, agent.Socket, sshCommand)
+	sc.ontty = ontty
 	go sc.controlStartStop()
 
 	ready := false
@@ -188,7 +204,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 		// a status message on the console.
 		case serialMsg := <-serialChan:
 			if !ready {
-				displayStatusMsg(statusMsg, serialMsg, termMaxWidth)
+				displayStatusMsg(ontty, statusMsg, serialMsg, termMaxWidth)
 			}
 			lastMsg = serialMsg
 		// monitor the err channel
@@ -202,7 +218,7 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 
 		// monitor the instance state
 		case <-qemuWaitChan:
-			displayStatusMsg("DONE", "QEMU instance terminated", termMaxWidth)
+			displayStatusMsg(ontty, "DONE", "QEMU instance terminated", termMaxWidth)
 			return nil
 
 		// monitor the machine state events from console/serial logs
@@ -233,17 +249,17 @@ func runDevShellSSH(ctx context.Context, builder *platform.QemuBuilder, conf *co
 					statusMsg = "QEMU guest is booting"
 				}
 			}
-			displayStatusMsg(fmt.Sprintf("EVENT | %s", statusMsg), lastMsg, termMaxWidth)
+			displayStatusMsg(ontty, fmt.Sprintf("EVENT | %s", statusMsg), lastMsg, termMaxWidth)
 
 		// monitor the SSH connection
 		case err := <-sc.errChan:
 			if err == nil {
 				sc.controlChan <- sshNotReady
-				displayStatusMsg("SESSION", "Clean exit from SSH, terminating instance", termMaxWidth)
+				displayStatusMsg(ontty, "SESSION", "Clean exit from SSH, terminating instance", termMaxWidth)
 				return nil
 			} else if sshCommand != "" {
 				sc.controlChan <- sshNotReady
-				displayStatusMsg("SESSION", "SSH command exited, terminating instance", termMaxWidth)
+				displayStatusMsg(ontty, "SESSION", "SSH command exited, terminating instance", termMaxWidth)
 				return err
 			}
 			if ready {
@@ -456,6 +472,7 @@ type sshClient struct {
 	port        string
 	agent       string
 	cmd         string
+	ontty       bool
 	controlChan chan sshControlMessage
 	errChan     chan error
 	sshCmd      *exec.Cmd
@@ -512,8 +529,10 @@ func (sc *sshClient) start() {
 	if sc.cmd != "" {
 		sshArgs = append(sshArgs, "--", sc.cmd)
 	}
-	fmt.Printf("\033[2K\r")                // clear serial console line
-	fmt.Printf("[SESSION] Starting SSH\r") // and stage a status msg which will be erased
+	if sc.ontty {
+		fmt.Printf("\033[2K\r")                // clear serial console line
+		fmt.Printf("[SESSION] Starting SSH\r") // and stage a status msg which will be erased
+	}
 	sshCmd := exec.Command(sshArgs[0], sshArgs[1:]...)
 	sshCmd.Stdin = os.Stdin
 	sshCmd.Stdout = os.Stdout
@@ -532,7 +551,7 @@ func (sc *sshClient) start() {
 		for scanner.Scan() {
 			msg := scanner.Text()
 			if strings.Contains(msg, "Connection to 127.0.0.1 closed") {
-				displayStatusMsg("SSH", "connection closed", 0)
+				displayStatusMsg(sc.ontty, "SSH", "connection closed", 0)
 			}
 		}
 	}()

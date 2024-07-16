@@ -24,74 +24,124 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/harness"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
 	"github.com/pkg/errors"
 
 	"github.com/spf13/cobra"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/platform"
 )
 
 var (
 	cmdTestIso = &cobra.Command{
 		RunE:    runTestIso,
 		PreRunE: preRun,
-		Use:     "testiso",
-		Short:   "Test a CoreOS PXE boot or ISO install path",
+		Use:     "testiso [glob pattern...]",
+		Short:   "Test a NestOS PXE boot or ISO install path",
 
 		SilenceUsage: true,
 	}
 
 	instInsecure bool
 
-	nopxe bool
-	noiso bool
-
-	scenarios []string
-
 	pxeAppendRootfs bool
 	pxeKernelArgs   []string
 
 	console bool
 
-	addNmKeyfile bool
+	addNmKeyfile     bool
+	enable4k         bool
+	enableMultipath  bool
+	enableUefi       bool
+	enableUefiSecure bool
+	isOffline        bool
+	isISOFromRAM     bool
+
+	// These tests only run on RHCOS
+	tests_RHCOS_uefi = []string{
+		"iso-fips.uefi",
+	}
+
+	// The iso-as-disk tests are only supported in x86_64 because other
+	// architectures don't have the required hybrid partition table.
+	tests_x86_64 = []string{
+		"iso-as-disk.bios",
+		"iso-as-disk.uefi",
+		"iso-as-disk.uefi-secure",
+		"iso-as-disk.4k.uefi",
+		"iso-install.bios",
+		"iso-live-login.bios",
+		"iso-live-login.uefi",
+		"iso-live-login.uefi-secure",
+		"iso-live-login.4k.uefi",
+		"iso-offline-install.bios",
+		"iso-offline-install.mpath.bios",
+		"iso-offline-install-fromram.4k.uefi",
+		"miniso-install.bios",
+		"miniso-install.nm.bios",
+		"miniso-install.4k.uefi",
+		"miniso-install.4k.nm.uefi",
+		"pxe-offline-install.bios",
+		"pxe-offline-install.4k.uefi",
+		"pxe-online-install.bios",
+		"pxe-online-install.4k.uefi",
+	}
+	tests_s390x = []string{
+		"iso-live-login.s390fw",
+		"iso-offline-install.s390fw",
+		// https://github.com/coreos/fedora-coreos-tracker/issues/1434
+		// "iso-offline-install.mpath.s390fw",
+		// https://github.com/coreos/fedora-coreos-tracker/issues/1261
+		// "iso-offline-install.4k.s390fw",
+		"pxe-online-install.s390fw",
+		"pxe-offline-install.s390fw",
+		"miniso-install.s390fw",
+		"miniso-install.nm.s390fw",
+		"miniso-install.4k.nm.s390fw",
+	}
+	tests_ppc64le = []string{
+		"iso-live-login.ppcfw",
+		"iso-offline-install.ppcfw",
+		"iso-offline-install.mpath.ppcfw",
+		"iso-offline-install-fromram.4k.ppcfw",
+		"miniso-install.ppcfw",
+		"miniso-install.nm.ppcfw",
+		"miniso-install.4k.ppcfw",
+		"miniso-install.4k.nm.ppcfw",
+		"pxe-online-install.ppcfw",
+		"pxe-offline-install.4k.ppcfw",
+	}
+	tests_aarch64 = []string{
+		"iso-live-login.uefi",
+		"iso-live-login.4k.uefi",
+		"iso-offline-install.uefi",
+		"iso-offline-install.mpath.uefi",
+		"iso-offline-install-fromram.4k.uefi",
+		"miniso-install.uefi",
+		"miniso-install.nm.uefi",
+		"miniso-install.4k.uefi",
+		"miniso-install.4k.nm.uefi",
+		"pxe-offline-install.uefi",
+		"pxe-offline-install.4k.uefi",
+		"pxe-online-install.uefi",
+		"pxe-online-install.4k.uefi",
+	}
 )
 
 const (
-	installTimeout = 10 * time.Minute
-
-	scenarioPXEInstall = "pxe-install"
-	scenarioISOInstall = "iso-install"
-
-	scenarioMinISOInstall   = "miniso-install"
-	scenarioMinISOInstallNm = "miniso-install-nm"
-
-	scenarioPXEOfflineInstall = "pxe-offline-install"
-	scenarioISOOfflineInstall = "iso-offline-install"
-
-	scenarioISOLiveLogin = "iso-live-login"
-	scenarioISOAsDisk    = "iso-as-disk"
+	installTimeoutMins = 10
+	// https://github.com/coreos/fedora-coreos-config/pull/2544
+	liveISOFromRAMKarg = "nestos.liveiso.fromram"
 )
-
-var allScenarios = map[string]bool{
-	scenarioPXEInstall:        true,
-	scenarioPXEOfflineInstall: true,
-	scenarioISOInstall:        true,
-	scenarioISOOfflineInstall: true,
-	scenarioMinISOInstall:     true,
-	scenarioMinISOInstallNm:   true,
-	scenarioISOLiveLogin:      true,
-	scenarioISOAsDisk:         true,
-}
 
 var liveOKSignal = "live-test-OK"
 var liveSignalOKUnit = fmt.Sprintf(`[Unit]
@@ -105,14 +155,14 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c '/usr/bin/echo %s >/dev/virtio-ports/testisocompletion'
 [Install]
-# for install scenarios
+# for install tests
 RequiredBy=nestos-installer.target
 # for iso-as-disk
 RequiredBy=multi-user.target
 `, liveOKSignal)
 
 var downloadCheck = `[Unit]
-Description=TestISO Verify CoreOS Installer Download
+Description=TestISO Verify NestOS Installer Download
 After=nestos-installer.service
 Before=nestos-installer.target
 [Service]
@@ -122,8 +172,8 @@ StandardError=kmsg+console
 ExecStart=/bin/sh -c "journalctl -t nestos-installer-service | /usr/bin/awk '/[Dd]ownload/ {exit 1}'"
 ExecStart=/bin/sh -c "/usr/bin/udevadm settle"
 ExecStart=/bin/sh -c "/usr/bin/mount /dev/disk/by-label/root /mnt"
-ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"build\"] == \"%s\"' /mnt/.coreos-aleph-version.json"
-ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"ostree-commit\"] == \"%s\"' /mnt/.coreos-aleph-version.json"
+ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"build\"] == \"%s\"' /mnt/.nestos-aleph-version.json"
+ExecStart=/bin/sh -c "/usr/bin/jq -er '.[\"ostree-commit\"] == \"%s\"' /mnt/.nestos-aleph-version.json"
 [Install]
 RequiredBy=nestos-installer.target
 `
@@ -181,6 +231,8 @@ ExecStart=/bin/bash -c '[[ $(findmnt -nvro SOURCE /sysroot) == /dev/mapper/mpath
 [Install]
 RequiredBy=multi-user.target`
 
+// This test is broken. Please fix!
+// https://github.com/coreos/coreos-assembler/issues/3554
 var verifyNoEFIBootEntry = `[Unit]
 Description=TestISO Verify No EFI Boot Entry
 OnFailure=emergency.target
@@ -192,10 +244,28 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c '! efibootmgr -v | grep -E "(HD|CDROM)\("'
 [Install]
-# for install scenarios
+# for install tests
 RequiredBy=nestos-installer.target
 # for iso-as-disk
 RequiredBy=multi-user.target`
+
+// Unit to check that /run/media/iso is not mounted when
+// nestos.liveiso.fromram kernel argument is passed
+var isoNotMountedUnit = `[Unit]
+Description=Verify ISO is not mounted when nestos.liveiso.fromram
+OnFailure=emergency.target
+OnFailureJobMode=isolate
+ConditionKernelCommandLine=nestos.liveiso.fromram
+[Service]
+Type=oneshot
+StandardOutput=kmsg+console
+StandardError=kmsg+console
+RemainAfterExit=yes
+# Would like to use SuccessExitStatus but it doesn't support what
+# we want: https://github.com/systemd/systemd/issues/10297#issuecomment-1672002635
+ExecStart=bash -c "if mountpoint /run/media/iso 2>/dev/null; then exit 1; fi"
+[Install]
+RequiredBy=nestos-installer.target`
 
 var nmConnectionId = "nestos DHCP"
 var nmConnectionFile = "nestos-dhcp.nmconnection"
@@ -210,6 +280,19 @@ wait-device-timeout=20000
 [ipv4]
 method=auto
 `, nmConnectionId)
+
+var nmstateConfigFile = "/etc/nmstate/br-ex.yml"
+var nmstateConfig = `interfaces:
+ - name: br-ex
+   type: linux-bridge
+   state: up
+   ipv4:
+     enabled: false
+   ipv6:
+     enabled: false
+   bridge:
+     port: []
+`
 
 // This is used to verify *both* the live and the target system in the `--add-nm-keyfile` path.
 var verifyNmKeyfile = fmt.Sprintf(`[Unit]
@@ -226,6 +309,8 @@ RemainAfterExit=yes
 ExecStart=/usr/bin/journalctl -u nm-initrd --no-pager --grep "policy: set '%[1]s' (.*) as default .* routing and DNS"
 ExecStart=/usr/bin/journalctl -u NetworkManager --no-pager --grep "policy: set '%[1]s' (.*) as default .* routing and DNS"
 ExecStart=/usr/bin/grep "%[1]s" /etc/NetworkManager/system-connections/%[2]s
+# Also verify nmstate config
+ExecStart=/usr/bin/nmcli c show br-ex
 [Install]
 # for live system
 RequiredBy=nestos-installer.target
@@ -234,21 +319,47 @@ RequiredBy=multi-user.target`, nmConnectionId, nmConnectionFile)
 
 func init() {
 	cmdTestIso.Flags().BoolVarP(&instInsecure, "inst-insecure", "S", false, "Do not verify signature on metal image")
-	cmdTestIso.Flags().BoolVarP(&nopxe, "no-pxe", "P", false, "Skip testing live installer PXE")
-	cmdTestIso.Flags().BoolVarP(&noiso, "no-iso", "", false, "Skip testing live installer ISO")
 	cmdTestIso.Flags().BoolVar(&console, "console", false, "Connect qemu console to terminal, turn off automatic initramfs failure checking")
 	cmdTestIso.Flags().BoolVar(&pxeAppendRootfs, "pxe-append-rootfs", false, "Append rootfs to PXE initrd instead of fetching at runtime")
 	cmdTestIso.Flags().StringSliceVar(&pxeKernelArgs, "pxe-kargs", nil, "Additional kernel arguments for PXE")
-	cmdTestIso.Flags().BoolVar(&addNmKeyfile, "add-nm-keyfile", false, "Add NetworkManager connection keyfile")
-	cmdTestIso.Flags().StringSliceVar(&scenarios, "scenarios", []string{scenarioPXEInstall, scenarioISOOfflineInstall, scenarioPXEOfflineInstall, scenarioISOLiveLogin, scenarioISOAsDisk, scenarioMinISOInstall, scenarioMinISOInstallNm}, fmt.Sprintf("Test scenarios (also available: %v)", []string{scenarioISOInstall}))
-	cmdTestIso.Args = cobra.ExactArgs(0)
 
 	root.AddCommand(cmdTestIso)
 }
 
+func liveArtifactExistsInBuild() error {
+
+	if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil || kola.CosaBuild.Meta.BuildArtifacts.LiveKernel == nil {
+		return fmt.Errorf("build %s is missing live artifacts", kola.CosaBuild.Meta.Name)
+	}
+	return nil
+}
+
+func getAllTests(build *util.LocalBuild) []string {
+	arch := coreosarch.CurrentRpmArch()
+	var tests []string
+	switch arch {
+	case "x86_64":
+		tests = tests_x86_64
+	case "ppc64le":
+		tests = tests_ppc64le
+	case "s390x":
+		tests = tests_s390x
+	case "aarch64":
+		tests = tests_aarch64
+	}
+	if kola.CosaBuild.Meta.Name == "rhcos" && arch != "s390x" && arch != "ppc64le" {
+		tests = append(tests, tests_RHCOS_uefi...)
+	}
+	return tests
+}
+
 func newBaseQemuBuilder(outdir string) (*platform.QemuBuilder, error) {
 	builder := platform.NewMetalQemuBuilderDefault()
-	builder.Firmware = kola.QEMUOptions.Firmware
+	if enableUefiSecure {
+		builder.Firmware = "uefi-secure"
+	} else if enableUefi {
+		builder.Firmware = "uefi"
+	}
 
 	if err := os.MkdirAll(outdir, 0755); err != nil {
 		return nil, err
@@ -293,20 +404,20 @@ func newQemuBuilder(outdir string) (*platform.QemuBuilder, *conf.Conf, error) {
 
 func newQemuBuilderWithDisk(outdir string) (*platform.QemuBuilder, *conf.Conf, error) {
 	builder, config, err := newQemuBuilder(outdir)
+
 	if err != nil {
 		return nil, nil, err
 	}
 
 	sectorSize := 0
-	if kola.QEMUOptions.Native4k {
+	if enable4k {
 		sectorSize = 4096
 	}
 
 	disk := platform.Disk{
-		Size:       "12G", // Arbitrary
-		SectorSize: sectorSize,
-
-		MultiPathDisk: kola.QEMUOptions.MultiPathDisk,
+		Size:          "12G", // Arbitrary
+		SectorSize:    sectorSize,
+		MultiPathDisk: enableMultipath,
 	}
 
 	//TBD: see if we can remove this and just use AddDisk and inject bootindex during startup
@@ -324,51 +435,56 @@ func newQemuBuilderWithDisk(outdir string) (*platform.QemuBuilder, *conf.Conf, e
 	return builder, config, nil
 }
 
+// See similar semantics in the `filterTests` of `kola.go`.
+func filterTests(tests []string, patterns []string) ([]string, error) {
+	r := []string{}
+	for _, test := range tests {
+		if matches, err := kola.MatchesPatterns(test, patterns); err != nil {
+			return nil, err
+		} else if matches {
+			r = append(r, test)
+		}
+	}
+	return r, nil
+}
+
 func runTestIso(cmd *cobra.Command, args []string) error {
+	var err error
 	if kola.CosaBuild == nil {
 		return fmt.Errorf("Must provide --build")
 	}
+	tests := getAllTests(kola.CosaBuild)
+	if len(args) != 0 {
+		if tests, err = filterTests(tests, args); err != nil {
+			return err
+		} else if len(tests) == 0 {
+			return harness.SuiteEmpty
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	targetScenarios := make(map[string]bool)
-	for _, scenario := range scenarios {
-		if _, ok := allScenarios[scenario]; !ok {
-			return fmt.Errorf("Unknown scenario: %s", scenario)
+	// Call `ParseDenyListYaml` to populate the `kola.DenylistedTests` var
+	err = kola.ParseDenyListYaml("qemu")
+	if err != nil {
+		plog.Fatal(err)
+	}
+
+	finalTests := []string{}
+	for _, test := range tests {
+		if !kola.HasString(test, kola.DenylistedTests) {
+			matchTest, err := kola.MatchesPatterns(test, kola.DenylistedTests)
+			if err != nil {
+				return err
+
+			}
+			if !matchTest {
+				finalTests = append(finalTests, test)
+			}
 		}
-		targetScenarios[scenario] = true
 	}
 
-	// s390x: iso-install does not work because s390x uses an El Torito image
-	if coreosarch.CurrentRpmArch() == "s390x" {
-		fmt.Println("Skipping iso-install on s390x")
-		noiso = true
-	}
-
-	if nopxe {
-		delete(targetScenarios, scenarioPXEInstall)
-		delete(targetScenarios, scenarioPXEOfflineInstall)
-	}
-	if noiso {
-		delete(targetScenarios, scenarioISOInstall)
-		delete(targetScenarios, scenarioISOOfflineInstall)
-		delete(targetScenarios, scenarioMinISOInstall)
-		delete(targetScenarios, scenarioMinISOInstallNm)
-		delete(targetScenarios, scenarioISOLiveLogin)
-	}
-
-	// just make it a normal print message so pipelines don't error out for ppc64le and s390x
-	if len(targetScenarios) == 0 {
-		fmt.Println("No valid scenarios specified!")
-		return nil
-	}
-	scenarios = []string{}
-	for scenario := range targetScenarios {
-		scenarios = append(scenarios, scenario)
-	}
-	fmt.Printf("Testing scenarios: %s\n", scenarios)
-
-	var err error
 	// note this reassigns a *global*
 	outputDir, err = kola.SetupOutputDir(outputDir, "testiso")
 	if err != nil {
@@ -377,8 +493,6 @@ func runTestIso(cmd *cobra.Command, args []string) error {
 
 	baseInst := platform.Install{
 		CosaBuild:       kola.CosaBuild,
-		Native4k:        kola.QEMUOptions.Native4k,
-		MultiPathDisk:   kola.QEMUOptions.MultiPathDisk,
 		PxeAppendRootfs: pxeAppendRootfs,
 		NmKeyfiles:      make(map[string]string),
 	}
@@ -395,116 +509,80 @@ func runTestIso(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Detected development build; disabling signature verification\n")
 	}
 
-	ranTest := false
+	var duration time.Duration
 
-	if _, ok := targetScenarios[scenarioPXEInstall]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveKernel == nil {
-			return fmt.Errorf("build %s has no live installer kernel", kola.CosaBuild.Meta.Name)
-		}
+	atLeastOneFailed := false
+	for _, test := range finalTests {
 
-		ranTest = true
-		instPxe := baseInst // Pretend this is Rust and I wrote .copy()
-
-		duration, err := testPXE(ctx, instPxe, filepath.Join(outputDir, scenarioPXEInstall), false)
-		printResult(scenarioPXEInstall, duration, err)
+		// All of these tests require buildextend-live to have been run
+		err = liveArtifactExistsInBuild()
 		if err != nil {
 			return err
 		}
-	}
-	if _, ok := targetScenarios[scenarioPXEOfflineInstall]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveKernel == nil {
-			return fmt.Errorf("build %s has no live installer kernel", kola.CosaBuild.Meta.Name)
+
+		addNmKeyfile = false
+		enable4k = false
+		enableMultipath = false
+		enableUefi = false
+		enableUefiSecure = false
+		isOffline = false
+		inst := baseInst // Pretend this is Rust and I wrote .copy()
+
+		fmt.Printf("Running test: %s\n", test)
+		components := strings.Split(test, ".")
+
+		if kola.HasString("4k", components) {
+			enable4k = true
+			inst.Native4k = true
+		}
+		if kola.HasString("nm", components) {
+			addNmKeyfile = true
+		}
+		if kola.HasString("mpath", components) {
+			enableMultipath = true
+			inst.MultiPathDisk = true
+		}
+		if kola.HasString("uefi-secure", components) {
+			enableUefiSecure = true
+		} else if kola.HasString("uefi", components) {
+			enableUefi = true
+		}
+		// For offline it is a part of the first component. i.e. for
+		// iso-offline-install.bios we need to search for 'offline' in
+		// iso-offline-install, which is currently in components[0].
+		if kola.HasString("offline", strings.Split(components[0], "-")) {
+			isOffline = true
+		}
+		// For fromram it is a part of the first component. i.e. for
+		// iso-offline-install-fromram.uefi we need to search for 'fromram' in
+		// iso-offline-install-fromram, which is currently in components[0].
+		if kola.HasString("fromram", strings.Split(components[0], "-")) {
+			isISOFromRAM = true
 		}
 
-		ranTest = true
-		instPxe := baseInst // Pretend this is Rust and I wrote .copy()
-
-		duration, err := testPXE(ctx, instPxe, filepath.Join(outputDir, scenarioPXEOfflineInstall), true)
-		printResult(scenarioPXEOfflineInstall, duration, err)
-		if err != nil {
-			return err
-		}
-	}
-	if _, ok := targetScenarios[scenarioISOInstall]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-			return fmt.Errorf("build %s has no live ISO", kola.CosaBuild.Meta.Name)
-		}
-		ranTest = true
-		instIso := baseInst // Pretend this is Rust and I wrote .copy()
-		duration, err := testLiveIso(ctx, instIso, filepath.Join(outputDir, scenarioISOInstall), false, false)
-		printResult(scenarioISOInstall, duration, err)
-		if err != nil {
-			return err
-		}
-	}
-	if _, ok := targetScenarios[scenarioISOOfflineInstall]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-			return fmt.Errorf("build %s has no live ISO", kola.CosaBuild.Meta.Name)
-		}
-		ranTest = true
-		instIso := baseInst // Pretend this is Rust and I wrote .copy()
-		duration, err := testLiveIso(ctx, instIso, filepath.Join(outputDir, scenarioISOOfflineInstall), true, false)
-		printResult(scenarioISOOfflineInstall, duration, err)
-		if err != nil {
-			return err
-		}
-	}
-	if _, ok := targetScenarios[scenarioISOLiveLogin]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-			return fmt.Errorf("build %s has no live ISO", kola.CosaBuild.Meta.Name)
-		}
-		ranTest = true
-		duration, err := testLiveLogin(ctx, filepath.Join(outputDir, scenarioISOLiveLogin))
-		printResult(scenarioISOLiveLogin, duration, err)
-		if err != nil {
-			return err
-		}
-	}
-	if _, ok := targetScenarios[scenarioISOAsDisk]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-			return fmt.Errorf("build %s has no live ISO", kola.CosaBuild.Meta.Name)
-		}
-		switch coreosarch.CurrentRpmArch() {
-		case "x86_64":
-			ranTest = true
-			duration, err := testAsDisk(ctx, filepath.Join(outputDir, scenarioISOAsDisk))
-			printResult(scenarioISOAsDisk, duration, err)
-			if err != nil {
-				return err
-			}
+		switch components[0] {
+		case "pxe-offline-install", "pxe-online-install":
+			duration, err = testPXE(ctx, inst, filepath.Join(outputDir, test))
+		case "iso-as-disk":
+			duration, err = testAsDisk(ctx, filepath.Join(outputDir, test))
+		case "iso-live-login":
+			duration, err = testLiveLogin(ctx, filepath.Join(outputDir, test))
+		case "iso-fips":
+			duration, err = testLiveFIPS(ctx, filepath.Join(outputDir, test))
+		case "iso-install", "iso-offline-install", "iso-offline-install-fromram":
+			duration, err = testLiveIso(ctx, inst, filepath.Join(outputDir, test), false)
+		case "miniso-install":
+			duration, err = testLiveIso(ctx, inst, filepath.Join(outputDir, test), true)
 		default:
-			// no hybrid partition table to boot from
-			fmt.Printf("%s unsupported on %s; skipping\n", scenarioISOAsDisk, coreosarch.CurrentRpmArch())
+			plog.Fatalf("Unknown test name:%s", test)
 		}
-	}
-	if _, ok := targetScenarios[scenarioMinISOInstall]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-			return fmt.Errorf("build %s has no live ISO", kola.CosaBuild.Meta.Name)
-		}
-		ranTest = true
-		instIso := baseInst // Pretend this is Rust and I wrote .copy()
-		duration, err := testLiveIso(ctx, instIso, filepath.Join(outputDir, scenarioMinISOInstall), false, true)
-		printResult(scenarioMinISOInstall, duration, err)
-		if err != nil {
-			return err
-		}
-	}
-	if _, ok := targetScenarios[scenarioMinISOInstallNm]; ok {
-		if kola.CosaBuild.Meta.BuildArtifacts.LiveIso == nil {
-			return fmt.Errorf("build %s has no live ISO", kola.CosaBuild.Meta.Name)
-		}
-		ranTest = true
-		instIso := baseInst // Pretend this is Rust and I wrote .copy()
-		addNmKeyfile = true
-		duration, err := testLiveIso(ctx, instIso, filepath.Join(outputDir, scenarioMinISOInstallNm), false, true)
-		printResult(scenarioMinISOInstallNm, duration, err)
-		if err != nil {
-			return err
+		if printResult(test, duration, err) {
+			atLeastOneFailed = true
 		}
 	}
 
-	if !ranTest {
-		panic("Nothing was tested!")
+	if atLeastOneFailed {
+		return harness.SuiteFailed
 	}
 
 	return nil
@@ -514,8 +592,9 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 	start := time.Now()
 	errchan := make(chan error)
 	go func() {
-		time.Sleep(installTimeout)
-		errchan <- fmt.Errorf("timed out after %v", installTimeout)
+		timeout := (time.Duration(installTimeoutMins*(100+kola.Options.ExtendTimeoutPercent)) * time.Minute) / 100
+		time.Sleep(timeout)
+		errchan <- fmt.Errorf("timed out after %v", timeout)
 	}()
 	if !console {
 		go func() {
@@ -524,7 +603,7 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 				if errBuf != "" {
 					plog.Info("entered emergency.target in initramfs")
 					path := filepath.Join(outdir, "ignition-virtio-dump.txt")
-					if err := ioutil.WriteFile(path, []byte(errBuf), 0644); err != nil {
+					if err := os.WriteFile(path, []byte(errBuf), 0644); err != nil {
 						plog.Errorf("Failed to write journal: %v", err)
 					}
 					err = platform.ErrInitramfsEmergency
@@ -538,6 +617,7 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 	go func() {
 		err := inst.Wait()
 		// only one Wait() gets process data, so also manually check for signal
+		plog.Debugf("qemu exited err=%v", err)
 		if err == nil && inst.Signaled() {
 			err = errors.New("process killed")
 		}
@@ -569,7 +649,9 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 				errchan <- fmt.Errorf("Unexpected string from completion channel: %s expected: %s", line, exp)
 				return
 			}
+			plog.Debugf("Matched expected message %s", exp)
 		}
+		plog.Debugf("Matched all expected messages")
 		// OK!
 		errchan <- nil
 	}()
@@ -585,24 +667,12 @@ func awaitCompletion(ctx context.Context, inst *platform.QemuInstance, outdir st
 	return time.Since(start), err
 }
 
-func printResult(mode string, duration time.Duration, err error) bool {
+func printResult(test string, duration time.Duration, err error) bool {
 	result := "PASS"
 	if err != nil {
 		result = "FAIL"
 	}
-	variant := []string{kola.QEMUOptions.Firmware}
-	if kola.QEMUOptions.Native4k {
-		variant = append(variant, "metal4k")
-	} else {
-		variant = append(variant, "metal")
-	}
-	if kola.QEMUOptions.MultiPathDisk {
-		variant = append(variant, "multipath")
-	}
-	if addNmKeyfile {
-		variant = append(variant, "nm-keyfile")
-	}
-	fmt.Printf("%s: %s (%s) (%s)\n", result, mode, strings.Join(variant, " + "), duration.Round(time.Millisecond).String())
+	fmt.Printf("%s: %s (%s)\n", result, test, duration.Round(time.Millisecond).String())
 	if err != nil {
 		fmt.Printf("    %s\n", err)
 		return true
@@ -610,29 +680,29 @@ func printResult(mode string, duration time.Duration, err error) bool {
 	return false
 }
 
-func testPXE(ctx context.Context, inst platform.Install, outdir string, offline bool) (time.Duration, error) {
+func testPXE(ctx context.Context, inst platform.Install, outdir string) (time.Duration, error) {
 	if addNmKeyfile {
 		return 0, errors.New("--add-nm-keyfile not yet supported for PXE")
 	}
-	tmpd, err := ioutil.TempDir("", "kola-testiso")
+	tmpd, err := os.MkdirTemp("", "kola-testiso")
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "creating tempdir")
 	}
 	defer os.RemoveAll(tmpd)
 
 	sshPubKeyBuf, _, err := util.CreateSSHAuthorizedKey(tmpd)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "creating SSH AuthorizedKey")
 	}
 
 	builder, virtioJournalConfig, err := newQemuBuilderWithDisk(outdir)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "creating QemuBuilder")
 	}
 	inst.Builder = builder
 	completionChannel, err := inst.Builder.VirtioChannelRead("testisocompletion")
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "setting up virtio-serial channel")
 	}
 
 	var keys []string
@@ -643,7 +713,7 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 	liveConfig.AddSystemdUnit("live-signal-ok.service", liveSignalOKUnit, conf.Enable)
 	liveConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
 
-	if offline {
+	if isOffline {
 		contents := fmt.Sprintf(downloadCheck, kola.CosaBuild.Meta.BuildID, kola.CosaBuild.Meta.OstreeCommit)
 		liveConfig.AddSystemdUnit("nestos-installer-offline-check.service", contents, conf.Enable)
 	}
@@ -653,7 +723,7 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 	targetConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
 	targetConfig.AddSystemdUnit("nestos-test-installer-no-ignition.service", checkNoIgnition, conf.Enable)
 
-	mach, err := inst.PXE(pxeKernelArgs, liveConfig, targetConfig, offline)
+	mach, err := inst.PXE(pxeKernelArgs, liveConfig, targetConfig, isOffline)
 	if err != nil {
 		return 0, errors.Wrapf(err, "running PXE")
 	}
@@ -666,8 +736,8 @@ func testPXE(ctx context.Context, inst platform.Install, outdir string, offline 
 	return awaitCompletion(ctx, mach.QemuInst, outdir, completionChannel, mach.BootStartedErrorChannel, []string{liveOKSignal, signalCompleteString})
 }
 
-func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offline, minimal bool) (time.Duration, error) {
-	tmpd, err := ioutil.TempDir("", "kola-testiso")
+func testLiveIso(ctx context.Context, inst platform.Install, outdir string, minimal bool) (time.Duration, error) {
+	tmpd, err := os.MkdirTemp("", "kola-testiso")
 	if err != nil {
 		return 0, err
 	}
@@ -688,6 +758,7 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offl
 		return 0, err
 	}
 
+	var isoKernelArgs []string
 	var keys []string
 	keys = append(keys, strings.TrimSpace(string(sshPubKeyBuf)))
 	virtioJournalConfig.AddAuthorizedKeys("nest", keys)
@@ -695,6 +766,7 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offl
 	liveConfig := *virtioJournalConfig
 	liveConfig.AddSystemdUnit("live-signal-ok.service", liveSignalOKUnit, conf.Enable)
 	liveConfig.AddSystemdUnit("verify-no-efi-boot-entry.service", verifyNoEFIBootEntry, conf.Enable)
+	liveConfig.AddSystemdUnit("iso-not-mounted-when-fromram.service", isoNotMountedUnit, conf.Enable)
 	liveConfig.AddSystemdUnit("nestos-test-entered-emergency-target.service", signalFailureUnit, conf.Enable)
 
 	targetConfig := *virtioJournalConfig
@@ -708,10 +780,27 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offl
 	if addNmKeyfile {
 		liveConfig.AddSystemdUnit("nestos-test-nm-keyfile.service", verifyNmKeyfile, conf.Enable)
 		targetConfig.AddSystemdUnit("nestos-test-nm-keyfile.service", verifyNmKeyfile, conf.Enable)
+		// NM keyfile via `iso network embed`
 		inst.NmKeyfiles[nmConnectionFile] = nmConnection
+		// nmstate config via live Ignition config, propagated via
+		// --copy-network, which is enabled by inst.NmKeyfiles
+		liveConfig.AddFile(nmstateConfigFile, nmstateConfig, 0644)
 	}
 
-	mach, err := inst.InstallViaISOEmbed(nil, liveConfig, targetConfig, outdir, offline, minimal)
+	if isISOFromRAM {
+		isoKernelArgs = append(isoKernelArgs, liveISOFromRAMKarg)
+	}
+
+	// Sometimes the logs that stream from various virtio streams can be
+	// incomplete because they depend on services inside the guest.
+	// When you are debugging earlyboot/initramfs issues this can be
+	// problematic. Let's add a hook here to enable more debugging.
+	// TODO: check all COSA to NOSA
+	if _, ok := os.LookupEnv("COSA_TESTISO_DEBUG"); ok {
+		isoKernelArgs = append(isoKernelArgs, "systemd.log_color=0 systemd.log_level=debug systemd.log_target=console")
+	}
+
+	mach, err := inst.InstallViaISOEmbed(isoKernelArgs, liveConfig, targetConfig, outdir, isOffline, minimal)
 	if err != nil {
 		return 0, errors.Wrapf(err, "running iso install")
 	}
@@ -722,6 +811,66 @@ func testLiveIso(ctx context.Context, inst platform.Install, outdir string, offl
 	}()
 
 	return awaitCompletion(ctx, mach.QemuInst, outdir, completionChannel, mach.BootStartedErrorChannel, []string{liveOKSignal, signalCompleteString})
+}
+
+// testLiveFIPS verifies that adding fips=1 to the ISO results in a FIPS mode system
+func testLiveFIPS(ctx context.Context, outdir string) (time.Duration, error) {
+	tmpd, err := os.MkdirTemp("", "kola-testiso")
+	if err != nil {
+		return 0, err
+	}
+	defer os.RemoveAll(tmpd)
+
+	builddir := kola.CosaBuild.Dir
+	isopath := filepath.Join(builddir, kola.CosaBuild.Meta.BuildArtifacts.LiveIso.Path)
+	builder, config, err := newQemuBuilder(outdir)
+	if err != nil {
+		return 0, err
+	}
+	defer builder.Close()
+	if err := builder.AddIso(isopath, "", false); err != nil {
+		return 0, err
+	}
+
+	// This is the core change under test - adding the `fips=1` kernel argument via
+	// coreos-installer iso kargs modify should enter fips mode.
+	// Removing this line should cause this test to fail.
+	builder.AppendKernelArgs = "fips=1"
+
+	completionChannel, err := builder.VirtioChannelRead("testisocompletion")
+	if err != nil {
+		return 0, err
+	}
+
+	config.AddSystemdUnit("fips-verify.service", `
+[Unit]
+OnFailure=emergency.target
+OnFailureJobMode=isolate
+Before=fips-signal-ok.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=grep 1 /proc/sys/crypto/fips_enabled
+ExecStart=grep FIPS etc/crypto-policies/config
+
+[Install]
+RequiredBy=fips-signal-ok.service
+`, conf.Enable)
+	config.AddSystemdUnit("fips-signal-ok.service", liveSignalOKUnit, conf.Enable)
+	config.AddSystemdUnit("fips-emergency-target.service", signalFailureUnit, conf.Enable)
+
+	// Just for reliability, we'll run fully offline
+	builder.Append("-net", "none")
+
+	builder.SetConfig(config)
+	mach, err := builder.Exec()
+	if err != nil {
+		return 0, errors.Wrapf(err, "running iso")
+	}
+	defer mach.Destroy()
+
+	return awaitCompletion(ctx, mach, outdir, completionChannel, nil, []string{liveOKSignal})
 }
 
 func testLiveLogin(ctx context.Context, outdir string) (time.Duration, error) {

@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,12 +28,12 @@ import (
 	"github.com/coreos/stream-metadata-go/stream"
 	"github.com/spf13/cobra"
 
-	"github.com/coreos/mantle/version"
+	"github.com/coreos/coreos-assembler/mantle/version"
 )
 
 const (
 	// This will hopefully migrate to mirror.openshift.com, see https://github.com/openshift/os/issues/477
-	rhcosCosaEndpoint = "https://rhcos.mirror.openshift.com/art/storage/releases"
+	rhcosCosaEndpoint = "https://rhcos.mirror.openshift.com/art/storage/prod/streams"
 )
 
 var (
@@ -66,7 +65,7 @@ func runCosaBuildToStream(cmd *cobra.Command, args []string) error {
 	var outStream stream.Stream
 
 	if target != "" {
-		buf, err := ioutil.ReadFile(target)
+		buf, err := os.ReadFile(target)
 		if err != nil {
 			return err
 		}
@@ -102,11 +101,10 @@ func runCosaBuildToStream(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, arg := range args {
-		releaseTmpf, err := ioutil.TempFile("", "release")
+		releaseTmpf, err := os.CreateTemp("", "release")
 		if err != nil {
 			return err
 		}
-		var archStreamName = streamName
 		if !strings.HasPrefix(arg, "https://") {
 			if distro != "rhcos" {
 				return errors.New("Arguments must be https:// URLs (or with --distro rhcos, ARCH=VERSION)")
@@ -117,24 +115,24 @@ func runCosaBuildToStream(cmd *cobra.Command, args []string) error {
 			}
 			arch := parts[0]
 			ver := parts[1]
-			// Convert e.g. 48.82.<timestamp> to rhcos-4.8
+			// Convert e.g. 48.82.<timestamp> to 4.8
 			verSplit := strings.Split(ver, ".")
-			archStreamName = fmt.Sprintf("rhcos-%s.%s", verSplit[0][0:1], verSplit[0][1:])
-			if arch != "x86_64" {
-				archStreamName += "-" + arch
+			if streamName == "" {
+				streamName = fmt.Sprintf("%s.%s", verSplit[0][0:1], verSplit[0][1:])
 			}
+
 			endpoint := rhcosCosaEndpoint
 			if streamBaseURL != "" {
 				endpoint = streamBaseURL
 			}
-			base := fmt.Sprintf("%s/%s", endpoint, archStreamName)
-			u := fmt.Sprintf("%s/%s/%s/meta.json", base, ver, arch)
+			base := fmt.Sprintf("%s/%s", endpoint, streamName)
+			u := fmt.Sprintf("%s/builds/%s/%s/meta.json", base, ver, arch)
 			arg = u
 			childArgs = append(childArgs, "--stream-baseurl="+endpoint)
 		}
 		cosaArgs := append([]string{}, childArgs...)
 		cosaArgs = append(cosaArgs, "--url="+arg)
-		cosaArgs = append(cosaArgs, "--stream-name="+archStreamName)
+		cosaArgs = append(cosaArgs, "--stream-name="+streamName)
 		cosaArgs = append(cosaArgs, "--output="+releaseTmpf.Name())
 		c := exec.Command("nosa", cosaArgs...)
 		c.Stderr = os.Stderr
@@ -143,7 +141,7 @@ func runCosaBuildToStream(cmd *cobra.Command, args []string) error {
 		}
 
 		var rel release.Release
-		buf, err := ioutil.ReadAll(releaseTmpf)
+		buf, err := io.ReadAll(releaseTmpf)
 		if err != nil {
 			return err
 		}

@@ -21,19 +21,20 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "nestos.ignition.failure",
+		Name:        "coreos.ignition.failure",
+		Description: "Verify ignition will fail with unsupported action.",
 		Run:         runIgnitionFailure,
 		ClusterSize: 0,
-		Platforms:   []string{"qemu-unpriv"},
+		Platforms:   []string{"qemu"},
 		Tags:        []string{"ignition"},
 	})
 }
@@ -62,7 +63,7 @@ func ignitionFailure(c cluster.TestCluster) error {
 	if err != nil {
 		return err
 	}
-	builder.Memory = 1024
+	builder.MemoryMiB = 1024
 	builder.Firmware = kola.QEMUOptions.Firmware
 	inst, err := builder.Exec()
 	if err != nil {

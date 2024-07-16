@@ -16,13 +16,13 @@ package reporters
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/coreos/mantle/harness/testresult"
+	"github.com/coreos/coreos-assembler/mantle/harness/testresult"
 )
 
 type jsonReporter struct {
@@ -51,7 +51,7 @@ func DeserialiseReport(filename string) (*jsonReporter, error) {
 		return nil, err
 	}
 
-	bytes, err := ioutil.ReadAll(file)
+	bytes, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}

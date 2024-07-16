@@ -17,12 +17,11 @@ package journal
 import (
 	"context"
 	"io"
-	"io/ioutil"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/coreos/mantle/network/mockssh"
+	"github.com/coreos/coreos-assembler/mantle/network/mockssh"
 )
 
 const (
@@ -50,7 +49,7 @@ func (d discardCloser) Close() error {
 }
 
 func (d discardCloser) Write(b []byte) (int, error) {
-	return ioutil.Discard.Write(b)
+	return io.Discard.Write(b)
 }
 
 // Escapes ; chars in cursor with \

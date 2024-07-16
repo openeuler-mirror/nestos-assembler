@@ -15,9 +15,9 @@
 package ignition
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 // These tests require the kola key to be passed to the instance via cloud
@@ -26,6 +26,7 @@ import (
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:             "nestos.ignition.misc.empty",
+		Description:      "Verify that not inject SSH key into Ignition works on NestOS.",
 		Run:              noIgnitionSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu", "esx"},
@@ -35,6 +36,7 @@ func init() {
 	})
 	register.RegisterTest(&register.Test{
 		Name:             "nestos.ignition.v3.noop",
+		Description:      "Verify that not inject SSH key into Ignition with v3.0.0 works on NestOS.",
 		Run:              noIgnitionSSHKey,
 		ClusterSize:      1,
 		ExcludePlatforms: []string{"qemu", "esx"},
