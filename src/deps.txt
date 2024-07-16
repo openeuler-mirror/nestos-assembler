@@ -37,8 +37,7 @@ rsync
 python3-gobject-base
 
 # To support recursive containerization and manipulating images
-# podman buildah skopeo
-podman skopeo
+podman buildah skopeo
 
 # Miscellaneous tools
 jq

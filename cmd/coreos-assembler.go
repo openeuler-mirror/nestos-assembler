@@ -13,7 +13,7 @@ import (
 
 // commands we'd expect to use in the local dev path
 var buildCommands = []string{"init", "fetch", "build", "run", "prune", "clean", "list"}
-var advancedBuildCommands = []string{"push-container", "upload-oscontainer", "buildextend-extensions"}
+var advancedBuildCommands = []string{"push-container", "upload-oscontainer"}
 var buildextendCommands = []string{"extensions", "extensions-container", "legacy-oscontainer", "live", "metal", "metal4k", "openstack", "qemu", "secex"}
 
 var utilityCommands = []string{"compress", "copy-container", "kola", "push-container-manifest", "remote-build-container", "remote-prune", "remote-session", "tag", "virt-install"}
@@ -61,7 +61,7 @@ func printUsage() {
 	printCommands("Other commands", otherCommands)
 
 	fmt.Printf("\nNotice:\n")
-	fmt.Printf(" For bug reports, please submit an issue at [nestos-assembler](https://gitee.com/openeuler/nestos-assembler).")
+	fmt.Printf(" For bug reports, please submit an issue at [nestos-assembler](https://gitee.com/openeuler/nestos-assembler).\n")
 	fmt.Printf(" This software is a fork of [coreos-assembler](https://github.com/coreos/coreos-assembler), licensed under the [Apache-2.0 License](https://www.apache.org/licenses/LICENSE-2.0).\n")
 }
 
