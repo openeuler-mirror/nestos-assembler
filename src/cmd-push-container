@@ -17,6 +17,14 @@ sys.path.insert(0, cosa_dir)
 
 from cosalib import cmdlib
 
+transports = {
+    'podman':'containers-storage:',
+    'dir':'dir:',
+    'registry':'docker://',
+    'docker-archive':'docker-archive:',
+    'docker':'docker-daemon:',
+}
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--authfile", help="Authentication file",
                     action='store')
@@ -27,6 +35,9 @@ parser.add_argument("--image", default='ostree', help="Container image to push",
 # add for nestos
 parser.add_argument("-d","--dest-repository", help="The destination repository to push")
 parser.add_argument("--no-tls-verify", help="Don't verify the destination repository TLS when specified",action="store_true")
+parser.add_argument("--transport", help="destination image transport, support: \
+                    podman, dir, registry, docker-archive, docker",
+                    default='registry')
 
 args = parser.parse_args()
 
@@ -60,17 +71,19 @@ else:
     container_name, container_tag = args.name.rsplit(':')
 if args.tag_suffix:
     container_tag = f"{container_tag}-{args.tag_suffix}"
+if args.no_tls_verify:
+    skopeoargs.extend(["--insecure-policy"])
+    skopeoargs.extend(["--dest-tls-verify=false"])
+if args.transport not in transports.keys():
+    print(f"Not supported transport:{args.transport}")
+    exit(1)
 with tempfile.NamedTemporaryFile(dir='tmp', prefix='push-container-digestfile') as df:
     skopeoargs.append(f"--digestfile={df.name}")
     # TODO: to test for private registry
     if args.dest_repository:
-        skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://{args.dest_repository}/{container_name}:{container_tag}"])
+        skopeoargs.extend([f"oci-archive:{ociarchive}", f"{transports[args.transport]}{args.dest_repository}/{container_name}:{container_tag}"])
     else:
-        skopeoargs.extend([f"oci-archive:{ociarchive}", f"docker://{container_name}:{container_tag}"])
-    if args.no_tls_verify:
-        skopeoargs.extend(["--insecure-policy"])
-        skopeoargs.extend(["--dest-tls-verify=false"])
-
+        skopeoargs.extend([f"oci-archive:{ociarchive}", f"{transports[args.transport]}{container_name}:{container_tag}"])
     print(subprocess.list2cmdline(skopeoargs))
     subprocess.check_call(skopeoargs)
     df.seek(0)
