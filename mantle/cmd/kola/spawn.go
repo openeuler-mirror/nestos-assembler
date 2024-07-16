@@ -40,7 +40,7 @@ var (
 		RunE:         runSpawn,
 		PreRunE:      preRun,
 		Use:          "spawn",
-		Short:        "spawn a CoreOS instance",
+		Short:        "spawn a NestOS instance",
 		SilenceUsage: true,
 	}
 

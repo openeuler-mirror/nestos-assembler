@@ -46,7 +46,7 @@ var (
 		RunE:    runTestIso,
 		PreRunE: preRun,
 		Use:     "testiso [glob pattern...]",
-		Short:   "Test a CoreOS PXE boot or ISO install path",
+		Short:   "Test a NestOS PXE boot or ISO install path",
 
 		SilenceUsage: true,
 	}
