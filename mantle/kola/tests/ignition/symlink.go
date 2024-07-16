@@ -15,14 +15,15 @@
 package ignition
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.ignition.symlink",
+		Description: "Verify that Ignition supports the creation of absolute symlink.",
 		Run:         writeAbsoluteSymlink,
 		ClusterSize: 1,
 		Platforms:   []string{"qemu"},

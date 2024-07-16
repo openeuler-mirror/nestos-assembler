@@ -16,7 +16,6 @@ package openstack
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 	"time"
@@ -39,14 +38,14 @@ import (
 	"github.com/gophercloud/utils/openstack/clientconfig"
 	utilsSecurityGroups "github.com/gophercloud/utils/openstack/networking/v2/extensions/security/groups"
 
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/util"
 
 	"gopkg.in/yaml.v2"
 )
 
 var (
-	plog = capnslog.NewPackageLogger("github.com/coreos/mantle", "platform/api/openstack")
+	plog = capnslog.NewPackageLogger("github.com/coreos/coreos-assembler/mantle", "platform/api/openstack")
 )
 
 type Options struct {
@@ -90,7 +89,7 @@ func (opts Options) LoadCloudsYAML() (map[string]clientconfig.Cloud, error) {
 	// If provided a path to a config file then we load it here.
 	if opts.ConfigPath != "" {
 		var clouds clientconfig.Clouds
-		if content, err := ioutil.ReadFile(opts.ConfigPath); err != nil {
+		if content, err := os.ReadFile(opts.ConfigPath); err != nil {
 			return nil, err
 		} else if err := yaml.Unmarshal(content, &clouds); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal yaml %s: %v", opts.ConfigPath, err)
@@ -328,6 +327,9 @@ func (a *API) CreateServer(name, sshKeyID, userdata string) (*Server, error) {
 		server, err = servers.Get(a.computeClient, serverID).Extract()
 		if err != nil {
 			return false, err
+		}
+		if server.Status == "ERROR" {
+			return false, fmt.Errorf("Server reported ERROR status: %v", server.Fault)
 		}
 		return server.Status == "ACTIVE", nil
 	})

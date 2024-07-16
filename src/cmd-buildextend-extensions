@@ -1,6 +1,7 @@
 #!/usr/bin/python3 -u
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -28,13 +29,22 @@ def main():
         print("Use --force to force a rebuild")
         return
 
-    treefile_src = 'src/config/manifest.yaml'
-    extensions_src = 'src/config/extensions.yaml'
+    init_config = 'src/config.json'
+    if os.path.exists(init_config):
+        with open(init_config, encoding='utf-8') as f:
+            init_cfg = json.loads(f.read())
+            variant = init_cfg["coreos-assembler.config-variant"]
+            treefile_src = f"src/config/manifest-{variant}.yaml"
+            extensions_src = f"src/config/extensions-{variant}.yaml"
+    else:
+        treefile_src = 'src/config/manifest.yaml'
+        extensions_src = 'src/config/extensions.yaml'
+
     if not os.path.exists(extensions_src):
         raise Exception(f"Missing {extensions_src}")
 
     commit = buildmeta['ostree-commit']
-    cmdlib.import_ostree_commit('tmp/repo', builddir, buildmeta)
+    cmdlib.import_ostree_commit(workdir, builddir, buildmeta)
 
     tmpworkdir = prepare_tmpworkdir()
     changed = run_rpmostree(tmpworkdir, commit, treefile_src, extensions_src)
@@ -63,6 +73,8 @@ def main():
     shutil.move(extensions_tarball, builddir)
     buildmeta.write(artifact_name='extensions')
 
+    shutil.rmtree(tmpworkdir)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -76,19 +88,31 @@ def prepare_tmpworkdir():
     if os.path.exists(tmpworkdir):
         shutil.rmtree(tmpworkdir)
     os.mkdir(tmpworkdir)
+    configdir = 'src/config'
+    for f in os.listdir(configdir):
+        if os.path.isfile(f"{configdir}/{f}") and f.endswith('.repo'):
+            shutil.copyfile(f"{configdir}/{f}", f"{tmpworkdir}/{f}")
+    yumreposdir = 'src/yumrepos'
+    if os.path.exists(yumreposdir):
+        for f in os.listdir(yumreposdir):
+            if os.path.isfile(f"{yumreposdir}/{f}") and f.endswith('.repo'):
+                shutil.copyfile(f"{yumreposdir}/{f}", f"{tmpworkdir}/{f}")
     return tmpworkdir
 
 
 def run_rpmostree(workdir, commit, treefile, extensions):
     cmdlib.cmdlib_sh(f'''
+        cat > "{workdir}/manifest-override.yaml" <<EOF
+include: ../../{treefile}
+EOF
         changed_stamp={workdir}/changed
-        runcompose_extensions {workdir}/output {treefile} {extensions} \
+        runcompose_extensions {workdir}/output {workdir}/manifest-override.yaml {extensions} \
             --base-rev {commit}''')
     return os.path.exists(f'{workdir}/changed')
 
 
 def create_yumrepo(repodir):
-    cmdlib.run_verbose(['createrepo_c', repodir])
+    cmdlib.runcmd(['createrepo_c', repodir])
     # we could also have rpm-ostree output the pkglist for us, but meh... we
     # need to run createrepo_c anyway and it's nice that we're using it as the
     # source of truth, since that's what rpm-ostree clients will also use
@@ -116,7 +140,7 @@ def create_tarball(buildmeta, srcdir, destdir):
     destdir = os.path.abspath(destdir)
     basearch = buildmeta['coreos-assembler.basearch']
     tarfile = f'{destdir}/{buildmeta["name"]}-{buildmeta["buildid"]}-extensions.{basearch}.tar'
-    cmdlib.run_verbose(['tar', '-cf', tarfile, '.'], cwd=srcdir)
+    cmdlib.runcmd(['tar', '-cf', tarfile, '.'], cwd=srcdir)
     return tarfile
 
 

@@ -19,32 +19,30 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform"
 )
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Run:         SelinuxEnforce,
-		ClusterSize: 1,
-		Name:        "nestos.selinux.enforce",
-	})
-	register.RegisterTest(&register.Test{
 		Run:         SelinuxBoolean,
 		ClusterSize: 1,
 		Name:        "nestos.selinux.boolean",
+		Description: "Verify tweaking selinux boolean works.",
 	})
 	register.RegisterTest(&register.Test{
 		Run:         SelinuxBooleanPersist,
 		ClusterSize: 1,
 		Name:        "rhcos.selinux.boolean.persist",
+		Description: "Verify tweaking selinux boolean works and have it persistent across reboots.",
 	})
 	register.RegisterTest(&register.Test{
 		Run:         SelinuxManage,
 		ClusterSize: 1,
 		Name:        "rhcos.selinux.manage",
 		Distros:     []string{"rhcos"},
+		Description: "Verify modifying an selinux file context persists through reboots.",
 	})
 }
 
@@ -116,26 +114,6 @@ func getSelinuxBooleanState(c cluster.TestCluster, m platform.Machine, seBool st
 	}
 
 	return boolState, nil
-}
-
-// SelinuxEnforce checks that some basic things work after `setenforce 1`
-func SelinuxEnforce(c cluster.TestCluster) {
-	cmdList := []cmdCheckOutput{
-		{"getenforce", true, "Enforcing"},
-		{"sudo setenforce 0", false, ""},
-		{"getenforce", true, "Permissive"},
-		{"sudo setenforce 1", false, ""},
-		{"getenforce", true, "Enforcing"},
-		{"systemctl --no-pager is-active system.slice", true, "active"},
-		{"sudo cp /etc/selinux/config{,.old}", false, ""},
-		{"sudo sed -i 's/SELINUX=permissive/SELINUX=enforcing/' /etc/selinux/config", false, ""},
-	}
-
-	m := c.Machines()[0]
-
-	testSelinuxCmds(c, m, cmdList)
-
-	c.AssertCmdOutputMatches(m, "getenforce", regexp.MustCompile("^Enforcing$"))
 }
 
 // SelinuxBoolean checks that you can tweak a boolean in the current session

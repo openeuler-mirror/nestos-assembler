@@ -15,13 +15,14 @@
 package misc
 
 import (
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
 )
 
 func init() {
 	register.RegisterTest(&register.Test{
 		Name:        "coreos.misc.aws.diskfriendlyname",
+		Description: "Verify invariants on AWS instances.",
 		Platforms:   []string{"aws"},
 		Run:         awsVerifyDiskFriendlyName,
 		ClusterSize: 1,

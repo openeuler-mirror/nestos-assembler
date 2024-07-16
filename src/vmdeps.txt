@@ -21,6 +21,9 @@ selinux-policy selinux-policy-targeted policycoreutils
 # python3 python3-gobject-base buildah podman skopeo iptables iptables-libs
 python3 python3-gobject-base podman skopeo iptables iptables-libs
 
+# legacy-oscontainer
+python3-pyyaml python3-botocore python3-flufl.lock python3-tenacity
+
 # luks
 cryptsetup
 # filesystems/storage
@@ -28,3 +31,12 @@ gdisk xfsprogs e2fsprogs dosfstools btrfs-progs
 
 # needed for basic CA support
 ca-certificates
+
+tar
+
+# needed for extensions container build
+podman
+
+# For running osbuild
+# NestOS currently does not plan to introduce the osbuild build way
+# osbuild osbuild-ostree osbuild-selinux osbuild-tools python3-pyrsistent

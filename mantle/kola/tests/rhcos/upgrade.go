@@ -16,6 +16,7 @@ package rhcos
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,14 +28,15 @@ import (
 	cosa "github.com/coreos/coreos-assembler/pkg/builds"
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/platform/machine/unprivqemu"
-	installer "github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
+	installer "github.com/coreos/coreos-assembler/mantle/util"
+	"github.com/coreos/go-semver/semver"
 )
 
 func init() {
@@ -43,6 +45,7 @@ func init() {
 		ClusterSize: 1,
 		// if renaming this, also rename the command in kolet-httpd.service below
 		Name:                 "rhcos.upgrade.luks",
+		Description:          "Verify that rhcos supports upgrading with LUKS.",
 		FailFast:             true,
 		Tags:                 []string{"upgrade"},
 		Distros:              []string{"rhcos"},
@@ -70,6 +73,7 @@ func init() {
 		ClusterSize: 1,
 		// if renaming this, also rename the command in kolet-httpd.service below
 		Name:                 "rhcos.upgrade.basic",
+		Description:          "Verify that rhcos supports upgrading.",
 		FailFast:             true,
 		Tags:                 []string{"upgrade"},
 		Distros:              []string{"rhcos"},
@@ -85,8 +89,9 @@ func init() {
 		Run:                  rhcosUpgradeFromOcpRhcos,
 		ClusterSize:          0,
 		Name:                 "rhcos.upgrade.from-ocp-rhcos",
+		Description:          "Verify upgrading from the latest RHCOS released for OCP works.",
 		FailFast:             true,
-		Flags:                []register.Flag{register.RequiresInternetAccess},
+		Tags:                 []string{"upgrade", kola.NeedsInternetTag},
 		Distros:              []string{"rhcos"},
 		Platforms:            []string{"qemu"},
 		ExcludeArchitectures: []string{"s390x", "ppc64le", "aarch64"},
@@ -208,7 +213,7 @@ func rhcosUpgradeFromOcpRhcos(c cluster.TestCluster) {
 	}`)
 
 	switch pc := c.Cluster.(type) {
-	case *unprivqemu.Cluster:
+	case *qemu.Cluster:
 		ostreeCommit := kola.CosaBuild.Meta.OstreeCommit
 		temp := os.TempDir()
 		rhcosQcow2, err := downloadLatestReleasedRHCOS(temp)
@@ -282,7 +287,12 @@ func getJson(url string, target interface{}) error {
 func downloadLatestReleasedRHCOS(target string) (string, error) {
 	buildID := kola.CosaBuild.Meta.BuildID
 	ocpVersion := strings.Split(buildID, ".")[0]
+	rhelVersion := strings.Split(buildID, ".")[1]
 	ocpVersionF := fmt.Sprintf("%s.%s", ocpVersion[:1], ocpVersion[1:])
+	// The stream name isn't anywhere in the build so we can only infer
+	// the RHEL version from the RHCOS version string. This will break
+	// on three digit versions like 10.1 or 9.10.
+	rhelVersionF := fmt.Sprintf("%s.%s", rhelVersion[:1], rhelVersion[1:])
 	channel := "fast-" + ocpVersionF
 
 	type Release struct {
@@ -358,8 +368,26 @@ func downloadLatestReleasedRHCOS(target string) (string, error) {
 		return
 	}(releaseIndex, unique)
 
+	// In cases where there is a blocked upgrade to a new Y-stream there can be
+	// two nodes that don't have an edge to upgrade to. This is generally the
+	// latest 4.Y-1.Z and the latest 4.Y.Z. Choose the latest 4.Y.Z
+	if len(difference) < 1 {
+		return "", errors.New("Could not find the latest release")
+	}
+	latest := difference[0]
+	if len(difference) > 1 {
+		latestVersion := semver.New(graph.Nodes[latest].Version)
+		for _, v := range difference {
+			currentVersion := semver.New(graph.Nodes[v].Version)
+			if latestVersion.LessThan(*currentVersion) {
+				latest = v
+				latestVersion = currentVersion
+			}
+		}
+	}
+
 	var ocpRelease *OcpRelease
-	latestOcpPayload := graph.Nodes[difference[0]].Payload
+	latestOcpPayload := graph.Nodes[latest].Payload
 	// oc should be included in cosa since https://github.com/coreos/coreos-assembler/pull/2777
 	cmd := exec.Command("/usr/bin/oc", "adm", "release", "info", latestOcpPayload, "-o", "json")
 	output, err := cmd.Output()
@@ -372,13 +400,24 @@ func downloadLatestReleasedRHCOS(target string) (string, error) {
 
 	var latestOcpRhcosBuild *cosa.Build
 	rhcosVersion := ocpRelease.DisplayVersions.MachineOS.Version
-	latestBaseUrl := fmt.Sprintf("https://rhcos-redirector.apps.art.xq1c.p1.openshiftapps.com/art/storage/releases/rhcos-%s/%s/%s",
+	latestBaseUrl := fmt.Sprintf("https://rhcos.mirror.openshift.com/art/storage/prod/streams/%s-%s/builds/%s/%s",
 		ocpVersionF,
+		rhelVersionF,
 		rhcosVersion,
 		coreosarch.CurrentRpmArch())
 	latestRhcosBuildMetaUrl := fmt.Sprintf("%s/meta.json", latestBaseUrl)
 	if err := getJson(latestRhcosBuildMetaUrl, &latestOcpRhcosBuild); err != nil {
-		return "", err
+		// Try the <ocp version> stream; ideally we'd only do this if the error
+		// was 403 denied (which is really a 404), but meh this is temporary
+		// anyway.
+		latestBaseUrl = fmt.Sprintf("https://rhcos.mirror.openshift.com/art/storage/prod/streams/%s/builds/%s/%s",
+			ocpVersionF,
+			rhcosVersion,
+			coreosarch.CurrentRpmArch())
+		latestRhcosBuildMetaUrl = fmt.Sprintf("%s/meta.json", latestBaseUrl)
+		if err := getJson(latestRhcosBuildMetaUrl, &latestOcpRhcosBuild); err != nil {
+			return "", err
+		}
 	}
 
 	latestRhcosQcow2 := latestOcpRhcosBuild.BuildArtifacts.Qemu.Path

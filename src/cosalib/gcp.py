@@ -1,6 +1,6 @@
 import os
 import re
-from cosalib.cmdlib import run_verbose
+from cosalib.cmdlib import runcmd
 from tenacity import (
     retry,
     stop_after_attempt
@@ -21,7 +21,7 @@ GCP_NAMING_RE = r"[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?|[1-9][0-9]{0,19}"
 def remove_gcp_image(gcp_id, json_key, project):
     print(f"GCP: removing image {gcp_id}")
     try:
-        run_verbose([
+        runcmd([
             'ore', 'gcloud', 'delete-images', gcp_id,
             '--json-key', json_key,
             '--project', project
@@ -42,6 +42,8 @@ def gcp_run_ore(build, args):
         raise Exception(arg_exp_str.format("json-key", "GCP_JSON_AUTH"))
     if args.project is None:
         raise Exception(arg_exp_str.format("project", "GCP_PROJECT"))
+    if not args.create_image:
+        raise Exception("Invalid to call with --create-image=False")
 
     gcp_name = re.sub(r'[_\.]', '-', build.image_name_base)
     if not re.fullmatch(GCP_NAMING_RE, gcp_name):
@@ -61,21 +63,21 @@ def gcp_run_ore(build, args):
     ore_upload_cmd = ore_common_args + [
         'upload',
         '--basename', build.build_name,
+        '--arch', build.basearch,
         '--force',  # We want to support restarting the pipeline
         '--bucket', f'{args.bucket}',
         '--name', gcp_name,
         '--file', f"{build.image_path}",
         '--write-url', urltmp,
+        '--create-image=true',
     ]
     if args.description:
         ore_upload_cmd.extend(['--description', args.description])
     if args.public:
         ore_upload_cmd.extend(['--public'])
-    if not args.create_image:
-        ore_upload_cmd.extend(['--create-image=false'])
     for license in args.license or DEFAULT_LICENSES:
         ore_upload_cmd.extend(['--license', license])
-    run_verbose(ore_upload_cmd)
+    runcmd(ore_upload_cmd)
 
     # Run deprecate image to deprecate if requested
     if args.deprecated:
@@ -84,7 +86,7 @@ def gcp_run_ore(build, args):
             '--image', gcp_name,
             '--state', 'DEPRECATED'
         ]
-        run_verbose(ore_deprecate_cmd)
+        runcmd(ore_deprecate_cmd)
 
     # Run update-image to add to an image family if requested.
     # We run this as a separate API call because we want to run
@@ -95,7 +97,7 @@ def gcp_run_ore(build, args):
             '--image', gcp_name,
             '--family', args.family
         ]
-        run_verbose(ore_update_cmd)
+        runcmd(ore_update_cmd)
 
     build.meta['gcp'] = {
         'image': gcp_name,
@@ -128,12 +130,6 @@ def gcp_cli(parser):
     parser.add_argument("--bucket",
                         help="Storage account to write image to",
                         default=os.environ.get("GCP_BUCKET"))
-    parser.add_argument("--gce",
-                        help="Use GCE as the platform ID instead of GCP",
-                        action="store_true",
-                        default=bool(
-                            os.environ.get("GCP_GCE_PLATFORM_ID", False))
-                        )
     parser.add_argument("--json-key",
                         help="GCP Service Account JSON Auth",
                         default=os.environ.get("GCP_JSON_AUTH"))
@@ -146,6 +142,7 @@ def gcp_cli(parser):
     parser.add_argument("--description",
                         help="The description that should be attached to the image",
                         default=None)
+    # Remove --create-image after some time in which callers can be updated
     parser.add_argument("--create-image",
                         type=boolean_string,
                         help="Whether or not to create an image in GCP after upload.",

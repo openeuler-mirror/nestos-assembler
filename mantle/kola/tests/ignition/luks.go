@@ -6,14 +6,14 @@ import (
 
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	ut "github.com/coreos/mantle/kola/tests/util"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/platform/machine/unprivqemu"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	ut "github.com/coreos/coreos-assembler/mantle/kola/tests/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/qemu"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 func init() {
@@ -23,6 +23,7 @@ func init() {
 		Run:         luksTangTest,
 		ClusterSize: 0,
 		Name:        `luks.tang`,
+		Description: "Verify that the rootfs is encrypted with Tang.",
 		Flags:       []register.Flag{},
 		Distros:     []string{"rhcos"},
 		Tags:        []string{"luks", "tang", kola.NeedsInternetTag, "reprovision"},
@@ -31,9 +32,10 @@ func init() {
 		Run:                  luksSSST1Test,
 		ClusterSize:          0,
 		Name:                 `luks.sss.t1`,
+		Description:          "Verify that the rootfs is encrypted with SSS with t=1.",
 		Flags:                []register.Flag{},
 		Distros:              []string{"rhcos"},
-		Platforms:            []string{"qemu-unpriv"},
+		Platforms:            []string{"qemu"},
 		ExcludeArchitectures: []string{"s390x"}, // no TPM backend support for s390x
 		Tags:                 []string{"luks", "tpm", "tang", "sss", kola.NeedsInternetTag, "reprovision"},
 	})
@@ -41,9 +43,10 @@ func init() {
 		Run:                  luksSSST2Test,
 		ClusterSize:          0,
 		Name:                 `luks.sss.t2`,
+		Description:          "Verify that the rootfs is encrypted with SSS with t=2.",
 		Flags:                []register.Flag{},
 		Distros:              []string{"rhcos"},
-		Platforms:            []string{"qemu-unpriv"},
+		Platforms:            []string{"qemu"},
 		ExcludeArchitectures: []string{"s390x"}, // no TPM backend support for s390x
 		Tags:                 []string{"luks", "tpm", "tang", "sss", kola.NeedsInternetTag, "reprovision"},
 	})
@@ -73,7 +76,7 @@ func setupTangMachine(c cluster.TestCluster) ut.TangServer {
 	// the golang compiler no longer checks that the individual types in the case have the
 	// NewMachineWithQemuOptions function, but rather whether platform.Cluster
 	// does which fails
-	case *unprivqemu.Cluster:
+	case *qemu.Cluster:
 		m, err = pc.NewMachineWithQemuOptions(ignition, options)
 		for _, hfp := range options.HostForwardPorts {
 			if hfp.Service == "tang" {
@@ -161,9 +164,9 @@ func runTest(c cluster.TestCluster, tpm2 bool, threshold int, killTangAfterFirst
 	opts := platform.MachineOptions{
 		MinMemory: 4096,
 	}
-	// ppc64le and aarch64 use 64K pages
+	// ppc64le uses 64K pages; see similar logic in harness.go and boot-mirror.go
 	switch coreosarch.CurrentRpmArch() {
-	case "ppc64le", "aarch64":
+	case "ppc64le":
 		opts.MinMemory = 8192
 	}
 	m, err := c.NewMachineWithOptions(ignition, opts)

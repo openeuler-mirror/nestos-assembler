@@ -20,7 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/util"
 	"golang.org/x/crypto/ssh/agent"
 	"google.golang.org/api/compute/v1"
 )
@@ -33,8 +34,42 @@ func (a *API) vmname() string {
 	return fmt.Sprintf("%s-%x", a.options.BaseName, b)
 }
 
+// ["5G:channel=nvme"], by default the disk type is local-ssd
+func ParseDisk(spec string, zone string) (*compute.AttachedDisk, error) {
+	var diskInterface string
+
+	size, diskmap, err := util.ParseDiskSpec(spec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse disk spec %q: %w", spec, err)
+	}
+	for key, value := range diskmap {
+		switch key {
+		case "channel":
+			switch value {
+			case "nvme", "scsi":
+				diskInterface = strings.ToUpper(value)
+			default:
+				return nil, fmt.Errorf("invalid channel value: %q", value)
+			}
+		default:
+			return nil, fmt.Errorf("invalid key %q", key)
+		}
+	}
+
+	return &compute.AttachedDisk{
+		AutoDelete: true,
+		Boot:       false,
+		Type:       "SCRATCH",
+		Interface:  diskInterface,
+		InitializeParams: &compute.AttachedDiskInitializeParams{
+			DiskType:   "/zones/" + zone + "/diskTypes/local-ssd",
+			DiskSizeGb: size,
+		},
+	}, nil
+}
+
 // Taken from: https://github.com/golang/build/blob/master/buildlet/gce.go
-func (a *API) mkinstance(userdata, name string, keys []*agent.Key, useServiceAcct bool) *compute.Instance {
+func (a *API) mkinstance(userdata, name string, keys []*agent.Key, opts platform.MachineOptions, useServiceAcct bool) (*compute.Instance, error) {
 	mantle := "mantle"
 	metadataItems := []*compute.MetadataItems{
 		{
@@ -111,21 +146,40 @@ func (a *API) mkinstance(userdata, name string, keys []*agent.Key, useServiceAcc
 			Value: &userdata,
 		})
 	}
-
-	return instance
-
+	// create confidential instance
+	if a.options.Confidential {
+		instance.ConfidentialInstanceConfig = &compute.ConfidentialInstanceConfig{
+			EnableConfidentialCompute: true,
+		}
+		instance.Scheduling = &compute.Scheduling{
+			OnHostMaintenance: "TERMINATE",
+		}
+	}
+	// attach aditional disk
+	for _, spec := range opts.AdditionalDisks {
+		plog.Debugf("Parsing disk spec %q\n", spec)
+		disk, err := ParseDisk(spec, a.options.Zone)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse spec %q: %w", spec, err)
+		}
+		instance.Disks = append(instance.Disks, disk)
+	}
+	return instance, nil
 }
 
 // CreateInstance creates a Google Compute Engine instance.
-func (a *API) CreateInstance(userdata string, keys []*agent.Key, useServiceAcct bool) (*compute.Instance, error) {
+func (a *API) CreateInstance(userdata string, keys []*agent.Key, opts platform.MachineOptions, useServiceAcct bool) (*compute.Instance, error) {
 	name := a.vmname()
-	inst := a.mkinstance(userdata, name, keys, useServiceAcct)
+	inst, err := a.mkinstance(userdata, name, keys, opts, useServiceAcct)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create instance %q: %w", name, err)
+	}
 
 	plog.Debugf("Creating instance %q", name)
 
 	op, err := a.compute.Instances.Insert(a.options.Project, a.options.Zone, inst).Do()
 	if err != nil {
-		return nil, fmt.Errorf("failed to request new GCE instance: %v\n", err)
+		return nil, fmt.Errorf("failed to request new GCP instance: %v\n", err)
 	}
 
 	doable := a.compute.ZoneOperations.Get(a.options.Project, a.options.Zone, op.Name)

@@ -17,19 +17,19 @@ package ignition
 import (
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/vincent-petithory/dataurl"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/platform/machine/packet"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/packet"
 )
 
 var (
@@ -54,14 +54,15 @@ var (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "nestos.ignition.security.tls",
+		Name:        "coreos.ignition.security.tls",
+		Description: "Verify that we can fetch ignition with https.",
 		Run:         securityTLS,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"TLSServe": register.CreateNativeFuncWrap(TLSServe),
 		},
 		Tags: []string{"ignition"},
-		// QEMU unprivileged doesn't support multiple VMs communicating with each other.
+		// QEMU doesn't support multiple VMs communicating with each other.
 		ExcludePlatforms: []string{"qemu"},
 		Timeout:          20 * time.Minute,
 	})
@@ -107,12 +108,12 @@ EOF
 }
 
 func ServeTLS(customFile []byte) error {
-	publicKey, err := ioutil.ReadFile("/var/tls/server.crt")
+	publicKey, err := os.ReadFile("/var/tls/server.crt")
 	if err != nil {
 		return fmt.Errorf("reading public key: %v", err)
 	}
 
-	privateKey, err := ioutil.ReadFile("/var/tls/server.key")
+	privateKey, err := os.ReadFile("/var/tls/server.key")
 	if err != nil {
 		return fmt.Errorf("reading private key: %v", err)
 	}

@@ -17,9 +17,9 @@ package metadata
 import (
 	"strings"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 func init() {
@@ -39,6 +39,7 @@ func init() {
 
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.metadata.aws",
+		Description: "Verify the metadata on AWS.",
 		Run:         verifyAWS,
 		ClusterSize: 1,
 		Platforms:   []string{"aws"},
@@ -48,6 +49,7 @@ func init() {
 
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.metadata.azure",
+		Description: "Verify the metadata on Azure.",
 		Run:         verifyAzure,
 		ClusterSize: 1,
 		Platforms:   []string{"azure"},
@@ -57,6 +59,7 @@ func init() {
 
 	register.RegisterTest(&register.Test{
 		Name:        "nestos.metadata.packet",
+		Description: "Verify the metadata on Packet.",
 		Run:         verifyPacket,
 		ClusterSize: 1,
 		Platforms:   []string{"packet"},

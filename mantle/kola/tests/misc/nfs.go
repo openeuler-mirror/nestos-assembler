@@ -19,10 +19,10 @@ import (
 	"path"
 	"time"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 var (
@@ -57,12 +57,13 @@ func init() {
 		Run:            NFSv4,
 		ClusterSize:    0,
 		Name:           "linux.nfs.v4",
+		Description:    "Verify that NFSv4 works.",
 		ExcludeDistros: []string{"fcos", "nestos"},
 
 		// Disabled on Azure because setting hostname
 		// is required at the instance creation level
-		// qemu-unpriv machines cannot communicate
-		ExcludePlatforms: []string{"azure", "qemu-unpriv"},
+		// qemu machines cannot communicate
+		ExcludePlatforms: []string{"azure", "qemu"},
 	})
 }
 

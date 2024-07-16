@@ -10,7 +10,7 @@ Kola is a framework for testing software integration in CoreOS systems
 across multiple platforms. It is primarily designed to operate within
 the CoreOS Assembler for testing software that has landed in the OS image.
 
-Kola supports running tests on multiple platforms, currently QEMU, GCE,
+Kola supports running tests on multiple platforms, currently QEMU, GCP,
 AWS, VMware VSphere, Packet, and OpenStack. In the future systemd-nspawn and
 other platforms may be added.
 Local platforms do not rely on access to the Internet as a design
@@ -25,9 +25,8 @@ inspection.
 Kola is still under heavy development and it is expected that its
 interface will continue to change.
 
-By default, kola uses the `qemu-unprivileged` platform with the most recently
-built image (assuming it is run from within a CoreOS Assembler working
-directory).
+By default, kola uses the `qemu` platform with the most recently built image
+(assuming it is run from within a CoreOS Assembler working directory).
 
 1. TOC
 {:toc}
@@ -55,6 +54,11 @@ and can also be used with glob patterns:
 Tests specified in `src/config/kola-denylist.yaml` will also be skipped
 regardless of whether the switch `--denylist-test` was provided.
 
+It's also possible to skip tests based on tags by prefixing
+the tag by `!`:
+
+`kola run --tag '!reprovision'`
+
 Example format of the file:
 
 ```yaml
@@ -80,6 +84,9 @@ Example format of the file:
 - pattern: test2.test
   ...
 ```
+
+The special pattern `skip-console-warnings` suppresses the default check for kernel errors on the console which would otherwise fail a test.
+
 ## kola list
 
 The list command lists all of the available tests.
@@ -159,6 +166,16 @@ For more examples, look at the
 suite of tests under kola. These tests were ported into kola and make
 heavy use of the native code interface.
 
+## kola non-exclusive tests
+
+Some tests are light weight and do not involve complex interactions like reboots
+and multiple machines. Tests that are not expected to conflict with other tests can be
+marked as "non-exclusive", so that they are run in the same VM to save resources.
+
+External tests can be marked as non-exclusive via kola.json or an inline tag. 
+Note: tests compiled in kola (non external tests) cannot be marked as non-exclusive. 
+This is deliberate as tests compiled in kola should be complex and thus exclusive.
+
 ## Manhole
 
 The `platform.Manhole()` function creates an interactive SSH session which can
@@ -171,3 +188,61 @@ automatically SSH into a machine when any `MustSSH` calls fail.
 
 kolet is run on kola instances to run native functions in tests. Generally kolet
 is not invoked manually.
+
+## More information on tests
+
+After you run the kola test, you can find more information in `tmp/kola/<test-name>` about the test that just ran, as the following file logs. They will help you to debug the problem and will certainly give you hints along the way.
+
+1. `journal.txt`
+2. `console.txt`
+3. `ignition.json`
+4. `journal-raw.txt.gz`
+
+## Extended artifacts
+
+1. Extended artifacts need additional forms of testing (You can pass the ignition and the path to the artifact you want to test)
+2. `cosa kola run -h` (this allows you to see the commands yourself and what syntax is needed)
+3. `cosa buildextend-"name_of_artifact"` (An example of building an extended artifact)
+4. `kola run -p <platform>` Is the most generic way of testing extended artifacts, this is mostly useful for the cloud platforms
+5. For running the likes of metal/metal4k artifacts there's not much difference than running `kola run` from the coreos-assembler
+6. `cd builds/latest/` (This will show your latest build information)
+7. `cosa list` (This will show you the most recent CoreOS builds that have been made and the artifacts that were created)
+8. In the case of the `testiso` command, you can determine what tests are running by looking for the pattern in the test name. It will follow: `test-to-run.disk-type.networking.multipath.firmware`. For example, the `iso-live-login.4k.uefi`, attempts to install FCOS/RHCOS to a disk that uses 4k sector size. If you don't see the 4k pattern, the `testiso` command will attempt to install FCOS/RHCOS to a non 4k disk (512b sector size).
+9. `cosa kola testiso iso-offline-install.mpath.uefi` (This is an example testing the live ISO build with no internet access using multipath and the uefi firmware.)
+
+Example output:
+
+```
+kola -p qemu testiso --inst-insecure --output-dir tmp/kola
+Ignoring verification of signature on metal image
+Running test: iso-as-disk.bios
+PASS: iso-as-disk.bios (12.408s)
+Running test: iso-as-disk.uefi
+PASS: iso-as-disk.uefi (16.039s)
+Running test: iso-as-disk.uefi-secure
+PASS: iso-as-disk.uefi-secure (16.994s)
+```
+
+## Useful commands
+
+`cosa kola run 'name_of_test'` This is how to run a single test, This is used to help debug specific tests in order to get a better understanding of the bug that's taking place. Once you run this command this test will be added to the tmp directory
+
+`cosa kola run basic` This will just run the basic tests
+
+`cosa kola run --parallel=3` This will run tests in parallel, 3 at a time.
+
+In order to see the logs for these tests you must enter the `tmp/kola/name_of_the_tests` and there you will find the logs (journal and console files, ignition used and so on)
+
+`cosa run` This launches the build you created (in this way you can access the image for troubleshooting). Also check the option -c (console).
+
+`cosa run -i ignition_path` You can run it passing your Ignition, or the Ignition used in the the test that failed for troubleshooting reasons.
+
+`kola list --json | jq -r '.[] | [.Name,.Description]| @tsv'` This will list all tests name and the description.
+
+## Run tests on cloud platforms
+`cosa kola run -p aws --aws-ami ami-0431766f2498820b8 --aws-region us-east-1 basic` This will run the basic tests on AWS using `ami-0431766f2498820b8` (fedora-coreos-37.20230227.20.2) with default instance type `m5.large`. Add `--aws-type <t3.micro>` if you want to use custom type. How to create the credentials refer to https://github.com/coreos/coreos-assembler/blob/main/docs/mantle/credentials.md#aws
+
+`kola run -p=gcp --gcp-image=projects/fedora-coreos-cloud/global/images/fedora-coreos-37-20230227-20-2-gcp-x86-64 --gcp-json-key=/data/gcp.json --gcp-project=fedora-coreos-testing basic` This will run the basic tests on GCP using default machine type `n1-standard-1`.
+- `gcp-image` is in the format of `projects/<GCP Image Project>/global/images/<GCP Image Name>`, to find related info refer to https://builds.coreos.fedoraproject.org/browser?stream=testing-devel&arch=x86_64.
+- `gcp-json-key` is using a service account's JSON key for authentication, how to create service account keys refer to https://github.com/coreos/coreos-assembler/blob/main/docs/mantle/credentials.md#gcp.
+- `gcp-project` is meant for testing in the specified project, or it will use the same as `<GCP Image Project>`.

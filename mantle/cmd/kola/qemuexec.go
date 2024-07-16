@@ -19,17 +19,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
-	"path/filepath"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 )
 
 var (
@@ -46,6 +45,8 @@ var (
 	addDisks     []string
 	usernet      bool
 	cpuCountHost bool
+
+	architecture string
 
 	hostname       string
 	ignition       string
@@ -69,6 +70,11 @@ var (
 	sshCommand string
 
 	additionalNics int
+
+	netboot    string
+	netbootDir string
+
+	usernetAddr string
 )
 
 const maxAdditionalNics = 16
@@ -78,9 +84,10 @@ func init() {
 	cmdQemuExec.Flags().StringVarP(&firstbootkargs, "firstbootkargs", "", "", "Additional first boot kernel arguments")
 	cmdQemuExec.Flags().StringArrayVar(&kargs, "kargs", nil, "Additional kernel arguments applied")
 	cmdQemuExec.Flags().BoolVarP(&usernet, "usernet", "U", false, "Enable usermode networking")
-	cmdQemuExec.Flags().StringSliceVar(&ignitionFragments, "add-ignition", nil, "Append well-known Ignition fragment: [\"autologin\", \"autoresize\"]")
+	cmdQemuExec.Flags().StringSliceVar(&ignitionFragments, "add-ignition", nil, "Append well-known Ignition fragment: [\"autologin\", \"autoresize\", \"noautoupdate\"]")
 	cmdQemuExec.Flags().StringVarP(&hostname, "hostname", "", "", "Set hostname via DHCP")
 	cmdQemuExec.Flags().IntVarP(&memory, "memory", "m", 0, "Memory in MB")
+	cmdQemuExec.Flags().StringVar(&architecture, "arch", "", "Use full emulation for target architecture (e.g. aarch64, x86_64, s390x, ppc64le)")
 	cmdQemuExec.Flags().StringArrayVarP(&addDisks, "add-disk", "D", []string{}, "Additional disk, human readable size (repeatable)")
 	cmdQemuExec.Flags().BoolVar(&cpuCountHost, "auto-cpus", false, "Automatically set number of cpus to host count")
 	cmdQemuExec.Flags().BoolVar(&directIgnition, "ignition-direct", false, "Do not parse Ignition, pass directly to instance")
@@ -88,14 +95,16 @@ func init() {
 	cmdQemuExec.Flags().BoolVarP(&devshellConsole, "devshell-console", "c", false, "Connect directly to serial console in devshell mode")
 	cmdQemuExec.Flags().StringVarP(&ignition, "ignition", "i", "", "Path to Ignition config")
 	cmdQemuExec.Flags().StringVarP(&butane, "butane", "B", "", "Path to Butane config")
-	cmdQemuExec.Flags().StringArrayVar(&bindro, "bind-ro", nil, "Mount readonly via 9pfs a host directory (use --bind-ro=/path/to/host,/var/mnt/guest")
-	cmdQemuExec.Flags().StringArrayVar(&bindrw, "bind-rw", nil, "Same as above, but writable")
+	cmdQemuExec.Flags().StringArrayVar(&bindro, "bind-ro", nil, "Mount $hostpath,$guestpath readonly; for example --bind-ro=/path/on/host,/var/mnt/guest)")
+	cmdQemuExec.Flags().StringArrayVar(&bindrw, "bind-rw", nil, "Mount $hostpath,$guestpath writable; for example --bind-rw=/path/on/host,/var/mnt/guest)")
 	cmdQemuExec.Flags().BoolVarP(&forceConfigInjection, "inject-ignition", "", false, "Force injecting Ignition config using guestfs")
 	cmdQemuExec.Flags().BoolVar(&propagateInitramfsFailure, "propagate-initramfs-failure", false, "Error out if the system fails in the initramfs")
 	cmdQemuExec.Flags().StringVarP(&consoleFile, "console-to-file", "", "", "Filepath in which to save serial console logs")
 	cmdQemuExec.Flags().IntVarP(&additionalNics, "additional-nics", "", 0, "Number of additional NICs to add")
 	cmdQemuExec.Flags().StringVarP(&sshCommand, "ssh-command", "x", "", "Command to execute instead of spawning a shell")
-
+	cmdQemuExec.Flags().StringVarP(&netboot, "netboot", "", "", "Filepath to BOOTP program (e.g. PXELINUX/GRUB binary or iPXE script")
+	cmdQemuExec.Flags().StringVarP(&netbootDir, "netboot-dir", "", "", "Directory to serve over TFTP (default: BOOTP parent dir). If specified, --netboot is relative to this dir.")
+	cmdQemuExec.Flags().StringVarP(&usernetAddr, "usernet-addr", "", "", "Guest IP network (QEMU default is '10.0.2.0/24')")
 }
 
 func renderFragments(fragments []string, c *conf.Conf) error {
@@ -105,6 +114,8 @@ func renderFragments(fragments []string, c *conf.Conf) error {
 			c.AddAutoLogin()
 		case "autoresize":
 			c.AddAutoResize()
+		case "noautoupdate":
+			c.DisableAutomaticUpdates()
 		default:
 			return fmt.Errorf("Unknown fragment: %s", fragtype)
 		}
@@ -118,6 +129,41 @@ func parseBindOpt(s string) (string, string, error) {
 		return "", "", fmt.Errorf("malformed bind option, required: SRC,DEST")
 	}
 	return parts[0], parts[1], nil
+}
+
+// buildDiskFromOptions generates a disk image template using the process-global
+// defaults that were parsed from command line arguments.
+func buildDiskFromOptions() *platform.Disk {
+	channel := "virtio"
+	if kola.QEMUOptions.Nvme {
+		channel = "nvme"
+	}
+	sectorSize := 0
+	if kola.QEMUOptions.Native4k {
+		sectorSize = 4096
+	}
+	options := []string{}
+	if kola.QEMUOptions.DriveOpts != "" {
+		options = append(options, strings.Split(kola.QEMUOptions.DriveOpts, ",")...)
+	}
+	// If there was no disk image specified and no size then just
+	// default to an arbitrary value of 12G for the blank disk image.
+	size := kola.QEMUOptions.DiskSize
+	if kola.QEMUOptions.DiskImage == "" && kola.QEMUOptions.DiskSize == "" {
+		size = "12G"
+	}
+	// Build the disk definition. Note that if kola.QEMUOptions.DiskImage is
+	// "" we'll just end up with a blank disk image, which is what we want.
+	disk := &platform.Disk{
+		BackingFile:   kola.QEMUOptions.DiskImage,
+		Channel:       channel,
+		Size:          size,
+		SectorSize:    sectorSize,
+		DriveOpts:     options,
+		MultiPathDisk: kola.QEMUOptions.MultiPathDisk,
+		NbdDisk:       kola.QEMUOptions.NbdDisk,
+	}
+	return disk
 }
 
 func runQemuExec(cmd *cobra.Command, args []string) error {
@@ -173,8 +219,7 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 		ignitionFragments = append(ignitionFragments, "autologin")
 		cpuCountHost = true
 		usernet = true
-		// Can't use 9p on RHEL8, need https://virtio-fs.gitlab.io/ instead in the future
-		if kola.Options.CosaWorkdir != "" && !strings.HasPrefix(filepath.Base(kola.QEMUOptions.DiskImage), "rhcos") && !strings.HasPrefix(filepath.Base(kola.QEMUOptions.DiskImage), "scos") && kola.Options.Distribution != "rhcos" && kola.Options.Distribution != "scos" {
+		if kola.Options.CosaWorkdir != "" {
 			// Conservatively bind readonly to avoid anything in the guest (stray tests, whatever)
 			// from destroying stuff
 			bindro = append(bindro, fmt.Sprintf("%s,/var/mnt/workdir", kola.Options.CosaWorkdir))
@@ -205,9 +250,15 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 	builder := platform.NewQemuBuilder()
 	defer builder.Close()
 
+	if architecture != "" {
+		if err := builder.SetArchitecture(architecture); err != nil {
+			return err
+		}
+	}
+
 	var config *conf.Conf
 	if butane != "" {
-		buf, err := ioutil.ReadFile(butane)
+		buf, err := os.ReadFile(butane)
 		if err != nil {
 			return err
 		}
@@ -216,7 +267,7 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 			return errors.Wrapf(err, "parsing %s", butane)
 		}
 	} else if !directIgnition && ignition != "" {
-		buf, err := ioutil.ReadFile(ignition)
+		buf, err := os.ReadFile(ignition)
 		if err != nil {
 			return err
 		}
@@ -250,18 +301,18 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		builder.Mount9p(src, dest, true)
+		builder.MountHost(src, dest, true)
 		ensureConfig()
-		config.Mount9p(dest, true)
+		config.MountHost(dest, true)
 	}
 	for _, b := range bindrw {
 		src, dest, err := parseBindOpt(b)
 		if err != nil {
 			return err
 		}
-		builder.Mount9p(src, dest, false)
+		builder.MountHost(src, dest, false)
 		ensureConfig()
-		config.Mount9p(dest, false)
+		config.MountHost(dest, false)
 	}
 	builder.ForceConfigInjection = forceConfigInjection
 	if len(firstbootkargs) > 0 {
@@ -271,43 +322,36 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 	if kola.QEMUOptions.Firmware != "" {
 		builder.Firmware = kola.QEMUOptions.Firmware
 	}
-	if kola.QEMUOptions.DiskImage != "" {
-		channel := "virtio"
-		if kola.QEMUOptions.Nvme {
-			channel = "nvme"
+	if kola.QEMUOptions.DiskImage != "" && netboot == "" {
+		if err := builder.AddBootDisk(buildDiskFromOptions()); err != nil {
+			return err
 		}
-		sectorSize := 0
-		if kola.QEMUOptions.Native4k {
-			sectorSize = 4096
-		}
-		err = builder.AddBootDisk(&platform.Disk{
-			BackingFile:   kola.QEMUOptions.DiskImage,
-			Channel:       channel,
-			Size:          kola.QEMUOptions.DiskSize,
-			SectorSize:    sectorSize,
-			MultiPathDisk: kola.QEMUOptions.MultiPathDisk,
-			NbdDisk:       kola.QEMUOptions.NbdDisk,
-		})
 		if err != nil {
 			return err
 		}
 	}
-	if kola.QEMUIsoOptions.IsoPath != "" {
-		err := builder.AddIso(kola.QEMUIsoOptions.IsoPath, "", kola.QEMUIsoOptions.AsDisk)
+	if kola.QEMUIsoOptions.IsoPath != "" && netboot == "" {
+		err := builder.AddIso(kola.QEMUIsoOptions.IsoPath, "bootindex=3", kola.QEMUIsoOptions.AsDisk)
 		if err != nil {
+			return err
+		}
+		// Add a blank disk (this is a disk we can install to)
+		if err := builder.AddBootDisk(buildDiskFromOptions()); err != nil {
 			return err
 		}
 	}
 	builder.Hostname = hostname
 	// for historical reasons, both --memory and --qemu-memory are supported
 	if memory != 0 {
-		builder.Memory = memory
+		builder.MemoryMiB = memory
 	} else if kola.QEMUOptions.Memory != "" {
 		parsedMem, err := strconv.ParseInt(kola.QEMUOptions.Memory, 10, 32)
 		if err != nil {
 			return errors.Wrapf(err, "parsing memory option")
 		}
-		builder.Memory = int(parsedMem)
+		builder.MemoryMiB = int(parsedMem)
+	} else if kola.QEMUOptions.SecureExecution {
+		builder.MemoryMiB = 4096 // SE needs at least 4GB
 	}
 	if err = builder.AddDisksFromSpecs(addDisks); err != nil {
 		return err
@@ -315,11 +359,14 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 	if cpuCountHost {
 		builder.Processors = -1
 	}
-	if usernet {
+	if usernet || usernetAddr != "" {
 		h := []platform.HostForwardPort{
 			{Service: "ssh", HostPort: 0, GuestPort: 22},
 		}
-		builder.EnableUsermodeNetworking(h)
+		builder.EnableUsermodeNetworking(h, usernetAddr)
+	}
+	if netboot != "" {
+		builder.SetNetbootP(netboot, netbootDir)
 	}
 	if additionalNics != 0 {
 		if additionalNics < 0 || additionalNics > maxAdditionalNics {
@@ -330,6 +377,14 @@ func runQemuExec(cmd *cobra.Command, args []string) error {
 	builder.InheritConsole = true
 	builder.ConsoleFile = consoleFile
 	builder.Append(args...)
+
+	// IBM Secure Execution
+	if kola.QEMUOptions.SecureExecution {
+		err := builder.SetSecureExecution(kola.QEMUOptions.SecureExecutionIgnitionPubKey, kola.QEMUOptions.SecureExecutionHostKey, config)
+		if err != nil {
+			return err
+		}
+	}
 
 	if devshell && !devshellConsole {
 		return runDevShellSSH(ctx, builder, config, sshCommand)

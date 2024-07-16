@@ -4,7 +4,6 @@ Builds interacts with builds.json
 
 import json
 import os
-import semver
 import gi
 import collections
 
@@ -45,14 +44,10 @@ class Builds:  # pragma: nocover
                 'builds': []
             }
             self.flush()
-        self._version = semver.parse_version_info(
-            self._data.get('schema-version', "0.0.1"))
-        # we understand < 2.0.0 only
-        if self._version._major >= 2:
-            raise Exception("Builds schema too new; please update cosa")
-        if self._version._major < 1:
-            err = f"Unsupported build metadata version {self._version}"
-            raise SystemExit(err)
+        ver = self._data.get('schema-version', "0.0.1")
+        parts = ver.split('.')
+        if int(parts[0]) != 1:
+            raise SystemExit(f"Unsupported build metadata version {ver}")
 
     def _path(self, path):
         if not self._workdir:
@@ -68,6 +63,12 @@ class Builds:  # pragma: nocover
     def get_latest(self):
         # just let throw if there are none
         return self._data['builds'][0]['id']
+
+    def get_latest_for_arch(self, basearch):
+        for build in self._data['builds']:
+            if basearch in build['arches']:
+                return build['id']
+        return None
 
     def get_build_arches(self, build_id):
         for build in self._data['builds']:
@@ -130,14 +131,15 @@ class Builds:  # pragma: nocover
         genver_key = 'coreos-assembler.image-genver'
         if not self.is_empty():
             previous_buildid = parent_build or self.get_latest()
-            metapath = self.get_build_dir(previous_buildid) + '/meta.json'
-            with open(metapath) as f:
-                previous_buildmeta = json.load(f)
-            previous_commit = previous_buildmeta['ostree-commit']
-            previous_image_genver = int(previous_buildmeta[genver_key])
-            if previous_commit == ostree_commit:
-                image_genver = previous_image_genver + 1
-                buildid = f"{version}-{image_genver}"
+            if get_basearch() in self.get_build_arches(previous_buildid):
+                metapath = self.get_build_dir(previous_buildid) + '/meta.json'
+                with open(metapath) as f:
+                    previous_buildmeta = json.load(f)
+                previous_commit = previous_buildmeta['ostree-commit']
+                previous_image_genver = int(previous_buildmeta.get(genver_key, 0))
+                if previous_commit == ostree_commit:
+                    image_genver = previous_image_genver + 1
+                    buildid = f"{version}-{image_genver}"
         meta = {
             'buildid': buildid,
             genver_key: image_genver

@@ -42,10 +42,11 @@ other platforms or cloud providers:
 | Name | Description |
 | ---- | ----------- |
 | [buildextend-live](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-buildextend-live) | Generate the Live ISO
-| [buildextend-{dasd,metal,metal4k,qemu}](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-buildextend-metal) | Generate artifacts for the given platforms
+| [buildextend-{dasd,metal,metal4k,qemu,secex}](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-buildextend-metal) | Generate artifacts for the given platforms
 | [buildextend-{aliyun,aws,azure,digitalocean,exoscale,gcp,vultr}](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-ore-wrapper) | Generate artifacts for the given platforms
 | [buildextend-{azurestack,ibmcloud,openstack,vmware}](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-artifact-disk) | Generate artifacts for the given platforms
 | [{aliyun,aws}-replicate](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-ore-wrapper) | Replicate images on the platforms (AMIs for AWS)
+| [buildextend-legacy-oscontainer](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-buildextend-legacy-oscontainer) | Create an oscontainer in legacy format (i.e. not OSTree-native)
 
 ## Misc commands
 
@@ -67,7 +68,6 @@ Those less commonly used commands are listed here:
 | [offline-update](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-offline-update) | Given a disk image and a coreos-assembler build, use supermin to update the disk image to the target OSTree commit "offline"
 | [prune](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-prune) | This script removes previous builds. DO NOT USE on production pipelines
 | [remote-prune](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-remote-prune) | Removes unreferenced builds from s3 bucket
-| [runc](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-runc) | Spawn the current build as a container
 | [sign](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-sign) | Implements signing with RoboSignatory via fedora-messaging
 | [supermin-shell](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-supermin-shell) | Get a supermin shell
 | [tag](https://github.com/coreos/coreos-assembler/blob/main/src/cmd-tag) | Operate on the tags in `builds.json`

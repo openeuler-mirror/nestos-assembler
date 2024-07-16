@@ -13,7 +13,8 @@ from cosalib import (
     gcp,
     vultr,
     exoscale,
-    ibmcloud
+    ibmcloud,
+    kubevirt
 )
 
 CLOUD_CLI_TARGET = {
@@ -44,6 +45,9 @@ CLOUD_CLI_TARGET = {
     "powervs":      (ibmcloud.ibmcloud_cli,
                      ibmcloud.ibmcloud_run_ore,
                      ibmcloud.ibmcloud_run_ore_replicate),
+    "kubevirt":     (kubevirt.kubevirt_cli,
+                     kubevirt.kubevirt_run_ore,
+                     kubevirt.kubevirt_run_ore_replicate),
 }
 
 
@@ -146,10 +150,7 @@ class BuildCli(Cli):
             help='Override build id, defaults to latest')
         self.add_argument(
             '--buildroot', env_var="BUILD_ROOT", default='builds',
-            help='Build diretory')
-        self.add_argument(
-            '--dump', default=False, action='store_true',
-            help='Dump the manfiest and exit')
+            help='Build directory')
         self.add_argument(
             '--schema', env_var="META_SCHEMA",
             default='/usr/lib/coreos-assembler/v1.json',

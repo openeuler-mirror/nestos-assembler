@@ -39,6 +39,8 @@ def parse_args():
                         help='Force upload even for pre-existing images')
     parser.add_argument("--artifact", default=[], action='append',
                         help="Only upload given image artifact(s)", metavar="ARTIFACT")
+    parser.add_argument("--arch", default=[], action='append',
+                        help="Only upload for arch", metavar="ARCH")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--skip-builds-json", help="Don't push builds.json",
                        action='store_true')
@@ -55,6 +57,8 @@ def parse_args():
                     "and set Content-Disposition names", action='store_true')
     s3.add_argument("--endpoint-url", help="URL of S3-compatible server",
                     action="store", metavar="URL")
+    s3.add_argument("--aws-config-file", metavar='CONFIG', default="",
+                    help="Path to AWS config file")
     s3.set_defaults(func=cmd_upload_s3)
 
     return parser.parse_args()
@@ -63,6 +67,8 @@ def parse_args():
 def cmd_upload_s3(args):
     bucket, prefix = args.url.split('/', 1)
     builds = Builds()
+    if args.aws_config_file:
+        os.environ["AWS_CONFIG_FILE"] = args.aws_config_file
     s3_client = boto3.client('s3', endpoint_url=args.endpoint_url)
     # This can't be an error for backcompat reasons, but let's print something
     if not os.path.isfile(BUILDFILES['sourceurl']):
@@ -71,10 +77,13 @@ def cmd_upload_s3(args):
         args.build = builds.get_latest()
     print(f"Targeting build: {args.build}")
     for arch in builds.get_build_arches(args.build):
+        if len(args.arch) > 0 and arch not in args.arch:
+            print(f"Skipping upload of arch {arch} upon user request")
+            continue
         s3_upload_build(s3_client, args, builds.get_build_dir(args.build, arch),
                         bucket, f'{prefix}/{args.build}/{arch}')
     # if there's anything else in the build dir, just upload it too,
-    # e.g. pipelines might inject additional metadata
+    # e.g. release metadata is stored at this level
     for f in os.listdir(f'builds/{args.build}'):
         # arches already uploaded higher up
         if f in builds.get_build_arches(args.build):
@@ -103,6 +112,7 @@ def s3_upload_build(s3_client, args, builddir, bucket, prefix):
 
     # Upload images with special handling for gzipped data.
     uploaded = set()
+    scrub = set()
     for imgname in build['images']:
         img = build['images'][imgname]
         bn = img['path']
@@ -121,14 +131,17 @@ def s3_upload_build(s3_client, args, builddir, bucket, prefix):
             s3_path = f'{prefix}/{nogz}'
             set_content_disposition = True
 
+        s3_target_exists = s3_check_exists(s3_client, bucket, s3_path, args.dry_run)
+
         # Mark artifacts that we don't want to upload as already uploaded
-        # so they'll get ignored later.
+        # so they'll get ignored later. If they're not in S3, delete them
+        # so that meta.json doesn't reference non-existent objects.
         if len(args.artifact) > 0 and imgname not in args.artifact:
             print(f"Skipping upload of artifact {bn} upon user request")
             uploaded.add(bn)
+            if not s3_target_exists:
+                scrub.add(imgname)
             continue
-
-        s3_target_exists = s3_check_exists(s3_client, bucket, s3_path, args.dry_run)
 
         if not os.path.exists(path) and not s3_target_exists:
             raise Exception(f"{path} not found locally or in the s3 destination!")
@@ -163,8 +176,10 @@ def s3_upload_build(s3_client, args, builddir, bucket, prefix):
             dry_run=args.dry_run)
 
     # Now upload a modified version of the meta.json which has the fixed
-    # filenames without the .gz suffixes. We don't want to modify the local
-    # build dir.
+    # filenames without the .gz suffixes and the scrubbed artifacts. We don't
+    # want to modify the local build dir.
+    for imgname in scrub:
+        del build['images'][imgname]
     with tempfile.NamedTemporaryFile('w') as f:
         json.dump(build, f, indent=4)
         f.flush()

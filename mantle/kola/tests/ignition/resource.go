@@ -23,11 +23,11 @@ import (
 
 	"github.com/pin/tftp"
 
-	"github.com/coreos/mantle/kola/cluster"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/platform/machine/packet"
+	"github.com/coreos/coreos-assembler/mantle/kola/cluster"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/platform/machine/packet"
 )
 
 var (
@@ -65,14 +65,15 @@ var (
 
 func init() {
 	register.RegisterTest(&register.Test{
-		Name:        "nestos.ignition.resource.local",
+		Name:        "coreos.ignition.resource.local",
+		Description: "Verify that we can fetch Ignition files through local, http and tftp.",
 		Run:         resourceLocal,
 		ClusterSize: 1,
 		NativeFuncs: map[string]register.NativeFuncWrap{
 			"Serve": register.CreateNativeFuncWrap(Serve),
 		},
 		Tags:             []string{"ignition"},
-		ExcludePlatforms: []string{"qemu-unpriv"},
+		ExcludePlatforms: []string{"qemu"},
 		Timeout:          20 * time.Minute,
 	})
 	register.RegisterTest(&register.Test{

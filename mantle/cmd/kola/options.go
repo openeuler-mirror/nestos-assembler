@@ -1,3 +1,4 @@
+// Copyright 2023 Red Hat
 // Copyright 2015 CoreOS, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,13 +26,13 @@ import (
 	"github.com/coreos/stream-metadata-go/stream"
 	"github.com/pkg/errors"
 
-	//"github.com/coreos/mantle/auth"
-	"github.com/coreos/mantle/fcos"
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/rhcos"
-	"github.com/coreos/mantle/system"
-	"github.com/coreos/mantle/util"
+	// "github.com/coreos/coreos-assembler/mantle/auth"
+	"github.com/coreos/coreos-assembler/mantle/fcos"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/rhcos"
+	"github.com/coreos/coreos-assembler/mantle/system"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 var (
@@ -39,7 +40,7 @@ var (
 	kolaPlatform      string
 	kolaParallelArg   string
 	kolaArchitectures = []string{"amd64"}
-	kolaPlatforms     = []string{"aws", "azure", "do", "esx", "gce", "openstack", "packet", "qemu", "qemu-unpriv", "qemu-iso"}
+	kolaPlatforms     = []string{"aws", "azure", "do", "esx", "gcp", "openstack", "packet", "qemu", "qemu-iso"}
 	kolaDistros       = []string{"fcos", "rhcos", "scos", "nestos"}
 )
 
@@ -55,18 +56,23 @@ func init() {
 	root.PersistentFlags().StringVarP(&kola.Options.Distribution, "distro", "b", "", "Distribution: "+strings.Join(kolaDistros, ", "))
 	root.PersistentFlags().StringVarP(&kolaParallelArg, "parallel", "j", "1", "number of tests to run in parallel, or \"auto\" to match CPU count")
 	sv(&kola.TAPFile, "tapfile", "", "file to write TAP results to")
-	root.PersistentFlags().BoolVarP(&kola.Options.NoTestExitError, "no-test-exit-error", "T", false, "Don't exit with non-zero if tests fail")
+	root.PersistentFlags().BoolVarP(&kola.Options.UseWarnExitCode77, "on-warn-failure-exit-77", "", false, "Exit with code 77 if 'warn: true' tests fail")
 	sv(&kola.Options.BaseName, "basename", "kola", "Cluster name prefix")
 	ss("debug-systemd-unit", []string{}, "full-unit-name.service to enable SYSTEMD_LOG_LEVEL=debug on. Can be specified multiple times.")
 	ssv(&kola.DenylistedTests, "denylist-test", []string{}, "Test pattern to add to denylist. Can be specified multiple times.")
 	bv(&kola.NoNet, "no-net", false, "Don't run tests that require an Internet connection")
 	bv(&kola.ForceRunPlatformIndependent, "run-platform-independent", false, "Run tests that claim platform independence")
 	ssv(&kola.Tags, "tag", []string{}, "Test tag to run. Can be specified multiple times.")
+	sv(&kola.Sharding, "sharding", "", "Provide e.g. 'hash:m/n' where m and n are integers, 1 <= m <= n.  Only tests hashing to m will be run.")
 	bv(&kola.Options.SSHOnTestFailure, "ssh-on-test-failure", false, "SSH into a machine when tests fail")
 	//sv(&kola.Options.Stream, "stream", "", "CoreOS stream ID (e.g. for Fedora CoreOS: stable, testing, next)")
 	sv(&kola.Options.CosaWorkdir, "workdir", "", "nestos-assembler working directory")
 	sv(&kola.Options.CosaBuildId, "build", "", "nestos-assembler build ID")
 	sv(&kola.Options.CosaBuildArch, "arch", coreosarch.CurrentRpmArch(), "The target architecture of the build")
+	sv(&kola.Options.AppendButane, "append-butane", "", "Path to Butane config which is merged with test code")
+	sv(&kola.Options.AppendIgnition, "append-ignition", "", "Path to Ignition config which is merged with test code")
+	// we make this a percentage to avoid having to deal with floats
+	root.PersistentFlags().UintVar(&kola.Options.ExtendTimeoutPercent, "extend-timeout-percentage", 0, "Extend all test timeouts by N percent")
 	// rhcos-specific options
 	sv(&kola.Options.OSContainer, "oscontainer", "", "oscontainer image pullspec for pivot (RHCOS only)")
 
@@ -86,8 +92,7 @@ func init() {
 	// sv(&kola.AWSOptions.IAMInstanceProfile, "aws-iam-profile", "kola", "AWS IAM instance profile name")
 
 	// azure-specific options
-	// sv(&kola.AzureOptions.AzureProfile, "azure-profile", "", "Azure profile (default \"~/"+auth.AzureProfilePath+"\")")
-	// sv(&kola.AzureOptions.AzureAuthLocation, "azure-auth", "", "Azure auth location (default \"~/"+auth.AzureAuthPath+"\")")
+	// sv(&kola.AzureOptions.AzureCredentials, "azure-credentials", "", "Azure credentials file location (default \"~/"+auth.AzureCredentialsPath+"\")")
 	// sv(&kola.AzureOptions.DiskURI, "azure-disk-uri", "", "Azure disk uri (custom images)")
 	// sv(&kola.AzureOptions.Publisher, "azure-publisher", "CoreOS", "Azure image publisher (default \"CoreOS\"")
 	// sv(&kola.AzureOptions.Offer, "azure-offer", "CoreOS", "Azure image offer (default \"CoreOS\"")
@@ -110,16 +115,17 @@ func init() {
 	// sv(&kola.ESXOptions.Profile, "esx-profile", "", "ESX profile (default \"default\")")
 	// sv(&kola.ESXOptions.BaseVMName, "esx-base-vm", "", "ESX base VM name")
 
-	// gce-specific options
-	// sv(&kola.GCEOptions.Image, "gce-image", "", "GCE image, full api endpoints names are accepted if resource is in a different project")
-	// sv(&kola.GCEOptions.Project, "gce-project", "fedora-coreos-devel", "GCE project name")
-	// sv(&kola.GCEOptions.Zone, "gce-zone", "us-central1-a", "GCE zone name")
-	// sv(&kola.GCEOptions.MachineType, "gce-machinetype", "n1-standard-1", "GCE machine type")
-	// sv(&kola.GCEOptions.DiskType, "gce-disktype", "pd-ssd", "GCE disk type")
-	// sv(&kola.GCEOptions.Network, "gce-network", "default", "GCE network")
-	// sv(&kola.GCEOptions.ServiceAcct, "gce-service-account", "", "GCE service account to attach to instance (default project default)")
-	// bv(&kola.GCEOptions.ServiceAuth, "gce-service-auth", false, "for non-interactive auth when running within GCE")
-	// sv(&kola.GCEOptions.JSONKeyFile, "gce-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCEConfigPath+"\")")
+	// gcp-specific options
+	// sv(&kola.GCPOptions.Image, "gcp-image", "", "GCP image, full api endpoints names are accepted if resource is in a different project")
+	// sv(&kola.GCPOptions.Project, "gcp-project", "fedora-coreos-devel", "GCP project name")
+	// sv(&kola.GCPOptions.Zone, "gcp-zone", "us-central1-a", "GCP zone name")
+	// sv(&kola.GCPOptions.MachineType, "gcp-machinetype", "", "GCP machine type")
+	// sv(&kola.GCPOptions.DiskType, "gcp-disktype", "pd-ssd", "GCP disk type")
+	// sv(&kola.GCPOptions.Network, "gcp-network", "default", "GCP network")
+	// sv(&kola.GCPOptions.ServiceAcct, "gcp-service-account", "", "GCP service account to attach to instance (default project default)")
+	// bv(&kola.GCPOptions.ServiceAuth, "gcp-service-auth", false, "for non-interactive auth when running within GCP")
+	// sv(&kola.GCPOptions.JSONKeyFile, "gcp-json-key", "", "use a service account's JSON key for authentication (default \"~/"+auth.GCPConfigPath+"\")")
+	// bv(&kola.GCPOptions.Confidential, "gcp-confidential-vm", false, "create confidential instances")
 
 	// openstack-specific options
 	sv(&kola.OpenStackOptions.ConfigPath, "openstack-config-file", "", "Path to a clouds.yaml formatted OpenStack config file. The underlying library defaults to ./clouds.yaml")
@@ -146,15 +152,21 @@ func init() {
 	sv(&kola.QEMUOptions.Firmware, "qemu-firmware", "", "Boot firmware: bios,uefi,uefi-secure (default bios)")
 	sv(&kola.QEMUOptions.DiskImage, "qemu-image", "", "path to NestOS disk image")
 	sv(&kola.QEMUOptions.DiskSize, "qemu-size", "", "Resize target disk via qemu-img resize [+]SIZE")
+	sv(&kola.QEMUOptions.DriveOpts, "qemu-drive-opts", "", "Arbitrary options to append to qemu -drive for primary disk")
 	sv(&kola.QEMUOptions.Memory, "qemu-memory", "", "Default memory size in MB")
 	bv(&kola.QEMUOptions.NbdDisk, "qemu-nbd-socket", false, "Present the disks over NBD socket to qemu")
 	bv(&kola.QEMUOptions.MultiPathDisk, "qemu-multipath", false, "Enable multiple paths for the main disk")
 	bv(&kola.QEMUOptions.Native4k, "qemu-native-4k", false, "Force 4k sectors for main disk")
 	bv(&kola.QEMUOptions.Nvme, "qemu-nvme", false, "Use NVMe for main disk")
 	bv(&kola.QEMUOptions.Swtpm, "qemu-swtpm", true, "Create temporary software TPM")
+	ssv(&kola.QEMUOptions.BindRO, "qemu-bind-ro", nil, "Inject a host directory; this does not automatically mount in the guest")
 
 	sv(&kola.QEMUIsoOptions.IsoPath, "qemu-iso", "", "path to NestOS ISO image")
 	bv(&kola.QEMUIsoOptions.AsDisk, "qemu-iso-as-disk", false, "attach ISO image as regular disk")
+	// s390x secex specific options
+	bv(&kola.QEMUOptions.SecureExecution, "qemu-secex", false, "Run IBM Secure Execution Image")
+	sv(&kola.QEMUOptions.SecureExecutionIgnitionPubKey, "qemu-secex-ignition-pubkey", "", "Path to Ignition GPG Public Key")
+	sv(&kola.QEMUOptions.SecureExecutionHostKey, "qemu-secex-hostkey", "", "Path to Secure Execution HKD certificate")
 }
 
 // Sync up the command line options if there is dependency
@@ -168,21 +180,21 @@ func syncOptionsImpl(useCosa bool) error {
 		return fmt.Errorf("unsupported %v %q", name, item)
 	}
 
-	// TODO: Could also auto-synchronize if e.g. --aws-ami is passed
-	if kolaPlatform == "" {
-		if kola.QEMUIsoOptions.IsoPath != "" {
-			kolaPlatform = "qemu-iso"
-		} else {
-			kolaPlatform = "qemu-unpriv"
-		}
+	if kolaPlatform == "iso" {
+		kolaPlatform = "qemu-iso"
 	}
 
-	// There used to be a "privileged" qemu path, it is no longer supported.
-	// Alias qemu to qemu-unpriv.
-	if kolaPlatform == "qemu" {
-		kolaPlatform = "qemu-unpriv"
-	} else if kolaPlatform == "iso" {
+	if kolaPlatform == "" && kola.QEMUIsoOptions.IsoPath != "" {
 		kolaPlatform = "qemu-iso"
+	}
+
+	// There used to be two QEMU platforms: privileged ('qemu') and
+	// unprivileged ('qemu-unpriv'). We first removed support for privileged
+	// QEMU and aliased it to 'qemu-unpriv' and then renamed and merged
+	// 'qemu-unpriv' to 'qemu' to unify on a single name. 'qemu' is now the
+	// default.
+	if kolaPlatform == "" {
+		kolaPlatform = "qemu"
 	}
 
 	// test parallelism
@@ -210,8 +222,6 @@ func syncOptionsImpl(useCosa bool) error {
 			kola.QEMUOptions.Firmware = "uefi"
 		} else if kola.Options.CosaBuildArch == "x86_64" && kola.QEMUOptions.Native4k {
 			kola.QEMUOptions.Firmware = "uefi"
-		} else {
-			kola.QEMUOptions.Firmware = "bios"
 		}
 	}
 
@@ -228,6 +238,23 @@ func syncOptionsImpl(useCosa bool) error {
 			kola.AWSOptions.InstanceType = "c6g.xlarge"
 		}
 		fmt.Printf("Using %s instance type\n", kola.AWSOptions.InstanceType)
+	}
+
+	// Choose an appropriate GCP instance type for the target architecture
+	if kolaPlatform == "gcp" && kola.GCPOptions.MachineType == "" {
+		switch kola.Options.CosaBuildArch {
+		case "x86_64":
+			if kola.GCPOptions.Confidential {
+				// https://cloud.google.com/compute/confidential-vm/docs/locations
+				fmt.Print("Setting instance type for confidential computing")
+				kola.GCPOptions.MachineType = "n2d-standard-2"
+			} else {
+				kola.GCPOptions.MachineType = "n1-standard-1"
+			}
+		case "aarch64":
+			kola.GCPOptions.MachineType = "t2a-standard-1"
+		}
+		fmt.Printf("Using %s instance type\n", kola.GCPOptions.MachineType)
 	}
 
 	// if no external dirs were given, automatically add the working directory;
@@ -298,6 +325,9 @@ func syncOptionsImpl(useCosa bool) error {
 			return err
 		}
 	}
+	// Currently the `--arch` option is defined in terms of coreos-assembler, but
+	// we also unconditionally use it for qemu if present.
+	kola.QEMUOptions.Arch = kola.Options.CosaBuildArch
 
 	units, _ := root.PersistentFlags().GetStringSlice("debug-systemd-units")
 	for _, unit := range units {
@@ -329,7 +359,13 @@ func syncOptions() error {
 // options that can be derived from the cosa build metadata
 func syncCosaOptions() error {
 	switch kolaPlatform {
-	case "qemu-unpriv", "qemu":
+	case "qemu":
+		if kola.QEMUOptions.SecureExecution && kola.QEMUOptions.DiskImage == "" && kola.CosaBuild.Meta.BuildArtifacts.SecureExecutionQemu != nil {
+			kola.QEMUOptions.DiskImage = filepath.Join(kola.CosaBuild.Dir, kola.CosaBuild.Meta.BuildArtifacts.SecureExecutionQemu.Path)
+		}
+		if kola.QEMUOptions.SecureExecutionIgnitionPubKey == "" && kola.CosaBuild.Meta.BuildArtifacts.SecureExecutionIgnitionPubKey != nil {
+			kola.QEMUOptions.SecureExecutionIgnitionPubKey = filepath.Join(kola.CosaBuild.Dir, kola.CosaBuild.Meta.BuildArtifacts.SecureExecutionIgnitionPubKey.Path)
+		}
 		if kola.QEMUOptions.DiskImage == "" && kola.CosaBuild.Meta.BuildArtifacts.Qemu != nil {
 			kola.QEMUOptions.DiskImage = filepath.Join(kola.CosaBuild.Dir, kola.CosaBuild.Meta.BuildArtifacts.Qemu.Path)
 		}
@@ -347,15 +383,15 @@ func syncCosaOptions() error {
 				}
 			}
 		}
-	case "gce":
+	case "gcp":
 		// Pick up the GCP image from the build metadata
-		if kola.GCEOptions.Image == "" && kola.CosaBuild.Meta.Gcp != nil {
-			kola.GCEOptions.Image =
+		if kola.GCPOptions.Image == "" && kola.CosaBuild.Meta.Gcp != nil {
+			kola.GCPOptions.Image =
 				fmt.Sprintf("projects/%s/global/images/%s",
 					kola.CosaBuild.Meta.Gcp.ImageProject,
 					kola.CosaBuild.Meta.Gcp.ImageName)
 
-			fmt.Printf("Using GCP image %s\n", kola.GCEOptions.Image)
+			fmt.Printf("Using GCP image %s\n", kola.GCPOptions.Image)
 		}
 	}
 

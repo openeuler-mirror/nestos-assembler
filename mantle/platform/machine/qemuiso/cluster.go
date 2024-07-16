@@ -26,9 +26,9 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/pkg/errors"
 
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
-	"github.com/coreos/mantle/util"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/util"
 )
 
 // Cluster is a local cluster of QEMU-based virtual machines.
@@ -112,7 +112,7 @@ func (qc *Cluster) NewMachineWithQemuOptions(userdata *conf.UserData, options pl
 		if err != nil {
 			return nil, errors.Wrapf(err, "parsing memory option")
 		}
-		builder.Memory = int(memory)
+		builder.MemoryMiB = int(memory)
 	}
 
 	if err := builder.AddIso(qc.flight.opts.IsoPath, "", qc.flight.opts.AsDisk); err != nil {
@@ -124,12 +124,12 @@ func (qc *Cluster) NewMachineWithQemuOptions(userdata *conf.UserData, options pl
 	}
 
 	if len(options.HostForwardPorts) > 0 {
-		builder.EnableUsermodeNetworking(options.HostForwardPorts)
+		builder.EnableUsermodeNetworking(options.HostForwardPorts, "")
 	} else {
 		h := []platform.HostForwardPort{
 			{Service: "ssh", HostPort: 0, GuestPort: 22},
 		}
-		builder.EnableUsermodeNetworking(h)
+		builder.EnableUsermodeNetworking(h, "")
 	}
 
 	if options.AdditionalNics > 0 {

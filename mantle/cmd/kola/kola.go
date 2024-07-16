@@ -17,13 +17,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -31,27 +31,27 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
+	"github.com/coreos/coreos-assembler/mantle/cli"
+	"github.com/coreos/coreos-assembler/mantle/fcos"
+	"github.com/coreos/coreos-assembler/mantle/harness/reporters"
+	"github.com/coreos/coreos-assembler/mantle/harness/testresult"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/kola/register"
+	"github.com/coreos/coreos-assembler/mantle/system"
+	"github.com/coreos/coreos-assembler/mantle/util"
 	cosa "github.com/coreos/coreos-assembler/pkg/builds"
-	"github.com/coreos/mantle/cli"
-	"github.com/coreos/mantle/fcos"
-	"github.com/coreos/mantle/harness/reporters"
-	"github.com/coreos/mantle/harness/testresult"
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/kola/register"
-	"github.com/coreos/mantle/system"
-	"github.com/coreos/mantle/util"
 	coreosarch "github.com/coreos/stream-metadata-go/arch"
 
 	// register OS test suite
-	_ "github.com/coreos/mantle/kola/registry"
+	_ "github.com/coreos/coreos-assembler/mantle/kola/registry"
 )
 
 var (
-	plog = capnslog.NewPackageLogger("github.com/coreos/mantle", "kola")
+	plog = capnslog.NewPackageLogger("github.com/coreos/coreos-assembler/mantle", "kola")
 
 	root = &cobra.Command{
 		Use:   "kola [command]",
-		Short: "The CoreOS Superdeep Borehole",
+		Short: "The NestOS Superdeep Borehole",
 		// http://en.wikipedia.org/wiki/Kola_Superdeep_Borehole
 	}
 
@@ -127,7 +127,7 @@ This can be useful for e.g. serving locally built OSTree repos to qemu.
 	runExternals      []string
 	runMultiply       int
 	runRerunFlag      bool
-	allowRerunSuccess bool
+	allowRerunSuccess string
 
 	nonexclusiveWrapperMatch = regexp.MustCompile(`^non-exclusive-test-bucket-[0-9]$`)
 )
@@ -137,7 +137,7 @@ func init() {
 	cmdRun.Flags().StringArrayVarP(&runExternals, "exttest", "E", nil, "Externally defined tests (will be found in DIR/tests/kola)")
 	cmdRun.Flags().IntVar(&runMultiply, "multiply", 0, "Run the provided tests N times (useful to find race conditions)")
 	cmdRun.Flags().BoolVar(&runRerunFlag, "rerun", false, "re-run failed tests once")
-	cmdRun.Flags().BoolVar(&allowRerunSuccess, "allow-rerun-success", false, "Allow kola test run to be successful when tests pass during re-run")
+	cmdRun.Flags().StringVar(&allowRerunSuccess, "allow-rerun-success", "", "Allow kola test run to be successful when tests with given 'tags=...[,...]' pass during re-run")
 
 	root.AddCommand(cmdList)
 	cmdList.Flags().StringArrayVarP(&runExternals, "exttest", "E", nil, "Externally defined tests in directory")
@@ -152,6 +152,7 @@ func init() {
 	cmdRunUpgrade.Flags().BoolVar(&findParentImage, "find-parent-image", false, "automatically find parent image if not provided -- note on qemu, this will download the image")
 	cmdRunUpgrade.Flags().StringVar(&qemuImageDir, "qemu-image-dir", "", "directory in which to cache QEMU images if --fetch-parent-image is enabled")
 	cmdRunUpgrade.Flags().BoolVar(&runRerunFlag, "rerun", false, "re-run failed tests once")
+	cmdRunUpgrade.Flags().StringVar(&allowRerunSuccess, "allow-rerun-success", "", "Allow kola test run to be successful when tests with given 'tags=...[,...]' pass during re-run")
 
 	root.AddCommand(cmdRerun)
 
@@ -172,7 +173,7 @@ func preRun(cmd *cobra.Command, args []string) error {
 
 	// Packet uses storage, and storage talks too much.
 	if !plog.LevelAt(capnslog.INFO) {
-		mantleLogger := capnslog.MustRepoLogger("github.com/coreos/mantle")
+		mantleLogger := capnslog.MustRepoLogger("github.com/coreos/coreos-assembler/mantle")
 		mantleLogger.SetLogLevel(map[string]capnslog.LogLevel{
 			"storage": capnslog.WARNING,
 		})
@@ -238,6 +239,27 @@ func runRerun(cmd *cobra.Command, args []string) error {
 	return kolaRunPatterns(patterns, false)
 }
 
+// parseRerunSuccess converts rerun specification into a tags
+func parseRerunSuccess() ([]string, error) {
+	// In the future we may extend format to something like: <SELECTOR>[:<OPTIONS>]
+	//   SELECTOR
+	//     tags=...,...,...
+	//     tests=...,...,...
+	//   OPTIONS
+	//     n=...
+	//     allow-single=..
+	tags := []string{}
+	if len(allowRerunSuccess) == 0 {
+		return tags, nil
+	}
+	if !strings.HasPrefix(allowRerunSuccess, "tags=") {
+		return nil, fmt.Errorf("invalid rerun spec %s", allowRerunSuccess)
+	}
+	split := strings.TrimPrefix(allowRerunSuccess, "tags=")
+	tags = append(tags, strings.Split(split, ",")...)
+	return tags, nil
+}
+
 func kolaRunPatterns(patterns []string, rerun bool) error {
 	var err error
 	outputDir, err = kola.SetupOutputDir(outputDir, kolaPlatform)
@@ -249,7 +271,12 @@ func kolaRunPatterns(patterns []string, rerun bool) error {
 		return err
 	}
 
-	runErr := kola.RunTests(patterns, runMultiply, rerun, allowRerunSuccess, kolaPlatform, outputDir, !kola.Options.NoTestExitError)
+	rerunSuccessTags, err := parseRerunSuccess()
+	if err != nil {
+		return err
+	}
+
+	runErr := kola.RunTests(patterns, runMultiply, rerun, rerunSuccessTags, kolaPlatform, outputDir)
 
 	// needs to be after RunTests() because harness empties the directory
 	if err := writeProps(); err != nil {
@@ -292,7 +319,7 @@ func writeProps() error {
 		Server     string `json:"server"`
 		BaseVMName string `json:"base_vm_name"`
 	}
-	type GCE struct {
+	type GCP struct {
 		Image       string `json:"image"`
 		MachineType string `json:"type"`
 	}
@@ -324,7 +351,7 @@ func writeProps() error {
 		Azure       Azure     `json:"azure"`
 		DO          DO        `json:"do"`
 		ESX         ESX       `json:"esx"`
-		GCE         GCE       `json:"gce"`
+		GCP         GCP       `json:"gcp"`
 		OpenStack   OpenStack `json:"openstack"`
 		Packet      Packet    `json:"packet"`
 		QEMU        QEMU      `json:"qemu"`
@@ -356,9 +383,9 @@ func writeProps() error {
 			Server:     kola.ESXOptions.Server,
 			BaseVMName: kola.ESXOptions.BaseVMName,
 		},
-		GCE: GCE{
-			Image:       kola.GCEOptions.Image,
-			MachineType: kola.GCEOptions.MachineType,
+		GCP: GCP{
+			Image:       kola.GCPOptions.Image,
+			MachineType: kola.GCPOptions.MachineType,
 		},
 		OpenStack: OpenStack{
 			Region: kola.OpenStackOptions.Region,
@@ -394,7 +421,8 @@ func runList(cmd *cobra.Command, args []string) error {
 			test.ExcludeArchitectures,
 			test.Distros,
 			test.ExcludeDistros,
-			test.Tags}
+			test.Tags,
+			test.Description}
 		item.updateValues()
 		testlist = append(testlist, item)
 	}
@@ -403,39 +431,44 @@ func runList(cmd *cobra.Command, args []string) error {
 		return testlist[i].Name < testlist[j].Name
 	})
 
+	var newtestlist []*item
+	for _, item := range testlist {
+		platformFound := (listPlatform == "all")
+		if listPlatform != "all" {
+			for _, platform := range item.Platforms {
+				if listPlatform == "all" || platform == "all" || platform == listPlatform {
+					platformFound = true
+					break
+				}
+			}
+		}
+
+		distroFound := (listDistro == "all")
+		if listDistro != "all" {
+			for _, distro := range item.Distros {
+				if listDistro == "all" || distro == "all" || distro == listDistro {
+					distroFound = true
+					break
+				}
+			}
+		}
+
+		if platformFound && distroFound {
+			newtestlist = append(newtestlist, item)
+		}
+	}
+
 	if !listJSON {
 		var w = tabwriter.NewWriter(os.Stdout, 0, 8, 0, '\t', 0)
 
 		fmt.Fprintln(w, "Test Name\tPlatforms\tArchitectures\tDistributions\tTags")
 		fmt.Fprintln(w, "\t")
-		for _, item := range testlist {
-			platformFound := (listPlatform == "all")
-			if listPlatform != "all" {
-				for _, platform := range item.Platforms {
-					if listPlatform == "all" || platform == "all" || platform == listPlatform {
-						platformFound = true
-						break
-					}
-				}
-			}
-
-			distroFound := (listDistro == "all")
-			if listDistro != "all" {
-				for _, distro := range item.Distros {
-					if listDistro == "all" || distro == "all" || distro == listDistro {
-						distroFound = true
-						break
-					}
-				}
-			}
-
-			if platformFound && distroFound {
-				fmt.Fprintf(w, "%v\n", item)
-			}
+		for _, item := range newtestlist {
+			fmt.Fprintf(w, "%v\n", item)
 		}
 		w.Flush()
 	} else {
-		out, err := json.MarshalIndent(testlist, "", "\t")
+		out, err := json.MarshalIndent(newtestlist, "", "\t")
 		if err != nil {
 			return errors.Wrapf(err, "marshalling test list")
 		}
@@ -454,6 +487,7 @@ type item struct {
 	Distros              []string
 	ExcludeDistros       []string `json:"-"`
 	Tags                 []string
+	Description          string
 }
 
 func (i *item) updateValues() {
@@ -583,9 +617,9 @@ func syncFindParentImageOptions() error {
 	// Here we handle the --fetch-parent-image --> platform-specific options
 	// based on its cosa build metadata
 	switch kolaPlatform {
-	case "qemu-unpriv":
+	case "qemu":
 		if qemuImageDir == "" {
-			if qemuImageDir, err = ioutil.TempDir("/var/tmp", "kola-run-upgrade"); err != nil {
+			if qemuImageDir, err = os.MkdirTemp("/var/tmp", "kola-run-upgrade"); err != nil {
 				return err
 			}
 			qemuImageDirIsTemp = true
@@ -605,8 +639,8 @@ func syncFindParentImageOptions() error {
 		if err != nil {
 			return err
 		}
-	case "gce":
-		kola.GCEOptions.Image, err = parentCosaBuild.FindGCPImage()
+	case "gcp":
+		kola.GCPOptions.Image, err = parentCosaBuild.FindGCPImage()
 		if err != nil {
 			return err
 		}
@@ -680,7 +714,7 @@ func runRunUpgrade(cmd *cobra.Command, args []string) error {
 		patterns = args
 	}
 
-	runErr := kola.RunUpgradeTests(patterns, runRerunFlag, kolaPlatform, outputDir, !kola.Options.NoTestExitError)
+	runErr := kola.RunUpgradeTests(patterns, runRerunFlag, kolaPlatform, outputDir)
 
 	// needs to be after RunTests() because harness empties the directory
 	if err := writeProps(); err != nil {

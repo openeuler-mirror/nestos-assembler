@@ -21,7 +21,7 @@ fi
 
 set -x
 
-coreos_gf_run_mount "${src}"
+coreos_gf_run_mount "${src}" --ro
 
 coreos_gf glob read-file /boot/loader/entries/ostree*conf | \
     sed -e '/^options/!d' -e 's/^options\s*//'

@@ -25,17 +25,18 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/storage/v1"
 
-	"github.com/coreos/mantle/platform/api/gcloud"
+	"github.com/coreos/coreos-assembler/mantle/platform/api/gcloud"
 )
 
 var (
 	cmdCreateImage = &cobra.Command{
 		Use:   "create-image",
-		Short: "Create GCE image",
-		Long:  "Create GCE image from an existing file in Google Storage",
+		Short: "Create GCP image",
+		Long:  "Create GCP image from an existing file in Google Storage",
 		Run:   runCreateImage,
 	}
 
+	createImageArch    string
 	createImageFamily  string
 	createImageBoard   string
 	createImageVersion string
@@ -46,8 +47,10 @@ var (
 
 func init() {
 	user := os.Getenv("USER")
+	cmdCreateImage.Flags().StringVar(&createImageArch, "arch",
+		"", "The architecture of the image")
 	cmdCreateImage.Flags().StringVar(&createImageFamily, "family",
-		user, "GCE image group and name prefix")
+		user, "GCP image group and name prefix")
 	cmdCreateImage.Flags().StringVar(&createImageBoard, "board",
 		"amd64-usr", "OS board name")
 	cmdCreateImage.Flags().StringVar(&createImageVersion, "version",
@@ -56,10 +59,10 @@ func init() {
 		"gs://users.developer.core-os.net/"+user+"/boards",
 		"Storage URL prefix")
 	cmdCreateImage.Flags().StringVar(&createImageName, "source-name",
-		"coreos_production_gce.tar.gz",
+		"coreos_production_gcp.tar.gz",
 		"Storage image name")
 	cmdCreateImage.Flags().BoolVar(&createImageForce, "force",
-		false, "overwrite existing GCE images without prompt")
+		false, "overwrite existing GCP images without prompt")
 	GCloud.AddCommand(cmdCreateImage)
 }
 
@@ -91,7 +94,7 @@ func runCreateImage(cmd *cobra.Command, args []string) {
 	bucket := gsURL.Host
 	imageNameGS := strings.TrimPrefix(path.Join(gsURL.Path,
 		createImageBoard, createImageVersion, createImageName), "/")
-	imageNameGCE := gceSanitize(createImageFamily + "-" + createImageVersion)
+	imageNameGCP := gcpSanitize(createImageFamily + "-" + createImageVersion)
 
 	ctx := context.Background()
 	storageAPI, err := storage.NewService(ctx)
@@ -111,19 +114,20 @@ func runCreateImage(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Creating image in GCE: %v...\n", imageNameGCE)
+	fmt.Printf("Creating image in GCP: %v...\n", imageNameGCP)
 
-	// create image on gce
+	// create image on gcp
 	storageSrc := fmt.Sprintf("https://storage.googleapis.com/%v/%v", bucket, imageNameGS)
 	_, pending, err := api.CreateImage(&gcloud.ImageSpec{
-		Name:        imageNameGCE,
-		SourceImage: storageSrc,
+		Architecture: createImageArch,
+		Name:         imageNameGCP,
+		SourceImage:  storageSrc,
 	}, createImageForce)
 	if err == nil {
 		err = pending.Wait()
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Creating GCE image failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Creating GCP image failed: %v\n", err)
 		os.Exit(1)
 	}
 }

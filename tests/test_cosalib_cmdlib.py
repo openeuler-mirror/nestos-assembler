@@ -13,17 +13,17 @@ from cosalib import cmdlib
 PY_MAJOR, PY_MINOR, PY_PATCH = platform.python_version_tuple()
 
 
-def test_run_verbose():
+def test_runcmd():
     """
-    Verify run_verbose returns expected information
+    Verify runcmd returns expected information
     """
-    result = cmdlib.run_verbose(['echo', 'hi'])
+    result = cmdlib.runcmd(['echo', 'hi'])
     assert result.stdout is None
     with pytest.raises(FileNotFoundError):
-        cmdlib.run_verbose(['idonotexist'])
+        cmdlib.runcmd(['idonotexist'])
     # If we are not at least on Python 3.7 we must skip the following test
     if PY_MAJOR == 3 and PY_MINOR >= 7:
-        result = cmdlib.run_verbose(['echo', 'hi'], capture_output=True)
+        result = cmdlib.runcmd(['echo', 'hi'], capture_output=True)
         assert result.stdout == b'hi\n'
 
 
@@ -102,58 +102,11 @@ def test_rm_allow_noent(tmpdir):
     cmdlib.rm_allow_noent(test_path)
 
 
-def test_import_ostree_commit(monkeypatch, tmpdir):
-    """
-    Verify the correct ostree/tar commands are executed when
-    import_ostree_commit is called.
-    """
-    repo_tmp = os.path.join(tmpdir, 'tmp')
-    os.mkdir(repo_tmp)
-
-    class monkeyspcheck_call:
-        """
-        Verifies each subprocess.check_call matches what is required.
-        """
-        check_call_count = 0
-
-        def __call__(self, *args, **kwargs):
-            if self.check_call_count == 0:
-                assert args[0] == [
-                    'ostree', 'init', '--repo', tmpdir, '--mode=archive']
-            if self.check_call_count == 1:
-                assert args[0][0:2] == ['tar', '-C']
-                assert args[0][3:5] == ['-xf', './tarfile.tar']
-            if self.check_call_count == 2:
-                assert args[0][0:4] == [
-                    'ostree', 'pull-local', '--repo', tmpdir]
-                assert args[0][5] == 'commit'
-            self.check_call_count += 1
-
-    def monkeyspcall(*args, **kwargs):
-        """
-        Verifies suprocess.call matches what we need.
-        """
-        assert args[0] == ['ostree', 'show', '--repo', tmpdir, 'commit']
-
-    # Monkey patch the subprocess function
-    monkeypatch.setattr(subprocess, 'check_call', monkeyspcheck_call())
-    monkeypatch.setattr(subprocess, 'call', monkeyspcall)
-    build = {
-        'ostree-commit': 'commit',
-        'images': {
-            'ostree': {
-                'path': 'tarfile.tar'
-            }
-        }
-    }
-    cmdlib.import_ostree_commit(tmpdir, './', build)
-
-
 def test_image_info(tmpdir):
-    cmdlib.run_verbose([
+    cmdlib.runcmd([
         "qemu-img", "create", "-f", "qcow2", f"{tmpdir}/test.qcow2", "10M"])
     assert cmdlib.image_info(f"{tmpdir}/test.qcow2").get('format') == "qcow2"
-    cmdlib.run_verbose([
+    cmdlib.runcmd([
         "qemu-img", "create", "-f", "vpc",
         '-o', 'force_size,subformat=fixed',
         f"{tmpdir}/test.vpc", "10M"])

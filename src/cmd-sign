@@ -11,7 +11,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 import boto3
@@ -30,6 +29,9 @@ from gi.repository import GLib, Gio, OSTree
 
 # this is really the worst case scenario, it's usually pretty fast otherwise
 ROBOSIGNATORY_REQUEST_TIMEOUT_SEC = 60 * 60
+
+# https://pagure.io/fedora-infrastructure/issue/10899#comment-854645
+ROBOSIGNATORY_MESSAGE_PRIORITY = 4
 
 fedenv = 'prod'
 
@@ -54,6 +56,8 @@ def parse_args():
                                     'RoboSignatory via fedora-messaging')
     robosig.add_argument("--s3", metavar='<BUCKET>[/PREFIX]', required=True,
                          help="bucket and prefix to S3 builds/ dir")
+    robosig.add_argument("--aws-config-file", metavar='CONFIG', default="",
+                         help="Path to AWS config file")
     group = robosig.add_mutually_exclusive_group(required=True)
     group.add_argument("--ostree", help="sign commit", action='store_true')
     group.add_argument("--images", help="sign images", action='store_true')
@@ -73,6 +77,8 @@ def parse_args():
 
 
 def cmd_robosignatory(args):
+    if args.aws_config_file:
+        os.environ["AWS_CONFIG_FILE"] = args.aws_config_file
     s3 = boto3.client('s3')
     args.bucket, args.prefix = get_bucket_and_prefix(args.s3)
 
@@ -120,6 +126,7 @@ def robosign_ostree(args, s3, build, gpgkey):
         request_type='ostree-sign',
         config=args.fedmsg_conf,
         request_timeout=ROBOSIGNATORY_REQUEST_TIMEOUT_SEC,
+        priority=ROBOSIGNATORY_MESSAGE_PRIORITY,
         environment=fedenv,
         body={
             'build_id': args.build,
@@ -135,7 +142,7 @@ def robosign_ostree(args, s3, build, gpgkey):
     # Ensure we have an unpacked repo with the ostree content
     if not os.path.exists('tmp/repo'):
         subprocess.check_call(['ostree', '--repo=tmp/repo', 'init', '--mode=archive'])
-    import_ostree_commit('tmp/repo', builddir, build, force=True)
+    import_ostree_commit(os.getcwd(), builddir, build)
     repo = OSTree.Repo.new(Gio.File.new_for_path('tmp/repo'))
     repo.open(None)
 
@@ -179,24 +186,16 @@ def robosign_ostree(args, s3, build, gpgkey):
         # We've validated the commit, now re-export the repo
         ostree_image = build['images']['ostree']
         exported_ostree_path = os.path.join(builddir, ostree_image['path'])
-        if exported_ostree_path.endswith('.ociarchive'):
-            # Files stored in the build directory are mode 0600 to prevent
-            # accidental mutation.  Remove the existing one because otherwise
-            # we'll try to `open(O_TRUNC)` it and fail.
-            os.unlink(exported_ostree_path)
-            subprocess.check_call(['ostree', 'container', 'export', '--repo=tmp/repo', checksum, f'oci-archive:{exported_ostree_path}:latest'])
+        exported_ostree_ref = f'oci-archive:{exported_ostree_path}:latest'
+        # Detect and use the replace-detached-metadata API only if available
+        verb = "replace-detached-metadata"
+        tmp_image = os.path.join(d, 'tmp.ociarchive')
+        tmp_ref = f"oci-archive:{tmp_image}:latest"
+        if subprocess.check_output(['ostree', 'container', 'image', '--help'], encoding='UTF-8').find(verb) >= 0:
+            subprocess.check_call(['ostree', 'container', 'image', verb, f'--src={exported_ostree_ref}', f'--dest={tmp_ref}', metapath])
         else:
-            tmp_tar = os.path.join(d, ostree_image['path'])
-            # To make things a bit more efficient, append the commitmeta at
-            # the end of the archive after reflinking.
-            subprocess.check_call(['cp-reflink', exported_ostree_path, tmp_tar])
-            # Normally we make our artifacts 0600 to avoid accidental mutation, but since
-            # we can efficiently *append* to an existing tar archive, do that instead of
-            # copying and rewriting.  We just need to temporarily make it writable
-            os.chmod(tmp_tar, 0o660)
-            with tarfile.open(tmp_tar, 'a:') as t:
-                t.add(metapath, arcname=f'objects/{checksum[:2]}/{checksum[2:]}.commitmeta')
-            shutil.move(tmp_tar, exported_ostree_path)
+            subprocess.check_call(['ostree', 'container', 'export', '--repo=tmp/repo', checksum, tmp_ref])
+        os.rename(tmp_image, exported_ostree_path)
         # Finalize the export by making it not writable.
         os.chmod(exported_ostree_path, 0o400)
         ostree_image['size'] = os.path.getsize(exported_ostree_path)
@@ -220,6 +219,7 @@ def robosign_images(args, s3, build, gpgkey):
         request_type='artifacts-sign',
         config=args.fedmsg_conf,
         request_timeout=ROBOSIGNATORY_REQUEST_TIMEOUT_SEC,
+        priority=ROBOSIGNATORY_MESSAGE_PRIORITY,
         environment=fedenv,
         body={
             'build_id': args.build,

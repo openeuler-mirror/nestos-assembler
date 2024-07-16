@@ -17,14 +17,13 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"regexp"
 	"strings"
 
-	"github.com/coreos/mantle/kola"
-	"github.com/coreos/mantle/platform"
-	"github.com/coreos/mantle/platform/conf"
+	"github.com/coreos/coreos-assembler/mantle/kola"
+	"github.com/coreos/coreos-assembler/mantle/platform"
+	"github.com/coreos/coreos-assembler/mantle/platform/conf"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -151,7 +150,7 @@ func runSwitchKernel(cmd *cobra.Command, args []string) error {
 func dropRpmFilesAll(m platform.Machine, localPath string) error {
 	fmt.Println("Dropping RT Kernel RPMs...")
 	re := regexp.MustCompile(`^kernel-rt-.*\.rpm$`)
-	files, err := ioutil.ReadDir(localPath)
+	files, err := os.ReadDir(localPath)
 	if err != nil {
 		return err
 	}

@@ -20,13 +20,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/coreos/mantle/platform/api/gcloud"
+	"github.com/coreos/coreos-assembler/mantle/platform/api/gcloud"
 )
 
 var (
 	cmdList = &cobra.Command{
 		Use:   "list-instances --prefix=<prefix>",
-		Short: "List instances on GCE",
+		Short: "List instances on GCP",
 		Run:   runList,
 	}
 )

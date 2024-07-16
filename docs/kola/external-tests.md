@@ -188,7 +188,7 @@ Here's an example `kola.json`:
 {
     "architectures": "!s390x ppc64le",
     "distros": "fcos",
-    "platforms": "qemu-unpriv",
+    "platforms": "qemu",
     "tags": "sometagname needs-internet skip-base-checks othertag",
     "requiredTag": "special",
     "additionalDisks": [ "5G" ],
@@ -199,7 +199,8 @@ Here's an example `kola.json`:
     "appendFirstbootKernelArgs": "ip=bond0:dhcp bond=bond0:ens5,ens6:mode=active-backup,miimon=100"
     "timeoutMin": 8,
     "exclusive": true,
-    "conflicts": ["ext.config.some-test", "podman.some-other-test"]
+    "conflicts": ["ext.config.some-test", "podman.some-other-test"],
+    "description": "test description"
 }
 ```
 
@@ -221,32 +222,39 @@ with `kola run --tag`, but some tags have semantic meaning.
 Tags with semantic meaning:
 
  - `needs-internet`: Taken from the Autopkgtest (linked above).  Currently only the `qemu` platform enforces this restriction.
- - `skip-base-checks`: Skip built-in checks for e.g. kernel warnings on the console.
+ - `platform-independent`: This test should pass or fail on all platforms (clouds and hardware architectures); it may be run less often.
+ - `skip-base-checks`: Skip built-in checks for e.g. kernel warnings on the console or systemd unit failures.
 
 If a test has a `requiredTag`, it is run only if the required tag is specified.
 In the example above, the test would only run if `--tag special` was provided.
 
 The `additionalDisks` key has the same semantics as the `--add-disk` argument
-to `qemuexec`. It is currently only supported on `qemu-unpriv`.
+to `qemuexec`. It is currently only supported on `qemu`.
+
+The `injectContainer` boolean if set will cause the framework to inject
+the ostree base image container into the target system; the path can be
+found in the environment variable `KOLA_OSTREE_OCIARCHIVE`.  This will be
+an `.ociarchive` file that can be e.g. loaded into the containers storage
+via `skopeo copy oci-archive:$KOLA_OSTREE_OCIARCHIVE containers-storage:localhost/os`.
 
 The `minDisk` key takes a size in GB and ensures that an instance type with at
 least the specified amount of primary disk space is used. On QEMU, this is
 equivalent to the `--qemu-size` argument to `qemuexec`. This is currently only
-enforced on `qemu-unpriv` and `aws`.
+enforced on `qemu` and `aws`.
 
 The `minMemory` key takes a size in MB and ensures that an instance type with
 at least the specified amount of memory is used. On QEMU, this is equivalent to
 the `--memory` argument to `qemuexec`. This is currently only enforced on
-`qemu-unpriv`.
+`qemu`.
 
 The `additionalNics` key has the same semantics as the `--additional-nics` argument
-to `qemuexec`. It is currently only supported on `qemu-unpriv`.
+to `qemuexec`. It is currently only supported on `qemu`.
 
 The `appendKernelArgs` key has the same semantics at the `--kargs` argument to
-`qemuexec`. It is currently only supported on `qemu-unpriv`.
+`qemuexec`. It is currently only supported on `qemu`.
 
 The `appendFirstbootKernelArgs` key has the same semantics at the `--firstbootkargs`
-argument to `qemuexec`. It is currently only supported on `qemu-unpriv`.
+argument to `qemuexec`. It is currently only supported on `qemu`.
 
 The `timeoutMin` key takes a positive integer and specifies a timeout for the test
 in minutes. After the specified amount of time, the test will be interrupted.
@@ -269,11 +277,28 @@ inline per test, like this:
 ```sh
 #!/bin/bash
 set -xeuo pipefail
-# kola: { "architectures": "x86_64", "platforms": "aws gcp", "tags": "needs-internet" }
+# kola: { "architectures": "x86_64", "platforms": "aws gcp", "tags": "needs-internet", "description": "test" }
 test code here
 ```
 
 This metadata stanza must start with `# kola: ` and have a single line of JSON.
+
+Even more recently, you can write the test metadata as YAML inline; this is signified
+by using `## kola: `.  The lines after it starting with `## ` will be parsed as metadata YAML.
+For example:
+
+```
+#!/bin/bash
+set -xeuo pipefail
+## kola:
+##   architectures: x86_64
+##   platforms: "aws gcp"  # azure support is pending
+##   tags: needs-internet
+##   description: test description
+test code here
+```
+
+A notable advantage of YAML here is support for inline comments.
 
 ## Quick Start
 
@@ -298,14 +323,14 @@ $ cd my-project/tests/kola
 $ $EDITOR basic/noop # Add the `noop` test
 #!/bin/bash
 set -xeuo pipefail
-# kola: { "architectures": "x86_64", "platforms": "qemu", "tags": "needs-internet" }
+# kola: { "architectures": "x86_64", "platforms": "qemu", "tags": "needs-internet", "description": "test" }
 # Test: I'm a NOOP!
 test 2 -gt 1
 $ chmod a+x basic/noop # Make sure the test is executable
 $ cosa kola run -p qemu --qemu-image path/to/qcow2 -E path/to/my-project/ 'ext.my-project.basic' # Run the test
 === RUN   ext.my-project.basic
 --- PASS: ext.my-project.basic (35.57s)
-PASS, output in _kola_temp/qemu-unpriv-2020-08-18-1815-2295199
+PASS, output in _kola_temp/qemu-2020-08-18-1815-2295199
 ```
 
 ## Fast build and iteration on your project's tests

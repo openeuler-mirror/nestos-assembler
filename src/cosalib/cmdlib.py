@@ -5,6 +5,7 @@ Houses helper code for python based coreos-assembler commands.
 import glob
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -27,7 +28,14 @@ from tenacity import (
 gi.require_version("RpmOstree", "1.0")
 from gi.repository import RpmOstree
 
-from datetime import datetime, timezone
+import datetime
+
+# Set up logging
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s - %(message)s")
+
+# there's no way to say "forever", so just use a huge number
+LOCK_DEFAULT_LIFETIME = datetime.timedelta(weeks=52)
 
 retry_stop = (stop_after_delay(10) | stop_after_attempt(5))
 retry_boto_exception = (retry_if_exception_type(ConnectionClosedError) |
@@ -42,32 +50,33 @@ def retry_callback(retry_state):
     print(f"Retrying after {retry_state.outcome.exception()}")
 
 
-def run_verbose(args, **kwargs):
-    """
-    Prints out the command being executed before executing a subprocess call.
-
-    :param args: All non-keyword arguments
-    :type args: list
-    :param kwargs: All keyword arguments
-    :type kwargs: dict
-    :raises: CalledProcessError
-    """
-    print("+ {}".format(subprocess.list2cmdline(args)))
-
-    # default to throwing exception
-    if 'check' not in kwargs.keys():
-        kwargs['check'] = True
-    # capture_output is only on python 3.7+. Provide convenience here
-    # until 3.7 is a baseline:
-    if kwargs.pop('capture_output', False):
-        kwargs['stdout'] = subprocess.PIPE
-        kwargs['stderr'] = subprocess.PIPE
-
+def runcmd(cmd: list, quiet: bool = False, **kwargs: int) -> subprocess.CompletedProcess:
+    '''
+    Run the given command using subprocess.run and perform verification.
+    @param cmd: list that represents the command to be executed
+    @param kwargs: key value pairs that represent options to run()
+    '''
     try:
-        process = subprocess.run(args, **kwargs)
-    except subprocess.CalledProcessError:
-        fatal("Error running command " + args[0])
-    return process
+        # default to error on failed command
+        pargs = {"check": True}
+        pargs.update(kwargs)
+        # capture_output is only on python 3.7+. Provide convenience here
+        # until 3.7 is a baseline:
+        if pargs.pop('capture_output', False):
+            pargs['stdout'] = subprocess.PIPE
+            pargs['stderr'] = subprocess.PIPE
+        if not quiet:
+            logging.info(f"Running command: {cmd}")
+        cp = subprocess.run(cmd, **pargs)
+    except subprocess.CalledProcessError as e:
+        logging.error("Command returned bad exitcode")
+        logging.error(f"COMMAND: {cmd}")
+        if e.stdout:
+            logging.error(f" STDOUT: {e.stdout.decode()}")
+        if e.stderr:
+            logging.error(f" STDERR: {e.stderr.decode()}")
+        raise e
+    return cp  # subprocess.CompletedProcess
 
 
 def get_lock_path(path):
@@ -94,6 +103,9 @@ def merge_dicts(x, y):
             elif type(x[k]) == dict and type(y[k]) == dict:
                 # recursively merge
                 ret.update({k: merge_dicts(x[k], y[k])})
+            elif type(x[k]) == list and type(y[k]) == list:
+                ret.update({k: x[k]})
+                merge_lists(ret, y, k)
             else:
                 # first dictionary always takes precedence
                 ret.update({k: x[k]})
@@ -119,7 +131,7 @@ def write_json(path, data, lock_path=None, merge_func=None):
     if not lock_path:
         lock_path = get_lock_path(path)
 
-    with Lock(lock_path):
+    with Lock(lock_path, lifetime=LOCK_DEFAULT_LIFETIME):
         if callable(merge_func):
             try:
                 disk_data = load_json(path, require_exclusive=False)
@@ -155,7 +167,7 @@ def load_json(path, require_exclusive=True, lock_path=None):
     if require_exclusive:
         if not lock_path:
             lock_path = get_lock_path(path)
-        lock = Lock(lock_path)
+        lock = Lock(lock_path, lifetime=LOCK_DEFAULT_LIFETIME)
         lock.lock()
     try:
         with open(path) as f:
@@ -212,7 +224,7 @@ def rfc3339_time(t=None):
     :rtype: str
     """
     if t is None:
-        t = datetime.utcnow()
+        t = datetime.datetime.utcnow()
     else:
         # if the need arises, we can convert to UTC, but let's just enforce
         # this doesn't slip by for now
@@ -233,6 +245,30 @@ def rm_allow_noent(path):
         pass
 
 
+def extract_image_json(workdir, commit):
+    with Lock(os.path.join(workdir, 'tmp/image.json.lock'),
+              lifetime=LOCK_DEFAULT_LIFETIME):
+        repo = os.path.join(workdir, 'tmp/repo')
+        path = os.path.join(workdir, 'tmp/image.json')
+        tmppath = path + '.tmp'
+        with open(tmppath, 'w') as f:
+            rc = subprocess.call(['ostree', f'--repo={repo}', 'cat', commit, '/usr/share/coreos-assembler/image.json'], stdout=f)
+            if rc == 0:
+                # Happy path, we have image.json in the ostree commit, rename it into place and we're done.
+                os.rename(tmppath, path)
+                return
+        # Otherwise, we are operating on a legacy build; clean up our tempfile.
+        os.remove(tmppath)
+        if not os.path.isfile(path):
+            # In the current build system flow, image builds will have already
+            # regenerated tmp/image.json from src/config.  If that doesn't already
+            # exist, then something went wrong.
+            raise Exception("Failed to extract image.json")
+        else:
+            # Warn about this case; but it's not fatal.
+            print("Warning: Legacy operating on ostree image that does not contain image.json")
+
+
 # In coreos-assembler, we are strongly oriented towards the concept of a single
 # versioned "build" object that has artifacts.  But rpm-ostree (among other things)
 # really natively wants to operate on unpacked ostree repositories.  So, we maintain
@@ -241,47 +277,52 @@ def rm_allow_noent(path):
 # a metal image, we may not have preserved that cache.
 #
 # Call this function to ensure that the ostree commit for a given build is in tmp/repo.
-def import_ostree_commit(repo, buildpath, buildmeta, force=False):
-    commit = buildmeta['ostree-commit']
-    tarfile = os.path.join(buildpath, buildmeta['images']['ostree']['path'])
-    # create repo in case e.g. tmp/ was cleared out; idempotent
-    subprocess.check_call(['ostree', 'init', '--repo', repo, '--mode=archive'])
+def import_ostree_commit(workdir, buildpath, buildmeta, extract_json=1):
+    tmpdir = os.path.join(workdir, 'tmp')
+    with Lock(os.path.join(workdir, 'tmp/repo.import.lock'),
+              lifetime=LOCK_DEFAULT_LIFETIME):
+        repo = os.path.join(tmpdir, 'repo')
+        commit = buildmeta['ostree-commit']
+        tarfile = os.path.join(buildpath, buildmeta['images']['ostree']['path'])
+        # create repo in case e.g. tmp/ was cleared out; idempotent
+        subprocess.check_call(['ostree', 'init', '--repo', repo, '--mode=archive'])
 
-    # in the common case where we're operating on a recent build, the OSTree
-    # commit should already be in the tmprepo
-    commitpartial = os.path.join(repo, f'state/{commit}.commitpartial')
-    if (subprocess.call(['ostree', 'show', '--repo', repo, commit],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL) == 0
-            and not os.path.isfile(commitpartial)
-            and not force):
-        return
+        # in the common case where we're operating on a recent build, the OSTree
+        # commit should already be in the tmprepo
+        commitpartial = os.path.join(repo, f'state/{commit}.commitpartial')
+        if (subprocess.call(['ostree', 'show', '--repo', repo, commit],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL) == 0
+                and not os.path.isfile(commitpartial)):
+            if extract_json == 1:
+                extract_image_json(workdir, commit)
+            return
 
-    print(f"Extracting {commit}")
-    # extract in a new tmpdir inside the repo itself so we can still hardlink
-    if tarfile.endswith('.tar'):
-        with tempfile.TemporaryDirectory(dir=repo) as d:
-            subprocess.check_call(['tar', '-C', d, '-xf', tarfile])
-            subprocess.check_call(['ostree', 'pull-local', '--repo', repo,
-                                   d, commit])
-    elif tarfile.endswith('.ociarchive'):
+        print(f"Extracting {commit}")
+        assert tarfile.endswith('.ociarchive')
         # We do this in two stages, because right now ex-container only writes to
         # non-archive repos.  Also, in the privileged case we need sudo to write
         # to `repo-build`, though it might be good to change this by default.
         if os.environ.get('COSA_PRIVILEGED', '') == '1':
             build_repo = os.path.join(repo, '../../cache/repo-build')
             subprocess.check_call(['sudo', 'ostree', 'container', 'import', '--repo', build_repo,
-                                   '--write-ref', buildmeta['buildid'], 'ostree-unverified-image:oci-archive:' + tarfile])
+                                   '--write-ref', buildmeta['buildid'],
+                                   'ostree-unverified-image:oci-archive:' + tarfile])
             subprocess.check_call(['sudo', 'ostree', f'--repo={repo}', 'pull-local', build_repo, buildmeta['buildid']])
             uid = os.getuid()
             gid = os.getgid()
             subprocess.check_call(['sudo', 'chown', '-hR', f"{uid}:{gid}", repo])
         else:
-            with tempfile.TemporaryDirectory() as tmpd:
+            with tempfile.TemporaryDirectory(dir=tmpdir) as tmpd:
                 subprocess.check_call(['ostree', 'init', '--repo', tmpd, '--mode=bare-user'])
                 subprocess.check_call(['ostree', 'container', 'import', '--repo', tmpd,
-                                       '--write-ref', buildmeta['buildid'], 'ostree-unverified-image:oci-archive:' + tarfile])
+                                       '--write-ref', buildmeta['buildid'],
+                                       'ostree-unverified-image:oci-archive:' + tarfile])
                 subprocess.check_call(['ostree', f'--repo={repo}', 'pull-local', tmpd, buildmeta['buildid']])
+
+        # Also extract image.json since it's commonly needed by image builds
+        if extract_json == 1:
+            extract_image_json(workdir, commit)
 
 
 def get_basearch():
@@ -302,8 +343,8 @@ def parse_date_string(date_string):
     :rtype: datetime.datetime
     :raises: ValueError, TypeError
     """
-    dt = datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%SZ')
-    return dt.replace(tzinfo=timezone.utc)
+    dt = datetime.datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%SZ')
+    return dt.replace(tzinfo=datetime.timezone.utc)
 
 
 def get_timestamp(entry):
@@ -324,7 +365,7 @@ def get_timestamp(entry):
 
 def image_info(image):
     try:
-        out = json.loads(run_verbose(
+        out = json.loads(runcmd(
             ['qemu-img', 'info', '--output=json', image],
             capture_output=True).stdout
         )
@@ -354,18 +395,30 @@ def cmdlib_sh(script):
     '''])
 
 
-def flatten_image_yaml_to_file(srcfile, outfile):
-    flattened = flatten_image_yaml(srcfile)
+def generate_image_json(srcfile):
+    r = yaml.safe_load(open("/usr/lib/coreos-assembler/image-default.yaml"))
+    for k, v in flatten_image_yaml(srcfile).items():
+        r[k] = v
+    # Serialize our default GRUB config
+    with open("/usr/lib/coreos-assembler/grub.cfg") as f:
+        r['grub-script'] = f.read()
+    return r
+
+
+def write_image_json(srcfile, outfile):
+    r = generate_image_json(srcfile)
     with open(outfile, 'w') as f:
-        yaml.dump(flattened, f)
+        json.dump(r, f, sort_keys=True)
 
 
+# Merge two lists, avoiding duplicates. Exact duplicate kargs could be valid
+# but we have no use case for them right now in our official images.
 def merge_lists(x, y, k):
     x[k] = x.get(k, [])
     assert type(x[k]) == list
     y[k] = y.get(k, [])
     assert type(y[k]) == list
-    x[k].extend(y[k])
+    x[k].extend([i for i in y[k] if i not in x[k]])
 
 
 def flatten_image_yaml(srcfile, base=None):
@@ -377,7 +430,6 @@ def flatten_image_yaml(srcfile, base=None):
 
     # first, special-case list values
     merge_lists(base, srcyaml, 'extra-kargs')
-    merge_lists(base, srcyaml, 'ignition-network-kcmdline')
 
     # then handle all the non-list values
     base = merge_dicts(base, srcyaml)
@@ -396,3 +448,8 @@ def ensure_glob(pathname, **kwargs):
     if not ret:
         raise Exception(f'No matches for {pathname}')
     return ret
+
+
+def ncpu():
+    '''Return the number of usable CPUs we have for parallelism.'''
+    return int(subprocess.check_output(['kola', 'ncpu']))
