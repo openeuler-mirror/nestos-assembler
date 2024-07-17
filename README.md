@@ -41,8 +41,8 @@ sudo chmod +x /usr/local/bin/nosa
 |  命令   |   描述  |
 | --- | --- |
 | nosa init  |  初始化构建工作目录，拉取构建配置   |
-| nosa fetch  |  更新最新构建配置，下载缓存所需rpm包   |
-| nosa build  |  构建新版ostree文件系统  |
+| nosa fetch  |  更新最新构建配置，下载并缓存所需rpm包   |
+| nosa build  |  构建新版本ostree文件系统，生成OCI格式归档文件  |
 
 #### 构建管理
 |  命令   |   描述  |
@@ -72,7 +72,6 @@ sudo chmod +x /usr/local/bin/nosa
 | nosa kola-run | 等效于`kola run`，通过此命令可排除测试过程无效日志干扰，获取测试统计结果及有效日志摘录|
 | nosa push-container | 推送OCI格式ostree文件系统至容器镜像仓库 |
 | nosa run | 运行指定构建版本的NestOS qemu实例，一般用于调试验证 |
-| nosa runc | 以指定构建版本的NestOS 容器镜像运行命令，默认为bash，一般用于调试验证 |
 | nosa shell | 进入nestos-assembler容器镜像环境bash，一般用于调试验证 |
 
 ### LICENSE
