@@ -13,15 +13,15 @@ import (
 
 // commands we'd expect to use in the local dev path
 var buildCommands = []string{"init", "fetch", "build", "run", "prune", "clean", "list"}
-var advancedBuildCommands = []string{"push-container", "upload-oscontainer"}
+var advancedBuildCommands = []string{"push-container"}
 var buildextendCommands = []string{"extensions", "extensions-container", "legacy-oscontainer", "live", "metal", "metal4k", "openstack", "qemu", "secex"}
 
-var utilityCommands = []string{"compress", "copy-container", "kola", "push-container-manifest", "remote-build-container", "remote-prune", "remote-session", "tag", "virt-install"}
+var utilityCommands = []string{"compress", "copy-container", "kola", "push-container-manifest", "remote-build-container", "remote-session", "tag", "virt-install"}
 var otherCommands = []string{"shell", "meta"}
 
-var nestos_unsupport_advanced_build_commands = []string{"buildfetch", "buildupload", "oc-adm-release"}
-var nestos_unsupport_buildextend_commands = []string{"aliyun", "applehv", "aws", "azure", "digitalocean", "exoscale", "gcp", "hashlist-experimental", "hyperv", "ibmcloud", "kubevirt", "nutanix", "virtualbox", "vmware", "vultr"}
-var nestos_unsupport_utility_commands = []string{"aws-replicate", "koji-upload", "sign", "update-variant"}
+var nestos_unsupport_advanced_build_commands = []string{"buildfetch", "buildupload", "buildinitramfs-fast", "oc-adm-release", "upload-oscontainer"}
+var nestos_unsupport_buildextend_commands = []string{"aliyun", "applehv", "aws", "azure", "azurestack", "dasd", "digitalocean", "exoscale", "gcp", "hyperv", "ibmcloud", "kubevirt", "nutanix", "powervs", "virtualbox", "vmware", "vultr"}
+var nestos_unsupport_utility_commands = []string{"aliyun-replicate", "aws-replicate", "dev-overlay", "dev-synthesize-osupdate", "dev-synthesize-osupdatecontainer", "koji-upload", "powervs-replicate", "remote-prune", "sign", "update-variant"}
 
 func init() {
 	// Note buildCommands is intentionally listed in frequency order

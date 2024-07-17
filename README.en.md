@@ -43,7 +43,7 @@ sudo chmod +x /usr/local/bin/nosa
 | --- | --- |
 | nosa init  |  Initialize the build working directory and pull the build configuration   |
 | nosa fetch  |  Update the latest build configuration and download the required rpm package for caching   |
-| nosa build  |  Building a new commit of the OSTree file system  |
+| nosa build  |  Building a new commit of the OSTree file system, generate ociarchive file |
 
 #### Build manage
 |  Command   |   Description  |
@@ -73,7 +73,6 @@ sudo chmod +x /usr/local/bin/nosa
 | nosa kola-run | Equivalent to `kola run`, this command can eliminate interference from invalid logs during the testing process, obtain test statistics results, and extract valid logs|
 | nosa push-container | Push OCI format OSTree to registry |
 | nosa run | Run the NestOS qemu instance of the specified build, usually used for debugging and validation |
-| nosa runc | Run the command using the NestOS container image of the specified build, default to bash, usually used for debugging and validation |
 | nosa shell | Enter the `nestos-assembler` container image environment bash, usually used for debugging and verification |
 
 ### LICENSE
