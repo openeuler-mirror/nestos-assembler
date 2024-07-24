@@ -7,6 +7,8 @@ RUN rm -rfv /usr/lib/coreos-assembler /usr/bin/coreos-assembler
 
 COPY ./src/print-dependencies.sh ./src/deps*.txt ./src/vmdeps*.txt ./src/build-deps.txt /root/containerbuild/src/
 COPY ./build.sh  /root/containerbuild/
+COPY ./certs /etc/pki/ca-trust/source/anchors/
+RUN /usr/bin/update-ca-trust
 RUN ./build.sh configure_yum_repos
 RUN ./build.sh install_rpms
 
