@@ -8,11 +8,18 @@ nestos-assembler是一个构建环境，该环境包含一系列工具，可用�
 
 nestos-assembler可以简单理解为是一个可以构建NestOS的容器环境，该环境集成了构建NestOS所需的一些脚本、rpm包和工具。
 
+### 克隆仓库说明
+因nestos-assembler代码变化较为剧烈，历史提交记录过多，克隆该仓库时建议使用如下命令，降低代码目录体积，提高拉取速率：
+```
+git clone --depth=1 --single-branch https://gitee.com/openeuler/nestos-assembler.git
+```
+添加参数含义为仅下载单独分支的最新1条提交记录
+
 ### 使用方法
 
 #### 容器镜像构建
 ```
-git clone https://gitee.com/openeuler/nestos-assembler.git
+git clone --depth=1 --single-branch https://gitee.com/openeuler/nestos-assembler.git
 cd nestos-assembler/
 docker build -f Dockerfile . -t nestos-assembler:your_tag
 ```

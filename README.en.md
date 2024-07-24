@@ -9,11 +9,18 @@
 
 `nestos-assembler` can be simply understood as a container environment that can build nestos. This environment integrates some scripts, RPM packages and tools required to build NestOS.
 
+### Clone repository notes
+Due to the drastic changes in the Nestos-assembler code and the large number of historical commit records, when cloning this repository, it is recommended to use the following command to reduce the size of the code directory and improve the fetch speed:
+```
+git clone --depth=1 --single-branch https://gitee.com/openeuler/nestos-assembler.git
+```
+Adding the parameters means to download only the most recent commit of a single branch. 
+
 ### Usage
 
 #### Build Container image
 ```
-git clone https://gitee.com/openeuler/nestos-assembler.git
+git clone --depth=1 --single-branch https://gitee.com/openeuler/nestos-assembler.git
 cd nestos-assembler/
 docker build -f Dockerfile . -t nestos-assembler:your_tag
 ```
