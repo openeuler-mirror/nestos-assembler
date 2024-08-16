@@ -19,8 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,11 +34,14 @@ import (
 
 var (
 	awsCredentialsFile string
-
-	specProfile string
-	specRegion  string
-	specStream  string
-	specVersion string
+	scpUser            string
+	scpHost            string
+	scpKeyFile         string
+	scpTargetPath      string
+	specProfile        string
+	specRegion         string
+	specStream         string
+	specVersion        string
 
 	specBucketPrefix string
 
@@ -50,9 +54,9 @@ var (
 
 	cmdUpdateReleaseIndex = &cobra.Command{
 		Use:   "update-release-index [options]",
-		Short: "Update a stream's release index for a CoreOS release.",
+		Short: "Update a stream's release index for a NestOS release.",
 		Run:   runUpdateReleaseIndex,
-		Long:  "Update a stream's release index for a CoreOS release.",
+		Long:  "Update a stream's release index for a NestOS release.",
 	}
 )
 
@@ -71,6 +75,10 @@ func init() {
 	cmdUpdateReleaseIndex.Flags().StringVar(&specRegion, "region", "us-east-1", "S3 bucket region")
 	cmdUpdateReleaseIndex.Flags().StringVarP(&specStream, "stream", "", "", "target stream")
 	cmdUpdateReleaseIndex.Flags().StringVarP(&specVersion, "version", "", "", "release version")
+	cmdUpdateReleaseIndex.Flags().StringVar(&scpUser, "scp-user", "", "SCP user")
+	cmdUpdateReleaseIndex.Flags().StringVar(&scpHost, "scp-host", "", "SCP host")
+	cmdUpdateReleaseIndex.Flags().StringVar(&scpKeyFile, "scp-key-file", "", "SCP private key file")
+	cmdUpdateReleaseIndex.Flags().StringVar(&scpTargetPath, "scp-target-path", "", "SCP target path")
 	root.AddCommand(cmdUpdateReleaseIndex)
 
 }
@@ -96,7 +104,7 @@ func validateArgs(args []string) {
 func runMakeAmisPublic(cmd *cobra.Command, args []string) {
 	validateArgs(args)
 	api := getAWSApi()
-	rel := getReleaseMetadata(api)
+	rel := getReleaseMetadataFromS3(api)
 	incomplete := makeReleaseAMIsPublic(rel)
 	if incomplete {
 		os.Exit(77)
@@ -105,8 +113,14 @@ func runMakeAmisPublic(cmd *cobra.Command, args []string) {
 
 func runUpdateReleaseIndex(cmd *cobra.Command, args []string) {
 	validateArgs(args)
-	api := getAWSApi()
-	rel := getReleaseMetadata(api)
+	var rel release.Release
+	var api *aws.API = nil
+	if strings.HasPrefix(specBucketPrefix, "https://") {
+		rel = getReleaseMetadataFromHTTPS(specBucketPrefix)
+	} else {
+		api = getAWSApi()
+		rel = getReleaseMetadataFromS3(api)
+	}
 	modifyReleaseMetadataIndex(api, rel)
 }
 
@@ -131,7 +145,7 @@ func getBucketAndStreamPrefix() (string, string) {
 	return split[0], split[1]
 }
 
-func getReleaseMetadata(api *aws.API) release.Release {
+func getReleaseMetadataFromS3(api *aws.API) release.Release {
 	bucket, prefix := getBucketAndStreamPrefix()
 	releasePath := filepath.Join(prefix, "builds", specVersion, "release.json")
 	releaseFile, err := api.DownloadFile(bucket, releasePath)
@@ -141,6 +155,28 @@ func getReleaseMetadata(api *aws.API) release.Release {
 	defer releaseFile.Close()
 
 	releaseData, err := io.ReadAll(releaseFile)
+	if err != nil {
+		plog.Fatalf("reading release metadata: %v", err)
+	}
+
+	var rel release.Release
+	err = json.Unmarshal(releaseData, &rel)
+	if err != nil {
+		plog.Fatalf("unmarshaling release metadata: %v", err)
+	}
+
+	return rel
+}
+
+func getReleaseMetadataFromHTTPS(baseURL string) release.Release {
+	releaseURL := fmt.Sprintf("%s/%s/builds/%s/release.json", baseURL, specStream, specVersion)
+	resp, err := http.Get(releaseURL)
+	if err != nil {
+		plog.Fatalf("downloading release metadata from %s: %v", releaseURL, err)
+	}
+	defer resp.Body.Close()
+
+	releaseData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		plog.Fatalf("reading release metadata: %v", err)
 	}
@@ -203,33 +239,47 @@ func makeReleaseAMIsPublic(rel release.Release) bool {
 }
 
 func modifyReleaseMetadataIndex(api *aws.API, rel release.Release) {
-	// Note we use S3 directly here instead of
-	// FetchAndParseCanonicalReleaseIndex(), since that one uses the
-	// CloudFronted URL and we need to be sure we're operating on the latest
-	// version.  Plus we need S3 creds anyway later on to push the modified
-	// release index back.
-
+	var data []byte
+	var err error
 	bucket, prefix := getBucketAndStreamPrefix()
-	path := filepath.Join(prefix, "releases.json")
-	data, err := func() ([]byte, error) {
-		f, err := api.DownloadFile(bucket, path)
+
+	if api == nil {
+		// 从 HTTPS 获取 release index
+		path := filepath.Join(prefix, specStream, "releases.json")
+		url := fmt.Sprintf("%s/%s", bucket, path)
+		resp, err := http.Get(url)
 		if err != nil {
-			if awsErr, ok := err.(awserr.Error); ok {
-				if awsErr.Code() == "NoSuchKey" {
-					return []byte("{}"), nil
+			plog.Fatalf("downloading release metadata index from %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+
+		data, err = io.ReadAll(resp.Body)
+		if err != nil {
+			plog.Fatalf("reading release metadata index: %v", err)
+		}
+	} else {
+		// 从 S3 获取 release index
+		path := filepath.Join(prefix, "releases.json")
+		data, err = func() ([]byte, error) {
+			f, err := api.DownloadFile(bucket, path)
+			if err != nil {
+				if awsErr, ok := err.(awserr.Error); ok {
+					if awsErr.Code() == "NoSuchKey" {
+						return []byte("{}"), nil
+					}
 				}
+				return []byte{}, fmt.Errorf("downloading release metadata index: %v", err)
 			}
-			return []byte{}, fmt.Errorf("downloading release metadata index: %v", err)
-		}
-		defer f.Close()
-		d, err := io.ReadAll(f)
+			defer f.Close()
+			d, err := io.ReadAll(f)
+			if err != nil {
+				return []byte{}, fmt.Errorf("reading release metadata index: %v", err)
+			}
+			return d, nil
+		}()
 		if err != nil {
-			return []byte{}, fmt.Errorf("reading release metadata index: %v", err)
+			plog.Fatal(err)
 		}
-		return d, nil
-	}()
-	if err != nil {
-		plog.Fatal(err)
 	}
 
 	var releaseIdx release.Index
@@ -238,12 +288,8 @@ func modifyReleaseMetadataIndex(api *aws.API, rel release.Release) {
 		plog.Fatalf("unmarshaling release metadata json: %v", err)
 	}
 
-	// XXX: switch the URL to be relative so we don't have to hardcode its final location?
-	releasePath := filepath.Join(prefix, "builds", specVersion, "release.json")
-	url, err := url.Parse(fmt.Sprintf("https://builds.coreos.fedoraproject.org/%s", releasePath))
-	if err != nil {
-		plog.Fatalf("creating metadata url: %v", err)
-	}
+	// 修改 release index
+	metadataURL := fmt.Sprintf("%s/%s/builds/%s/release.json", specBucketPrefix, specStream, specVersion)
 
 	var commits []release.IndexReleaseCommit
 	for arch, vals := range rel.Architectures {
@@ -256,7 +302,7 @@ func modifyReleaseMetadataIndex(api *aws.API, rel release.Release) {
 	newIdxRelease := release.IndexRelease{
 		Commits:     commits,
 		Version:     specVersion,
-		MetadataURL: url.String(),
+		MetadataURL: metadataURL,
 	}
 
 	for i, rel := range releaseIdx.Releases {
@@ -283,9 +329,8 @@ func modifyReleaseMetadataIndex(api *aws.API, rel release.Release) {
 	}
 
 	releaseIdx.Releases = append(releaseIdx.Releases, newIdxRelease)
-
 	releaseIdx.Metadata.LastModified = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	releaseIdx.Note = "For use only by Fedora CoreOS internal tooling.  All other applications should obtain release info from stream metadata endpoints."
+	releaseIdx.Note = "For use only by NestOS internal tooling. All other applications should obtain release info from stream metadata endpoints."
 	releaseIdx.Stream = specStream
 
 	out, err := json.Marshal(releaseIdx)
@@ -293,11 +338,57 @@ func modifyReleaseMetadataIndex(api *aws.API, rel release.Release) {
 		plog.Fatalf("marshalling release metadata json: %v", err)
 	}
 
-	// we don't want this to be cached for very long so that e.g. Cincinnati picks it up quickly
-	var releases_max_age = 60 * 5
-	err = api.UploadObjectExt(bytes.NewReader(out), bucket, path, true, "public-read", aws.ContentTypeJSON, releases_max_age)
+	if api == nil {
+		// 将 release index 写入本地文件，然后通过 SCP 上传
+		tempDir, err := os.MkdirTemp("", "release-index")
+		if err != nil {
+			plog.Fatalf("creating temporary directory: %v", err)
+		}
+		defer os.RemoveAll(tempDir) // 确保在函数结束时删除临时目录
+
+		localPath := filepath.Join(tempDir, "releases.json")
+		err = os.WriteFile(localPath, out, 0644)
+		if err != nil {
+			plog.Fatalf("writing release metadata json to %s: %v", localPath, err)
+		}
+
+		// 使用 SCP 上传文件
+		uploadReleaseIndexViaSCP(localPath)
+	} else {
+		// 上传 release index 到 S3
+		var releases_max_age = 60 * 5
+		err = api.UploadObjectExt(bytes.NewReader(out), bucket, path, true, "public-read", aws.ContentTypeJSON, releases_max_age)
+		if err != nil {
+			plog.Fatalf("uploading release metadata json: %v", err)
+		}
+	}
+}
+
+func uploadReleaseIndexViaSCP(localPath string) {
+	remotePath := filepath.Join(scpTargetPath, specStream)
+
+	// 确保远程目录存在
+	ensureRemoteDirExists(remotePath)
+
+	cmd := exec.Command("scp", "-i", scpKeyFile, localPath, fmt.Sprintf("%s@%s:%s", scpUser, scpHost, remotePath))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
 	if err != nil {
-		plog.Fatalf("uploading release metadata json: %v", err)
+		plog.Fatalf("uploading release index via SCP: %v", err)
+	}
+}
+
+func ensureRemoteDirExists(remotePath string) {
+	dir := filepath.Dir(remotePath)
+	cmd := exec.Command("ssh", "-i", scpKeyFile, fmt.Sprintf("%s@%s", scpUser, scpHost), fmt.Sprintf("mkdir -p %s", dir))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err := cmd.Run()
+	if err != nil {
+		plog.Fatalf("creating remote directory via SSH: %v", err)
 	}
 }
 
