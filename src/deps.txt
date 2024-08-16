@@ -92,3 +92,6 @@ bsdtar
 
 # For pulling from the prod OSTree repo, e.g. during release jobs
 #fedora-repos-ostree
+
+# support for buildupload by scp
+python3-scp python3-paramiko python3-dateparser

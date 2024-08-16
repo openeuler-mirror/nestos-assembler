@@ -12,6 +12,8 @@ import subprocess
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from tenacity import retry
+import paramiko
+from scp import SCPClient,SCPException
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -61,6 +63,12 @@ def parse_args():
                     help="Path to AWS config file")
     s3.set_defaults(func=cmd_upload_s3)
 
+    scp = subparsers.add_parser('scp', help='upload an image using SCP')
+    scp.add_argument("url", metavar='<USERNAME>@<HOST>:<PATH>',
+                     help="Username, host and path in which to upload")
+    scp.add_argument("--ssh-key", help="Path to SSH private key file", required=True)
+    scp.set_defaults(func=cmd_upload_scp)
+
     return parser.parse_args()
 
 
@@ -100,6 +108,47 @@ def cmd_upload_s3(args):
             f.write(f"s3://{bucket}/{prefix}\n")
         subprocess.check_call(['cp-reflink', BUILDFILES['list'], BUILDFILES['sourcedata']])
 
+def cmd_upload_scp(args):
+    try:
+        username, remainder = args.url.split('@')
+        host, path = remainder.split(':', 1)
+    except ValueError:
+        print(f"Error: Invalid URL format. Expected format is '<USERNAME>@<HOST>:<PATH>'.")
+        sys.exit(1)
+
+    builds = Builds()
+    if args.build == 'latest':
+        args.build = builds.get_latest()
+    print(f"Targeting build: {args.build}")
+
+    if args.force:
+        print("SCP forces overwriting by default, no additional parameter is required.")
+
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_client.connect(hostname=host, username=username, key_filename=args.ssh_key)
+
+    remote_dir = os.path.join(path, f'{args.build}/{args.arch}')
+    if not remote_path_exists(ssh_client, remote_dir):
+        print(f"Remote directory {remote_dir} does not exist, creating it...")
+        ssh_client.exec_command(f'mkdir -p {remote_dir}')
+
+    with SCPClient(ssh_client.get_transport()) as scp_client:
+        for arch in builds.get_build_arches(args.build):
+            if len(args.arch) > 0 and arch not in args.arch:
+                print(f"Skipping upload of arch {arch} upon user request")
+                continue
+            scp_upload_build(ssh_client, scp_client, args, builds.get_build_dir(args.build, arch),
+                             path, f'{args.build}/{arch}')
+        for f in os.listdir(f'builds/{args.build}'):
+            if f in builds.get_build_arches(args.build):
+                continue
+            local_path = os.path.join('builds', args.build, f)
+            remote_path = os.path.join(path, f'{args.build}', f)
+            scp_copy(scp_client, local_path, remote_path, dry_run=args.dry_run)
+        if not args.skip_builds_json:
+            scp_copy(scp_client, BUILDFILES['list'], os.path.join(path, 'builds.json'),  dry_run=args.dry_run)
+            subprocess.check_call(['cp-reflink', BUILDFILES['list'], BUILDFILES['sourcedata']])
 
 def s3_upload_build(s3_client, args, builddir, bucket, prefix):
     # In the case where we are doing builds for different architectures
@@ -188,6 +237,50 @@ def s3_upload_build(s3_client, args, builddir, bucket, prefix):
             dry_run=args.dry_run)
 
 
+def scp_upload_build(ssh_client, scp_client, args, builddir, base_path, prefix):
+    if not os.path.exists(f'{builddir}/meta.json'):
+        print(f"No meta.json exists for {builddir}.. Skipping")
+        return
+    build = load_json(f'{builddir}/meta.json')
+
+    uploaded = set()
+    scrub = set()
+    for imgname in build['images']:
+        img = build['images'][imgname]
+        bn = img['path']
+        path = os.path.join(builddir, bn)
+        scp_path = os.path.join(base_path, prefix, bn)
+
+        if len(args.artifact) > 0 and imgname not in args.artifact:
+            print(f"Skipping upload of artifact {bn} upon user request")
+            uploaded.add(bn)
+            if not remote_path_exists(ssh_client, scp_path):
+                scrub.add(imgname)
+            continue
+
+        if not os.path.exists(path):
+            raise Exception(f"{path} not found locally!")
+
+        scp_copy(scp_client, path, scp_path,  dry_run=args.dry_run)
+        uploaded.add(bn)
+
+    for f in os.listdir(builddir):
+        if f in uploaded or f == 'meta.json':
+            continue
+        path = os.path.join(builddir, f)
+        scp_path = os.path.join(base_path, prefix, f)
+
+        scp_copy(scp_client, path, scp_path,  dry_run=args.dry_run)
+
+    for imgname in scrub:
+        del build['images'][imgname]
+    with tempfile.NamedTemporaryFile('w') as f:
+        json.dump(build, f, indent=4)
+        f.flush()
+        # change the mode of meta.json to 644 for buildfetch
+        os.chmod(f.name, 0o644)
+        scp_copy(scp_client, f.name, os.path.join(base_path, prefix, 'meta.json'),  dry_run=args.dry_run)
+
 @retry(stop=retry_stop, retry=retry_boto_exception, before_sleep=retry_callback)
 def s3_check_exists(s3_client, bucket, key, dry_run=False):
     print(f"Checking if bucket '{bucket}' has key '{key}'")
@@ -237,6 +330,25 @@ def s3_copy(s3_client, src, bucket, key, max_age, acl, extra_args={}, dry_run=Fa
 
     s3_client.upload_file(Filename=src, Bucket=bucket, Key=key, ExtraArgs=upload_args)
 
+def remote_path_exists(ssh_client, remote_path):
+    stdin, stdout, stderr = ssh_client.exec_command(f'test -e {remote_path} && echo "exists" || echo "not exists"')
+    result = stdout.read().decode().strip()
+
+    if result == "exists":
+        return True
+    return False
+
+def scp_copy(scp_client, src, dest, dry_run=False):
+    
+    print((f"{'Would upload' if dry_run else 'Uploading'} {src} to {dest}"))
+
+    if dry_run:
+        return
+    try:
+        scp_client.put(src, dest)
+    except SCPException as e:
+        print(f"SCP transfer failed: {str(e)}")
+        raise
 
 if __name__ == '__main__':
     sys.exit(main())
