@@ -15,8 +15,12 @@ commands are idempotent.
 
 ## plume release
 
-Publish a new CoreOS release. This makes uploaded images public and updates
+Publish a new NestOS release. This makes uploaded images public and updates
 indexes.
+
+## plume stream-generate
+
+Generate and update NestOS streams metadata.
 
 ## Pre-flight
 

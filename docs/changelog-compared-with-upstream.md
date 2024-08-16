@@ -25,9 +25,7 @@
 - nosa buildextend-virtualbox
 - nosa buildextend-vmware
 - nosa buildextend-vultr
-- nosa buildfetch
 - nosa buildinitramfs-fast
-- nosa buildupload
 - nosa dev-overlay
 - nosa dev-synthesize-osupdate
 - nosa dev-synthesize-osupdatecontainer
@@ -41,6 +39,7 @@
 
 ### `nestos-assembler`添加下列命令：
 - nosa kola-run
+- nosa rollout
 
 ## 代码变化
 
@@ -55,7 +54,14 @@
 #### 屏蔽不支持的kola选项
 #### 暂不支持以osbuild方式构建磁盘镜像
 #### 支持添加自签名根证书
-
+#### buildupload命令新增支持通过scp方式归档构建数据
+#### plume update-release-index命令新增支持通过https和scp的方式更新release index文件
+#### 新增指令cmd-rollout
+- 支持更新/update/${stream}.json 数据
+- 支持添加`user` `host` `path` `ssh-key` 参数通过scp方式上传文件至指定位置
+#### 新增指令plume stream-generate
+- 支持更新/streams/${stream}.json 数据
+- 支持添加`user` `host` `path` `ssh-key` 参数通过scp方式上传文件至指定位置
 
 ## 目录结构变化
 
