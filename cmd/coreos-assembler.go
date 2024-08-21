@@ -19,7 +19,7 @@ var buildextendCommands = []string{"extensions", "extensions-container", "legacy
 var utilityCommands = []string{"compress", "copy-container", "kola", "push-container-manifest", "remote-build-container", "remote-session", "tag", "virt-install"}
 var otherCommands = []string{"shell", "meta"}
 
-var nestos_unsupport_advanced_build_commands = []string{"buildfetch", "buildupload", "buildinitramfs-fast", "oc-adm-release", "upload-oscontainer"}
+var nestos_unsupport_advanced_build_commands = []string{"buildinitramfs-fast", "oc-adm-release", "upload-oscontainer"}
 var nestos_unsupport_buildextend_commands = []string{"aliyun", "applehv", "aws", "azure", "azurestack", "dasd", "digitalocean", "exoscale", "gcp", "hyperv", "ibmcloud", "kubevirt", "nutanix", "powervs", "virtualbox", "vmware", "vultr"}
 var nestos_unsupport_utility_commands = []string{"aliyun-replicate", "aws-replicate", "dev-overlay", "dev-synthesize-osupdate", "dev-synthesize-osupdatecontainer", "koji-upload", "powervs-replicate", "remote-prune", "sign", "update-variant"}
 
