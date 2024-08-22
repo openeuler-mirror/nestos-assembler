@@ -54,6 +54,7 @@
 #### 屏蔽不支持的kola选项
 #### 暂不支持以osbuild方式构建磁盘镜像
 #### 支持添加自签名根证书
+#### 暂不支持fips模式，屏蔽src/gf-mksquashfs文件中内核hmac文件相关处理
 #### buildupload命令新增支持通过scp方式归档构建数据
 #### plume update-release-index命令新增支持通过https和scp的方式更新release index文件
 #### 新增指令cmd-rollout
