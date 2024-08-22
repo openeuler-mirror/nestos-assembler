@@ -40,8 +40,13 @@ coreos_gf upload "${tmpd}/config.new" /ostree/repo/config
 # And ensure that the kernel binary and hmac file is in the place that dracut
 # expects it to be; xref https://issues.redhat.com/browse/OCPBUGS-15843
 kernel_binary=$(coreos_gf glob-expand /boot/ostree/*/vmlinuz*)
-kernel_hmac=$(coreos_gf glob-expand /boot/ostree/*/.*.hmac)
-coreos_gf ln "${kernel_hmac}" "/boot/$(basename "${kernel_hmac}")"
+
+# openEuler kernel currently do not support FIPS, and NestOS will maintain the status quo. Resulting in:
+# 1.The following file processing is not currently required
+# 2.To enable, the kernel package should provide the file /lib/modules/$kver/.vmlinuz.hmac
+
+# kernel_hmac=$(coreos_gf glob-expand /boot/ostree/*/.*.hmac)
+# coreos_gf ln "${kernel_hmac}" "/boot/$(basename "${kernel_hmac}")"
 coreos_gf ln "${kernel_binary}" "/boot/$(basename "${kernel_binary}")"
 
 coreos_gf mksquashfs / "${tmp_dest}" "compress:${compression}"
