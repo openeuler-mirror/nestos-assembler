@@ -134,7 +134,7 @@ while true; do
 done
 
 # If user did not provide a repo then error out
-if [ $# -ne 1 ]; then
+if [ $# = 0 ]; then
     print_help
     fatal "ERROR: Missing GITCONFIG"
 fi
@@ -187,7 +187,8 @@ mkdir -p src
 # Default paths for manifest.yaml & image.yaml
 manifest="src/config/manifest.yaml"
 image="src/config/image.yaml"
-if [[ ! -f "${manifest}" ]] || [[ ! -f "${image}" ]]; then
+# When function subdir is provided,the manifest and image path will be a link.
+if ! [[ -f "${manifest}" || -L "${manifest}" ]] || ! [[  -f "${image}" || -L "${image}" ]]; then
     echo 1>&2 "Could not find default manifests (${manifest} & ${image})"
     fatal "If you are using a custom configuration, be sure it has a manifest.yaml & image.yaml."
 fi
@@ -196,7 +197,8 @@ fi
 if [[ -n "${VARIANT}" ]] && [[ "${VARIANT}" != "default" ]]; then
     manifest="src/config/manifest-${VARIANT}.yaml"
     image="src/config/image-${VARIANT}.yaml"
-    if [[ ! -f "${manifest}" ]] || [[ ! -f "${image}" ]]; then
+    # When function subdir is provided,the manifest and image path will be a link.
+    if ! [[ -f "${manifest}" || -L "${manifest}" ]] || ! [[  -f "${image}" || -L "${image}" ]]; then
         fatal "Could not find the manifests (${manifest} & ${image}) for the '${VARIANT}' variant"
     fi
     echo "Using variant: '${VARIANT}'"
