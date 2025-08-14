@@ -26,12 +26,18 @@ configure_yum_repos() {
     # can depend on those latest tools being available in all container
     # builds.
     rm -rf /etc/yum.repos.d/*
-
-    # Consistent with the base image, current: openeuler 22.03-LTS-SP4
-    echo -e "[${version_id}-SP4-NestOS]\nname=NestOS\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP4/EPOL/multi_version/NestOS/For-Container/20240628/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
-    echo -e "[${version_id}-SP4-everything]\nname=everything\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP4/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
-    echo -e "[${version_id}-SP4-EPOL]\nname=EPOL\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-22.03-LTS-SP4/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
-    echo -e "[${version_id}-SP4-extra]\nname=extra\nenabled=1\nmetadata_expire=1m\nbaseurl=https://nestos.org.cn/NestOS-22.03-LTS-SP4/For-Container/20240628/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos-sp4.repo
+    # Consistent with the base image, current: openeuler 24.03-LTS-SP1
+    if [ "$arch" != "riscv64" ]; then 
+        echo -e "[${version_id}-NestOS]\nname=NestOS\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-24.03-LTS-SP1/EPOL/multi_version/NestOS/For-Container/20250115/$arch/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+        echo -e "[${version_id}-everything]\nname=everything\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-24.03-LTS-SP1/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+        echo -e "[${version_id}-EPOL]\nname=EPOL\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-24.03-LTS-SP1/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+        echo -e "[${version_id}-extra]\nname=extra\nenabled=1\nmetadata_expire=1m\nbaseurl=https://nestos.org.cn/NestOS-24.03-LTS-SP1/For-Container/20250115/$arch/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+    else
+        echo -e "[${version_id}-patch]\nname=patch\nenabled=1\nmetadata_expire=1m\nbaseurl=https://build-repo.tarsier-infra.isrc.ac.cn/home:/mahno:/NestOS-patch/openEuler_24.03/\ngpgcheck=0\npriority=1\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+        echo -e "[${version_id}-NestOS]\nname=NestOS\nenabled=1\nmetadata_expire=1m\nbaseurl=https://build-repo.tarsier-infra.isrc.ac.cn/home:/mahno:/NestOS/openEuler_24.03_SP1_Everything/\ngpgcheck=0\npriority=2\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+        echo -e "[${version_id}-everything]\nname=everything\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-24.03-LTS/everything/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+        echo -e "[${version_id}-EPOL]\nname=EPOL\nenabled=1\nmetadata_expire=1m\nbaseurl=https://repo.openeuler.org/openEuler-24.03-LTS/EPOL/main/$arch/\ngpgcheck=0\nskip_if_unavailable=False\n" >> /etc/yum.repos.d/nestos.repo
+    fi
 }
 
 install_rpms() {

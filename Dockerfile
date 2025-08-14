@@ -1,4 +1,4 @@
-FROM openeuler-22.03-lts-sp4:latest
+FROM openeuler-24.03-lts-sp1
 WORKDIR /root/containerbuild
 
 # Keep this Dockerfile idempotent for local development rebuild use cases.
