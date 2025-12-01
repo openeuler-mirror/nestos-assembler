@@ -158,6 +158,16 @@ fi
 
 # shellcheck disable=SC2031
 case "$arch" in
+    riscv64)
+        RESERVEDPN=1
+        EFIPN=2
+        sgdisk -Z "$disk" \
+        -U "${uninitialized_gpt_uuid}" \
+        -n ${RESERVEDPN}:0:+1M -c ${RESERVEDPN}:reserved -t ${RESERVEDPN}:8DA63339-0007-60C0-C436-083AC8230908 \
+        -n ${EFIPN}:0:+127M -c ${EFIPN}:EFI-SYSTEM -t ${EFIPN}:C12A7328-F81F-11D2-BA4B-00A0C93EC93B \
+        -n ${BOOTPN}:0:+384M -c ${BOOTPN}:boot \
+        -n ${ROOTPN}:0:"${rootfs_size}" -c ${ROOTPN}:root -t ${ROOTPN}:0FC63DAF-8483-4772-8E79-3D69D8477DE4
+        ;;
     x86_64)
         EFIPN=2
         sgdisk -Z "$disk" \
@@ -400,15 +410,24 @@ install_uefi() {
     # https://github.com/coreos/fedora-coreos-tracker/issues/510
     # See also https://github.com/ostreedev/ostree/pull/1873#issuecomment-524439883
     # Unshare mount ns to work around https://github.com/coreos/bootupd/issues/367
-    unshare -m /usr/bin/bootupctl backend install --src-root="${deploy_root}" "${rootfs}"
     # We have a "static" grub config file that basically configures grub to look
     # in the RAID called "md-boot", if it exists, or the partition labeled "boot".
     local target_efi="$rootfs/boot/efi"
-    local grubefi
-    grubefi=$(find "${target_efi}/EFI/" -maxdepth 1 -type d | grep -v BOOT)
-    local vendor_id="${grubefi##*/}"
-    local vendordir="${target_efi}/EFI/${vendor_id}"
-    mkdir -p "${vendordir}"
+    local vendordir
+    # since the shim package has not yet been ported to the RISC-V platform, here we
+    # directly copy grub as BOOTRISCV64.
+    if [ "$arch" = riscv64 ]; then
+        vendordir="${target_efi}/EFI/BOOT"
+        mkdir -p "${vendordir}"
+        cp ${deploy_root}/usr/lib/ostree-boot/efi/EFI/openEuler/grubriscv64.efi ${vendordir}/BOOTRISCV64.EFI
+    else
+        unshare -m /usr/bin/bootupctl backend install --src-root="${deploy_root}" "${rootfs}"
+        local grubefi
+        grubefi=$(find "${target_efi}/EFI/" -maxdepth 1 -type d | grep -v BOOT)
+        local vendor_id="${grubefi##*/}"
+        vendordir="${target_efi}/EFI/${vendor_id}"
+        mkdir -p "${vendordir}"
+    fi
     cat > "${vendordir}/grub.cfg" << 'EOF'
 if [ -e (md/md-boot) ]; then
   # The search command might pick a RAID component rather than the RAID,
@@ -475,6 +494,9 @@ generate_gpgkeys() {
 # Other arch-specific bootloader changes
 # shellcheck disable=SC2031
 case "$arch" in
+riscv64)
+    install_uefi
+    ;;
 x86_64)
     # UEFI
     install_uefi

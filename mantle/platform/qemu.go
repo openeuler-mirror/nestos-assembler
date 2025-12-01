@@ -592,6 +592,8 @@ func virtio(arch, device, args string) string {
 		suffix = "pci"
 	case "s390x":
 		suffix = "ccw"
+	case "riscv64":
+		suffix = "device"
 	default:
 		panic(fmt.Sprintf("RpmArch %s unhandled in virtio()", arch))
 	}
@@ -1356,6 +1358,11 @@ func baseQemuArgs(arch string, memoryMiB int) ([]string, error) {
 			// kvm-type=HV ensures we use bare metal KVM and not "user mode"
 			// https://qemu.readthedocs.io/en/latest/system/ppc/pseries.html#switching-between-the-kvm-pr-and-kvm-hv-kernel-module
 			"-machine", "pseries,kvm-type=HV," + machineArg,
+		}
+	case "riscv64":
+		ret = []string{
+			"qemu-system-riscv64",
+			"-machine", "virt," + machineArg,
 		}
 	default:
 		return nil, fmt.Errorf("architecture %s not supported for qemu", arch)
