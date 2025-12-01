@@ -452,14 +452,14 @@ json.dump(lockfile, sys.stdout)' > "${local_overrides_lockfile}"
         # win.
         # shellcheck disable=SC2002
         cat "${tmp_overridesdir}/pkgs.txt" | python3 -c "
-import sys, yaml
-flattened = yaml.safe_load(open('${flattened_manifest}'))
+import sys, yaml, json
+flattened = json.load(open('${flattened_manifest}'))
 all_overrides = set()
 for line in sys.stdin:
     all_overrides.add(line.strip().split('\t')[0])
 repo_overrides = set()
-for repopkg in flattened.get('repo-packages', []):
-    repo_overrides.update(all_overrides.intersection(set(repopkg['packages'])))
+for repopkg in flattened.get('packages', []):
+    repo_overrides.update(all_overrides.intersection(set(repopkg)))
 manifest = {
     'repos': ['coreos-assembler-local-overrides'],
     'repo-packages': [{
