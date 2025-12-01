@@ -128,10 +128,14 @@ def cmd_upload_scp(args):
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh_client.connect(hostname=host, username=username, key_filename=args.ssh_key)
 
-    remote_dir = os.path.join(path, f'{args.build}/{args.arch}')
-    if not remote_path_exists(ssh_client, remote_dir):
-        print(f"Remote directory {remote_dir} does not exist, creating it...")
-        ssh_client.exec_command(f'mkdir -p {remote_dir}')
+    for arch in builds.get_build_arches(args.build):
+        if len(args.arch) > 0 and arch not in args.arch:
+            print(f"Skipping upload of arch {arch} upon user request")
+            continue
+        remote_dir = os.path.join(path, f'{args.build}/{arch}')
+        if not remote_path_exists(ssh_client, remote_dir):
+            print(f"Remote directory {remote_dir} does not exist, creating it...")
+            ssh_client.exec_command(f'mkdir -p {remote_dir}')
 
     with SCPClient(ssh_client.get_transport()) as scp_client:
         for arch in builds.get_build_arches(args.build):
