@@ -41,10 +41,10 @@ install_rpms() {
     # First, a general update; this is best practice.  We also hit an issue recently
     # where qemu implicitly depended on an updated libusbx but didn't have a versioned
     # requires https://bugzilla.redhat.com/show_bug.cgi?id=1625641
-    yum -y distro-sync
+    dnf -y distro-sync
 
     # xargs is part of findutils, which may not be installed
-    yum -y install /usr/bin/xargs
+    dnf -y install /usr/bin/xargs
 
     # These are only used to build things in here.  Today
     # we ship these in the container too to make it easier
@@ -54,12 +54,12 @@ install_rpms() {
     builddeps=$(grep -v '^#' "${srcdir}"/src/build-deps.txt)
 
     # Process our base dependencies + build dependencies and install
-    #(echo "${builddeps}" && echo "${frozendeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs yum -y install
-    (echo "${builddeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs yum -y install
+    #(echo "${builddeps}" && echo "${frozendeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs dnf -y install
+    (echo "${builddeps}" && "${srcdir}"/src/print-dependencies.sh) | xargs dnf -y install
 
     # Add fast-tracked packages here.  We don't want to wait on bodhi for rpm-ostree
     # as we want to enable fast iteration there.
-    #yum -y --enablerepo=updates-testing upgrade rpm-ostree
+    #dnf -y --enablerepo=updates-testing upgrade rpm-ostree
 
     # Allow Kerberos Auth to work from a keytab. The keyring is not
     # available in a Container.
@@ -73,7 +73,7 @@ install_rpms() {
     # Similarly for kernel data and SELinux policy, which we want to inject into supermin
     chmod -R a+rX /usr/lib/modules /usr/share/selinux/targeted
     # Further cleanup
-    yum clean all
+    dnf clean all
 }
 
 make_and_makeinstall() {
